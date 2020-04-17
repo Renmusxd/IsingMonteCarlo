@@ -1,0 +1,16 @@
+[package]
+name = "monte_carlo"
+version = "0.1.0"
+authors = ["sumnernh@gmail.com <sumnernh@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+rand = "^0.7.2"
+rand_chacha = "^0.2.0"
+rayon = "^1.2.1"
+num = "^0.2.0"
+rustfft = "^3.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
