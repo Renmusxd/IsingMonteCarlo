@@ -1,5 +1,4 @@
 use monte_carlo;
-use monte_carlo::graph::GraphState;
 use monte_carlo::sse::qmc_graph::new_qmc;
 
 fn main() {
