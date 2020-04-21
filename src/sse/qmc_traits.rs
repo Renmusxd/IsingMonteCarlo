@@ -557,8 +557,9 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             1
         };
 
+        let flips = (0 .. n_clusters).map(|_| rng.gen_bool(prob)).collect::<Vec<_>>();
         let mut state_changes = vec![];
-        let boundaries = boundaries
+        boundaries
             .into_iter()
             .enumerate()
             .filter_map(|(p, clust)| match clust {
@@ -566,36 +567,27 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                 (None, None) => None,
                 _ => unreachable!(),
             })
-            .collect::<Vec<_>>();
-
-        // Now maybe flip each cluster.
-        (0..n_clusters).for_each(|cluster| {
-            if rng.gen_bool(prob) {
-                boundaries
-                    .iter()
-                    .cloned()
-                    .for_each(|(p, (input_cluster, output_cluster))| {
-                        if input_cluster == cluster {
-                            let node = self.get_node_mut(p).unwrap();
-                            let op = node.get_op_mut();
-                            flip_state_for_op(op, OpSide::Inputs);
-                            let node = self.get_node_ref(p).unwrap();
-                            let op = node.get_op_ref();
-                            (0..op.vars.len()).for_each(|relvar| {
-                                let prev_p = self.get_previous_p_for_rel_var(relvar, node);
-                                if prev_p.is_none() {
-                                    state_changes.push((op.vars[relvar], op.inputs[relvar]));
-                                }
-                            });
-                        }
-                        if output_cluster == cluster {
-                            let node = self.get_node_mut(p).unwrap();
-                            let op = node.get_op_mut();
-                            flip_state_for_op(op, OpSide::Outputs)
+            .for_each(|(p, (input_cluster, output_cluster))| {
+                if flips[input_cluster] {
+                    let node = self.get_node_mut(p).unwrap();
+                    let op = node.get_op_mut();
+                    flip_state_for_op(op, OpSide::Inputs);
+                    // Mark state changes if needed.
+                    let node = self.get_node_ref(p).unwrap();
+                    let op = node.get_op_ref();
+                    (0..op.vars.len()).for_each(|relvar| {
+                        let prev_p = self.get_previous_p_for_rel_var(relvar, node);
+                        if prev_p.is_none() {
+                            state_changes.push((op.vars[relvar], op.inputs[relvar]));
                         }
                     });
-            }
-        });
+                }
+                if flips[output_cluster] {
+                    let node = self.get_node_mut(p).unwrap();
+                    let op = node.get_op_mut();
+                    flip_state_for_op(op, OpSide::Outputs)
+                }
+            });
         state_changes
     }
 
