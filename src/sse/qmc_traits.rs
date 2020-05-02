@@ -557,7 +557,9 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             1
         };
 
-        let flips = (0 .. n_clusters).map(|_| rng.gen_bool(prob)).collect::<Vec<_>>();
+        let flips = (0..n_clusters)
+            .map(|_| rng.gen_bool(prob))
+            .collect::<Vec<_>>();
         let mut state_changes = vec![];
         boundaries
             .into_iter()
@@ -607,9 +609,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             let inputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Inputs));
             let outputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Outputs));
             let all_legs = inputs_legs.chain(outputs_legs);
-            all_legs.map(|l| {
-                (p, l, node)
-            }).collect()
+            all_legs.map(|l| (p, l, node)).collect()
         } else {
             vec![(p, leg, node)]
         };

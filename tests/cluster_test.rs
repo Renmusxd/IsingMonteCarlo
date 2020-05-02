@@ -147,7 +147,6 @@ fn multi_twosite_cluster_test() {
     println!("{:?}", state_updates);
 }
 
-
 #[test]
 fn multi_multisite_cluster_test() {
     let mut manager = SimpleOpDiagonal::new(3);

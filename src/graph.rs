@@ -171,6 +171,14 @@ impl GraphState {
         self.state.unwrap()
     }
 
+    pub fn clone_state(&self) -> Vec<bool> {
+        self.state.clone().unwrap()
+    }
+
+    pub fn state_ref(&self) -> &[bool] {
+        self.state.as_ref().unwrap()
+    }
+
     pub fn set_state(&mut self, state: Vec<bool>) {
         assert_eq!(self.state.as_ref().unwrap().len(), state.len());
         self.state = Some(state)
