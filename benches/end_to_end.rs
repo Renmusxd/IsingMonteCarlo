@@ -37,6 +37,8 @@ mod tests {
     use monte_carlo::sse::simple_ops::*;
     use rand::prelude::*;
     use test::Bencher;
+    use rand::SeedableRng;
+    use rand::rngs::SmallRng;
 
     #[bench]
     fn one_d_no_loopupdate(b: &mut Bencher) {
@@ -134,6 +136,43 @@ mod tests {
         let l = 16;
         let rng = rand::thread_rng();
         let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.0,
+            l,
+            false,
+            false,
+            rng,
+            None,
+        );
+
+        let beta = 1.0;
+        b.iter(|| g.timesteps(100, beta));
+    }
+
+    #[bench]
+    fn two_d_no_loopupdate_large_smallrng(b: &mut Bencher) {
+        let l = 16;
+        let rng = SmallRng::from_entropy();
+        let mut g =
+            QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+                two_d_periodic(l),
+                1.0,
+                l,
+                false,
+                false,
+                rng,
+                None,
+            );
+
+        let beta = 1.0;
+        b.iter(|| g.timesteps(100, beta));
+    }
+
+    #[bench]
+    fn two_d_no_loopupdate_large_new_smallrng(b: &mut Bencher) {
+        let l = 16;
+        let rng = SmallRng::from_entropy();
+        let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
             two_d_periodic(l),
             1.0,
             l,

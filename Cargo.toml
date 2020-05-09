@@ -5,14 +5,17 @@ authors = ["sumnernh@gmail.com <sumnernh@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-num = "^0.2.0"
-rand = "^0.7.2"
-rayon = "^1.2.1"
+num = "^0.2"
+rayon = "^1.2"
 rustfft = "^3.0"
 
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+[dependencies.rand]
+version = "^0.7"
+features = ["small_rng"]
 
 [dependencies.smallvec]
 version = "^1.4"
