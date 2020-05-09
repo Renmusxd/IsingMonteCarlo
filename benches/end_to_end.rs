@@ -32,14 +32,26 @@ fn two_d_periodic(l: usize) -> Vec<(Edge, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use monte_carlo::sse::qmc_graph::new_qmc;
+    use monte_carlo::sse::fast_ops::*;
+    use monte_carlo::sse::qmc_graph::QMCGraph;
+    use monte_carlo::sse::simple_ops::*;
+    use rand::prelude::*;
     use test::Bencher;
 
     #[bench]
     fn one_d_no_loopupdate(b: &mut Bencher) {
         let l = 16;
-        let mut g = new_qmc(one_d_periodic(l), 1.0, l, false, false, None);
-
+        let rng = rand::thread_rng();
+        let mut g =
+            QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+                one_d_periodic(l),
+                1.0,
+                l,
+                false,
+                false,
+                rng,
+                None,
+            );
         let beta = 1.0;
         b.iter(|| g.timesteps(1000, beta));
     }
@@ -47,9 +59,91 @@ mod tests {
     #[bench]
     fn two_d_no_loopupdate(b: &mut Bencher) {
         let l = 4;
-        let mut g = new_qmc(two_d_periodic(l), 1.0, l, false, false, None);
+        let rng = rand::thread_rng();
+        let mut g =
+            QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+                two_d_periodic(l),
+                1.0,
+                l,
+                false,
+                false,
+                rng,
+                None,
+            );
 
         let beta = 1.0;
         b.iter(|| g.timesteps(1000, beta));
+    }
+
+    #[bench]
+    fn one_d_no_loopupdate_new(b: &mut Bencher) {
+        let l = 16;
+        let rng = rand::thread_rng();
+        let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+            one_d_periodic(l),
+            1.0,
+            l,
+            false,
+            false,
+            rng,
+            None,
+        );
+        let beta = 1.0;
+        b.iter(|| g.timesteps(1000, beta));
+    }
+
+    #[bench]
+    fn two_d_no_loopupdate_new(b: &mut Bencher) {
+        let l = 4;
+        let rng = rand::thread_rng();
+        let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.0,
+            l,
+            false,
+            false,
+            rng,
+            None,
+        );
+
+        let beta = 1.0;
+        b.iter(|| g.timesteps(1000, beta));
+    }
+
+    #[bench]
+    fn two_d_no_loopupdate_large(b: &mut Bencher) {
+        let l = 16;
+        let rng = rand::thread_rng();
+        let mut g =
+            QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+                two_d_periodic(l),
+                1.0,
+                l,
+                false,
+                false,
+                rng,
+                None,
+            );
+
+        let beta = 1.0;
+        b.iter(|| g.timesteps(100, beta));
+    }
+
+    #[bench]
+    fn two_d_no_loopupdate_large_new(b: &mut Bencher) {
+        let l = 16;
+        let rng = rand::thread_rng();
+        let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.0,
+            l,
+            false,
+            false,
+            rng,
+            None,
+        );
+
+        let beta = 1.0;
+        b.iter(|| g.timesteps(100, beta));
     }
 }

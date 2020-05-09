@@ -7,20 +7,29 @@ use rand::Rng;
 use rayon::prelude::*;
 use rustfft::FFTplanner;
 use std::cmp::max;
+use std::marker::PhantomData;
 use std::ops::DivAssign;
+use crate::sse::fast_ops::{FastOpNode, FastOps};
 
 type VecEdge = Vec<usize>;
-pub struct QMCGraph<R: Rng> {
+pub struct QMCGraph<
+    R: Rng,
+    N: OpNode,
+    M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L>,
+    L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+> {
     edges: Vec<(VecEdge, f64)>,
     transverse: f64,
     state: Option<Vec<bool>>,
     cutoff: usize,
-    op_manager: Option<SimpleOpDiagonal>,
+    op_manager: Option<M>,
     twosite_energy_offset: f64,
     singlesite_energy_offset: f64,
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
     rng: R,
+    phantom_n: PhantomData<N>,
+    phantom_l: PhantomData<L>,
 }
 
 pub fn new_qmc(
@@ -30,9 +39,9 @@ pub fn new_qmc(
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
     state: Option<Vec<bool>>,
-) -> QMCGraph<ThreadRng> {
+) -> QMCGraph<ThreadRng, FastOpNode, FastOps, FastOps> {
     let rng = rand::thread_rng();
-    QMCGraph::<ThreadRng>::new_with_rng(
+    QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
         edges,
         transverse,
         cutoff,
@@ -49,9 +58,9 @@ pub fn new_qmc_from_graph(
     cutoff: usize,
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
-) -> QMCGraph<ThreadRng> {
+) -> QMCGraph<ThreadRng, FastOpNode, FastOps, FastOps> {
     let rng = rand::thread_rng();
-    QMCGraph::<ThreadRng>::new_from_graph(
+    QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_from_graph(
         graph,
         transverse,
         cutoff,
@@ -61,7 +70,13 @@ pub fn new_qmc_from_graph(
     )
 }
 
-impl<R: Rng> QMCGraph<R> {
+impl<
+        R: Rng,
+        N: OpNode,
+        M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L>,
+        L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+    > QMCGraph<R, N, M, L>
+{
     pub fn new_with_rng<Rg: Rng>(
         edges: Vec<(Edge, f64)>,
         transverse: f64,
@@ -70,7 +85,7 @@ impl<R: Rng> QMCGraph<R> {
         use_heatbath_diagonal_update: bool,
         rng: Rg,
         state: Option<Vec<bool>>,
-    ) -> QMCGraph<Rg> {
+    ) -> QMCGraph<Rg, N, M, L> {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         let edges = edges
             .into_iter()
@@ -85,8 +100,8 @@ impl<R: Rng> QMCGraph<R> {
             .unwrap_or(0.0)
             .abs();
         let singlesite_energy_offset = transverse;
-        let mut ops = SimpleOpDiagonal::new(nvars);
-        ops.set_min_size(cutoff);
+        let mut ops = M::new(nvars);
+        ops.set_cutoff(cutoff);
 
         let state = match state {
             Some(state) => state,
@@ -94,7 +109,7 @@ impl<R: Rng> QMCGraph<R> {
         };
         let state = Some(state);
 
-        QMCGraph::<Rg> {
+        QMCGraph::<Rg, N, M, L> {
             edges,
             transverse,
             state,
@@ -105,6 +120,8 @@ impl<R: Rng> QMCGraph<R> {
             use_loop_update,
             use_heatbath_diagonal_update,
             rng,
+            phantom_n: PhantomData,
+            phantom_l: PhantomData,
         }
     }
 
@@ -115,7 +132,7 @@ impl<R: Rng> QMCGraph<R> {
         use_loop_update: bool,
         use_heatbath_diagonal_update: bool,
         rng: Rg,
-    ) -> QMCGraph<Rg> {
+    ) -> QMCGraph<Rg, N, M, L> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(
             graph.edges,
@@ -348,34 +365,34 @@ impl<R: Rng> QMCGraph<R> {
         self.state.unwrap()
     }
 
-    pub fn debug_print(&self) {
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let transverse = self.transverse;
-        let edges = &self.edges;
-        let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            if vars.len() == 2 {
-                two_site_hamiltonian(
-                    (input_state[0], input_state[1]),
-                    (output_state[0], output_state[1]),
-                    edges[bond].1,
-                    twosite_energy_offset,
-                )
-            } else if vars.len() == 1 {
-                single_site_hamiltonian(
-                    input_state[0],
-                    output_state[0],
-                    transverse,
-                    singlesite_energy_offset,
-                )
-            } else {
-                unreachable!()
-            }
-        };
-        if let Some(opm) = self.op_manager.as_ref() {
-            opm.debug_print(h)
-        }
-    }
+    // pub fn debug_print(&self) {
+    //     let twosite_energy_offset = self.twosite_energy_offset;
+    //     let singlesite_energy_offset = self.singlesite_energy_offset;
+    //     let transverse = self.transverse;
+    //     let edges = &self.edges;
+    //     let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+    //         if vars.len() == 2 {
+    //             two_site_hamiltonian(
+    //                 (input_state[0], input_state[1]),
+    //                 (output_state[0], output_state[1]),
+    //                 edges[bond].1,
+    //                 twosite_energy_offset,
+    //             )
+    //         } else if vars.len() == 1 {
+    //             single_site_hamiltonian(
+    //                 input_state[0],
+    //                 output_state[0],
+    //                 transverse,
+    //                 singlesite_energy_offset,
+    //             )
+    //         } else {
+    //             unreachable!()
+    //         }
+    //     };
+    //     if let Some(opm) = self.op_manager.as_ref() {
+    //         opm.debug_print(h)
+    //     }
+    // }
 }
 
 fn two_site_hamiltonian(

@@ -8,7 +8,12 @@ pub trait OpNode {
     fn get_op_mut(&mut self) -> &mut Op;
 }
 
+pub trait OpContainerConstructor {
+    fn new(nvars: usize) -> Self;
+}
+
 pub trait OpContainer {
+    fn set_cutoff(&mut self, cutoff: usize);
     fn get_n(&self) -> usize;
     fn get_nvars(&self) -> usize;
     fn get_pth(&self, p: usize) -> Option<&Op>;
@@ -50,6 +55,22 @@ impl BondWeights {
 
 pub trait DiagonalUpdater: OpContainer {
     fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op>;
+
+    /// This is actually what's called, if you override this you may leave set_pth unimplemented.
+    /// Folds across the p values, passing T down.
+    fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
+    where
+        F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
+    {
+        (0..cutoff).fold(t, |t, p| {
+            let op = self.get_pth(p);
+            let (op, t) = f(&self, op, t);
+            if let Some(op) = op {
+                self.set_pth(p, op);
+            }
+            t
+        })
+    }
 
     fn make_bond_weights<'b, H, E>(
         state: &[bool],
@@ -113,78 +134,89 @@ pub trait DiagonalUpdater: OpContainer {
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let mut state = state.to_vec();
+        let state = state.to_vec();
         let (n_edges, edge_fn, bond_weights) = edges;
 
         // Either use metropolis or heat bath.
         match bond_weights {
             None => {
-                (0..cutoff).for_each(|p| {
-                    self.metropolis_single_diagonal_update(
-                        p,
+                self.mutate_ps(cutoff, (state, rng), |s, op, (mut state, rng)| {
+                    let op = Self::metropolis_single_diagonal_update(
+                        op,
                         cutoff,
+                        s.get_n(),
                         beta,
                         &mut state,
                         &hamiltonian,
                         (n_edges, &edge_fn),
                         rng,
-                    )
+                    );
+                    (op, (state, rng))
                 });
                 None
             }
             Some(bond_weights) => {
-                let bond_weights = (0..cutoff).fold(bond_weights, |bond_weights, p| {
-                    self.heat_bath_single_diagonal_update(
-                        p,
-                        cutoff,
-                        beta,
-                        &mut state,
-                        &hamiltonian,
-                        (&edge_fn, bond_weights),
-                        rng,
-                    )
-                });
+                let (_, _, bond_weights) = self.mutate_ps(
+                    cutoff,
+                    (state, rng, bond_weights),
+                    |s, op, (mut state, rng, bond_weights)| {
+                        let (op, bond_weights) = Self::heat_bath_single_diagonal_update(
+                            op,
+                            cutoff,
+                            s.get_n(),
+                            beta,
+                            &mut state,
+                            &hamiltonian,
+                            (&edge_fn, bond_weights),
+                            rng,
+                        );
+                        (op, (state, rng, bond_weights))
+                    },
+                );
                 Some(bond_weights)
             }
         }
     }
 
     fn heat_bath_single_diagonal_update<'b, H, E, R: Rng>(
-        &mut self,
-        p: usize,
+        op: Option<&Op>,
         cutoff: usize,
+        n: usize,
         beta: f64,
         state: &mut [bool],
         hamiltonian: H,
         edges: (E, BondWeights),
         rng: &mut R,
-    ) -> BondWeights
+    ) -> (Option<Option<Op>>, BondWeights)
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let op = self.get_pth(p);
         let (edges_fn, mut bond_weights) = edges;
 
-        match op {
+        let new_op = match op {
             None => {
                 let numerator = beta * bond_weights.total;
-                let denominator = (cutoff - self.get_n()) as f64 + numerator;
+                let denominator = (cutoff - n) as f64 + numerator;
                 if rng.gen_bool(numerator / denominator) {
                     // Find the bond to use, weighted by their matrix element.
                     let val = rng.gen_range(0.0, bond_weights.total);
                     let b = bond_weights.index_for_cumulative(val);
                     let vars = edges_fn(b);
                     let substate = vars.iter().map(|v| state[*v]).collect::<Vec<_>>();
-                    let op = Op::diagonal(vars.to_vec(), b, substate);
-                    self.set_pth(p, Some(op));
+                    let op = Op::diagonal(vars, b, substate);
+                    Some(Some(op))
+                } else {
+                    None
                 }
             }
             Some(op) if op.is_diagonal() => {
-                let numerator = (cutoff - self.get_n() + 1) as f64;
+                let numerator = (cutoff - n + 1) as f64;
                 let denominator = numerator as f64 + beta * bond_weights.total;
                 if rng.gen_bool(numerator / denominator) {
-                    self.set_pth(p, None);
+                    Some(None)
+                } else {
+                    None
                 }
             }
             Some(Op {
@@ -199,25 +231,26 @@ pub trait DiagonalUpdater: OpContainer {
                     .for_each(|(v, b)| state[*v] = *b);
                 let weight = hamiltonian(vars, *bond, inputs, outputs);
                 bond_weights.update_weight(*bond, weight);
+                None
             }
         };
-        bond_weights
+        (new_op, bond_weights)
     }
 
     fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
-        &mut self,
-        p: usize,
+        op: Option<&Op>,
         cutoff: usize,
+        n: usize,
         beta: f64,
         state: &mut [bool],
         hamiltonian: H,
         edges: (usize, E),
         rng: &mut R,
-    ) where
+    ) -> Option<Option<Op>>
+    where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let op = self.get_pth(p);
         let (num_edges, edges_fn) = edges;
 
         let b = match op {
@@ -227,7 +260,7 @@ pub trait DiagonalUpdater: OpContainer {
                 vars.iter()
                     .zip(outputs.iter())
                     .for_each(|(v, b)| state[*v] = *b);
-                return;
+                return None;
             }
         };
         let vars = edges_fn(b);
@@ -236,23 +269,27 @@ pub trait DiagonalUpdater: OpContainer {
 
         // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
         let numerator = beta * (num_edges as f64) * mat_element;
-        let denominator = (cutoff - self.get_n()) as f64;
+        let denominator = (cutoff - n) as f64;
 
         match op {
             None => {
                 if numerator > denominator || rng.gen_bool(numerator / denominator) {
-                    let op = Op::diagonal(vars.to_vec(), b, substate);
-                    self.set_pth(p, Some(op));
+                    let op = Op::diagonal(vars, b, substate);
+                    Some(Some(op))
+                } else {
+                    None
                 }
             }
             Some(op) if op.is_diagonal() => {
                 let denominator = denominator + 1.0;
                 if denominator > numerator || rng.gen_bool(denominator / numerator) {
-                    self.set_pth(p, None);
+                    Some(None)
+                } else {
+                    None
                 }
             }
-            _ => (),
-        };
+            _ => None,
+        }
     }
 }
 
@@ -680,6 +717,14 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             }
         })
     }
+}
+
+pub trait ConvertsToDiagonal<D: DiagonalUpdater> {
+    fn convert_to_diagonal(self) -> D;
+}
+
+pub trait ConvertsToLooper<N: OpNode, L: LoopUpdater<N>> {
+    fn convert_to_looper(self) -> L;
 }
 
 // Returns true if both sides have clusters attached.

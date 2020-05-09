@@ -11,80 +11,9 @@ pub struct SimpleOpDiagonal {
 }
 
 impl SimpleOpDiagonal {
-    pub fn new(nvars: usize) -> Self {
-        Self {
-            ops: vec![],
-            n: 0,
-            nvars,
-            arena: Arena::new(None),
-        }
-    }
-
     pub(crate) fn set_min_size(&mut self, n: usize) {
         if self.ops.len() < n {
             self.ops.resize_with(n, || None)
-        }
-    }
-
-    pub fn convert_to_looper(self) -> SimpleOpLooper {
-        let mut p_ends = None;
-        let mut var_ends = vec![None; self.nvars];
-        let mut arena = self.arena;
-        let mut opnodes = self
-            .ops
-            .iter()
-            .map(|op| {
-                op.clone().map(|op| {
-                    let previous_slice = arena.get_alloc(op.vars.len());
-                    let next_slice = arena.get_alloc(op.vars.len());
-
-                    SimpleOpNode::new(op, previous_slice, next_slice)
-                })
-            })
-            .collect::<Vec<_>>();
-        let mut nth_ps = vec![];
-        self.ops
-            .iter()
-            .enumerate()
-            .filter(|op| op.1.is_some())
-            .map(|(p, op)| (p, op.as_ref().unwrap()))
-            .for_each(|(p, op)| {
-                nth_ps.push(p);
-                match p_ends {
-                    None => p_ends = Some((p, p)),
-                    Some((_, last_p)) => {
-                        let last_op = opnodes[last_p].as_mut().unwrap();
-                        last_op.next_p = Some(p);
-
-                        p_ends.as_mut().unwrap().1 = p;
-
-                        let this_opnode = opnodes[p].as_mut().unwrap();
-
-                        this_opnode.previous_p = Some(last_p);
-                    }
-                }
-                op.vars
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .for_each(|(indx, v)| match var_ends[v] {
-                        None => var_ends[v] = Some((p, p)),
-                        Some((_, last_p)) => {
-                            let last_op = opnodes[last_p].as_mut().unwrap();
-                            let last_relvar = last_op.op.index_of_var(v).unwrap();
-                            arena[&last_op.next_for_vars][last_relvar] = Some(p);
-                            var_ends[v].as_mut().unwrap().1 = p;
-                            let this_opnode = opnodes[p].as_mut().unwrap();
-                            arena[&this_opnode.previous_for_vars][indx] = Some(last_p);
-                        }
-                    })
-            });
-        SimpleOpLooper {
-            ops: opnodes,
-            nth_ps,
-            p_ends,
-            var_ends,
-            arena,
         }
     }
 
@@ -130,7 +59,22 @@ impl SimpleOpDiagonal {
     }
 }
 
+impl OpContainerConstructor for SimpleOpDiagonal {
+    fn new(nvars: usize) -> Self {
+        Self {
+            ops: vec![],
+            n: 0,
+            nvars,
+            arena: Arena::new(None),
+        }
+    }
+}
+
 impl OpContainer for SimpleOpDiagonal {
+    fn set_cutoff(&mut self, cutoff: usize) {
+        self.set_min_size(cutoff)
+    }
+
     fn get_n(&self) -> usize {
         self.n
     }
@@ -170,12 +114,13 @@ impl DiagonalUpdater for SimpleOpDiagonal {
     }
 }
 
+#[derive(Clone)]
 pub struct SimpleOpNode {
-    op: Op,
-    previous_p: Option<usize>,
-    next_p: Option<usize>,
-    previous_for_vars: ArenaIndex,
-    next_for_vars: ArenaIndex,
+    pub(crate) op: Op,
+    pub(crate) previous_p: Option<usize>,
+    pub(crate) next_p: Option<usize>,
+    pub(crate) previous_for_vars: ArenaIndex,
+    pub(crate) next_for_vars: ArenaIndex,
 }
 
 impl SimpleOpNode {
@@ -215,27 +160,13 @@ pub struct SimpleOpLooper {
     arena: Arena<Option<usize>>,
 }
 
-impl SimpleOpLooper {
-    pub fn convert_to_diagonal(self) -> SimpleOpDiagonal {
-        let n = self.get_n();
-        let nvars = self.get_nvars();
-        let ops = self
-            .ops
-            .into_iter()
-            .map(|opnode| opnode.map(|opnode| opnode.op))
-            .collect();
-        let mut arena = self.arena;
-        arena.clear();
-        SimpleOpDiagonal {
-            ops,
-            n,
-            nvars,
-            arena,
+impl OpContainer for SimpleOpLooper {
+    fn set_cutoff(&mut self, cutoff: usize) {
+        if cutoff > self.ops.len() {
+            self.ops.resize_with(cutoff, || None);
         }
     }
-}
 
-impl OpContainer for SimpleOpLooper {
     fn get_n(&self) -> usize {
         self.nth_ps.len()
     }
@@ -310,3 +241,85 @@ impl LoopUpdater<SimpleOpNode> for SimpleOpLooper {
 }
 
 impl ClusterUpdater<SimpleOpNode> for SimpleOpLooper {}
+
+impl ConvertsToDiagonal<SimpleOpDiagonal> for SimpleOpLooper {
+    fn convert_to_diagonal(self) -> SimpleOpDiagonal {
+        let n = self.get_n();
+        let nvars = self.get_nvars();
+        let ops = self
+            .ops
+            .into_iter()
+            .map(|opnode| opnode.map(|opnode| opnode.op))
+            .collect();
+        let mut arena = self.arena;
+        arena.clear();
+        SimpleOpDiagonal {
+            ops,
+            n,
+            nvars,
+            arena,
+        }
+    }
+}
+
+impl ConvertsToLooper<SimpleOpNode, SimpleOpLooper> for SimpleOpDiagonal {
+    fn convert_to_looper(self) -> SimpleOpLooper {
+        let mut p_ends = None;
+        let mut var_ends = vec![None; self.nvars];
+        let mut arena = self.arena;
+        let mut opnodes = self
+            .ops
+            .iter()
+            .map(|op| {
+                op.clone().map(|op| {
+                    let previous_slice = arena.get_alloc(op.vars.len());
+                    let next_slice = arena.get_alloc(op.vars.len());
+                    SimpleOpNode::new(op, previous_slice, next_slice)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let nth_ps = self
+            .ops
+            .iter()
+            .enumerate()
+            .filter_map(|(n, op)| op.as_ref().map(|op| (n, op)))
+            .map(|(p, op)| {
+                match p_ends {
+                    None => p_ends = Some((p, p)),
+                    Some((_, last_p)) => {
+                        let last_op = opnodes[last_p].as_mut().unwrap();
+                        last_op.next_p = Some(p);
+                        p_ends.as_mut().unwrap().1 = p;
+                        let this_opnode = opnodes[p].as_mut().unwrap();
+                        this_opnode.previous_p = Some(last_p);
+                    }
+                }
+                op.vars
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .for_each(|(indx, v)| match var_ends[v] {
+                        None => var_ends[v] = Some((p, p)),
+                        Some((_, last_p)) => {
+                            let last_op = opnodes[last_p].as_mut().unwrap();
+                            let last_relvar = last_op.op.index_of_var(v).unwrap();
+                            arena[&last_op.next_for_vars][last_relvar] = Some(p);
+                            var_ends[v].as_mut().unwrap().1 = p;
+                            let this_opnode = opnodes[p].as_mut().unwrap();
+                            arena[&this_opnode.previous_for_vars][indx] = Some(last_p);
+                        }
+                    });
+                p
+            })
+            .collect();
+
+        SimpleOpLooper {
+            ops: opnodes,
+            nth_ps,
+            p_ends,
+            var_ends,
+            arena,
+        }
+    }
+}

@@ -1,32 +1,40 @@
+use smallvec::SmallVec;
+use std::ops::IndexMut;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Op {
-    pub vars: Vec<usize>,
+    pub vars: SmallVec<[usize; 2]>,
     pub bond: usize,
-    pub inputs: Vec<bool>,
-    pub outputs: Vec<bool>,
+    pub inputs: SmallVec<[bool; 2]>,
+    pub outputs: SmallVec<[bool; 2]>,
 }
 
 impl Op {
-    pub fn diagonal(vars: Vec<usize>, bond: usize, state: Vec<bool>) -> Self {
+    pub fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
+    where
+        A: Into<SmallVec<[usize; 2]>>,
+        B: Into<SmallVec<[bool; 2]>>,
+    {
+        let outputs = state.into();
         Self {
-            vars,
+            vars: vars.into(),
             bond,
-            inputs: state.clone(),
-            outputs: state,
+            inputs: outputs.clone(),
+            outputs,
         }
     }
 
-    pub fn offdiagonal(
-        vars: Vec<usize>,
-        bond: usize,
-        inputs: Vec<bool>,
-        outputs: Vec<bool>,
-    ) -> Self {
+    pub fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
+    where
+        A: Into<SmallVec<[usize; 2]>>,
+        B: Into<SmallVec<[bool; 2]>>,
+        C: Into<SmallVec<[bool; 2]>>,
+    {
         Self {
-            vars,
+            vars: vars.into(),
             bond,
-            inputs,
-            outputs,
+            inputs: inputs.into(),
+            outputs: outputs.into(),
         }
     }
 
@@ -64,11 +72,13 @@ impl OpSide {
 
 pub type Leg = (usize, OpSide);
 
-pub fn adjust_states(
-    mut before: Vec<bool>,
-    mut after: Vec<bool>,
+pub fn adjust_states<V>(
+    mut before: V,
+    mut after: V,
     leg: Leg,
-) -> (Vec<bool>, Vec<bool>) {
+) -> (V, V)
+where V: IndexMut<usize, Output=bool>
+{
     match leg {
         (var, OpSide::Inputs) => {
             before[var] = !before[var];

@@ -51,6 +51,7 @@ impl<T: Clone> IndexMut<&ArenaIndex> for Arena<T> {
     }
 }
 
+#[derive(Clone)]
 pub struct ArenaIndex {
     start: usize,
     stop: usize,

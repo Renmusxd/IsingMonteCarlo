@@ -6,7 +6,7 @@ extern crate test;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use monte_carlo::sse::qmc_traits::DiagonalUpdater;
+    use monte_carlo::sse::qmc_traits::*;
     use monte_carlo::sse::qmc_types::Op;
     use monte_carlo::sse::simple_ops::*;
     use test::Bencher;
