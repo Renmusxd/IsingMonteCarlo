@@ -191,8 +191,7 @@ impl DiagonalUpdater for FastOps {
                                     // If there's a previous node for the var, check its next entry.
                                     let prev_node_for_v = self.ops[prev_p_for_v].as_ref().unwrap();
                                     let indx = prev_node_for_v.op.index_of_var(v).unwrap();
-                                    let old_next = prev_node_for_v.next_for_vars[indx];
-                                    old_next
+                                    prev_node_for_v.next_for_vars[indx]
                                 } else if let Some((head, _)) = self.var_ends[v] {
                                     // Otherwise just look at the head (this is the new head).
                                     assert_eq!(prev_p_for_v, None);
@@ -208,8 +207,8 @@ impl DiagonalUpdater for FastOps {
 
                         // Now adjust other nodes and ends
                         prevs.iter().zip(new_op.vars.iter()).for_each(|(prev, v)| {
-                            if let Some(prev) = prev.clone() {
-                                let prev_node = self.ops[prev].as_mut().unwrap();
+                            if let Some(prev) = prev {
+                                let prev_node = self.ops[*prev].as_mut().unwrap();
                                 let indx = prev_node.op.index_of_var(*v).unwrap();
                                 prev_node.next_for_vars[indx] = Some(p);
                             } else {
@@ -223,8 +222,8 @@ impl DiagonalUpdater for FastOps {
                         });
 
                         nexts.iter().zip(new_op.vars.iter()).for_each(|(next, v)| {
-                            if let Some(next) = next.clone() {
-                                let next_node = self.ops[next].as_mut().unwrap();
+                            if let Some(next) = next {
+                                let next_node = self.ops[*next].as_mut().unwrap();
                                 let indx = next_node.op.index_of_var(*v).unwrap();
                                 next_node.previous_for_vars[indx] = Some(p);
                             } else {
@@ -249,7 +248,7 @@ impl DiagonalUpdater for FastOps {
                         };
 
                         // Based on what these were set to, adjust the p_ends and neighboring nodes.
-                        if let Some(prev) = node_ref.previous_p.clone() {
+                        if let Some(prev) = node_ref.previous_p {
                             let prev_node = self.ops[prev].as_mut().unwrap();
                             prev_node.next_p = Some(p);
                         } else {
@@ -261,7 +260,7 @@ impl DiagonalUpdater for FastOps {
                             }
                         };
 
-                        if let Some(next) = node_ref.next_p.clone() {
+                        if let Some(next) = node_ref.next_p {
                             let next_node = self.ops[next].as_mut().unwrap();
                             next_node.previous_p = Some(p);
                         } else {

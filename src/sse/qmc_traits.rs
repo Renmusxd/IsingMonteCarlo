@@ -1,6 +1,7 @@
 use crate::sse::qmc_types::*;
 use rand::Rng;
 use std::cmp::min;
+use smallvec::SmallVec;
 
 pub trait OpNode {
     fn get_op(&self) -> Op;
@@ -203,7 +204,7 @@ pub trait DiagonalUpdater: OpContainer {
                     let val = rng.gen_range(0.0, bond_weights.total);
                     let b = bond_weights.index_for_cumulative(val);
                     let vars = edges_fn(b);
-                    let substate = vars.iter().map(|v| state[*v]).collect::<Vec<_>>();
+                    let substate = vars.iter().map(|v| state[*v]).collect::<SmallVec<_>>();
                     let op = Op::diagonal(vars, b, substate);
                     Some(Some(op))
                 } else {
@@ -264,7 +265,7 @@ pub trait DiagonalUpdater: OpContainer {
             }
         };
         let vars = edges_fn(b);
-        let substate = vars.iter().map(|v| state[*v]).collect::<Vec<_>>();
+        let substate = vars.iter().map(|v| state[*v]).collect::<SmallVec<_>>();
         let mat_element = hamiltonian(vars, b, &substate, &substate);
 
         // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
@@ -553,9 +554,9 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             loop {
                 while let Some((p, frontier_side)) = frontier.pop() {
                     let node = self.get_node_ref(p).unwrap();
-                    match boundaries[p] {
-                        (Some(_), Some(_)) => { /* This was hit by another cluster expansion. */ }
-                        _ => {
+                    match boundaries.get(p) {
+                        Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */ }
+                        Some(_) => {
                             self.expand_whole_cluster(
                                 p,
                                 node,
@@ -566,6 +567,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                             );
                             cluster_num += 1;
                         }
+                        None => unreachable!()
                     }
                 }
                 // Check if any site ops are not yet set to a cluster.

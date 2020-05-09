@@ -299,16 +299,18 @@ impl ConvertsToLooper<SimpleOpNode, SimpleOpLooper> for SimpleOpDiagonal {
                     .iter()
                     .cloned()
                     .enumerate()
-                    .for_each(|(indx, v)| match var_ends[v] {
-                        None => var_ends[v] = Some((p, p)),
-                        Some((_, last_p)) => {
+                    .for_each(|(indx, v)| match var_ends.get(v) {
+                        Some(None) => var_ends[v] = Some((p, p)),
+                        Some(Some((_, last_p))) => {
+                            let last_p = *last_p;
                             let last_op = opnodes[last_p].as_mut().unwrap();
                             let last_relvar = last_op.op.index_of_var(v).unwrap();
                             arena[&last_op.next_for_vars][last_relvar] = Some(p);
                             var_ends[v].as_mut().unwrap().1 = p;
                             let this_opnode = opnodes[p].as_mut().unwrap();
                             arena[&this_opnode.previous_for_vars][indx] = Some(last_p);
-                        }
+                        },
+                        None => unreachable!()
                     });
                 p
             })
