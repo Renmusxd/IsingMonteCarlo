@@ -36,9 +36,9 @@ mod tests {
     use monte_carlo::sse::qmc_graph::QMCGraph;
     use monte_carlo::sse::simple_ops::*;
     use rand::prelude::*;
-    use test::Bencher;
-    use rand::SeedableRng;
     use rand::rngs::SmallRng;
+    use rand::SeedableRng;
+    use test::Bencher;
 
     #[bench]
     fn one_d_no_loopupdate(b: &mut Bencher) {

@@ -72,12 +72,9 @@ impl OpSide {
 
 pub type Leg = (usize, OpSide);
 
-pub fn adjust_states<V>(
-    mut before: V,
-    mut after: V,
-    leg: Leg,
-) -> (V, V)
-where V: IndexMut<usize, Output=bool>
+pub fn adjust_states<V>(mut before: V, mut after: V, leg: Leg) -> (V, V)
+where
+    V: IndexMut<usize, Output = bool>,
 {
     match leg {
         (var, OpSide::Inputs) => {

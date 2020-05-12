@@ -1,4 +1,5 @@
 use crate::graph::{Edge, GraphState};
+use crate::sse::fast_ops::{FastOpNode, FastOps};
 use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::*;
 use num::{Complex, Zero};
@@ -9,7 +10,6 @@ use rustfft::FFTplanner;
 use std::cmp::max;
 use std::marker::PhantomData;
 use std::ops::DivAssign;
-use crate::sse::fast_ops::{FastOpNode, FastOps};
 
 type VecEdge = Vec<usize>;
 pub struct QMCGraph<
@@ -27,9 +27,11 @@ pub struct QMCGraph<
     singlesite_energy_offset: f64,
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
-    rng: R,
+    rng: Option<R>,
     phantom_n: PhantomData<N>,
     phantom_l: PhantomData<L>,
+    // This is just an array of the variables 0..nvars
+    vars: Vec<usize>,
 }
 
 pub fn new_qmc(
@@ -119,9 +121,10 @@ impl<
             singlesite_energy_offset,
             use_loop_update,
             use_heatbath_diagonal_update,
-            rng,
+            rng: Some(rng),
             phantom_n: PhantomData,
             phantom_l: PhantomData,
+            vars: (0..nvars).collect()
         }
     }
 
@@ -170,6 +173,60 @@ impl<
         )
     }
 
+    pub fn timesteps_sample_iter<F>(
+        &mut self,
+        t: usize,
+        beta: f64,
+        sampling_freq: Option<usize>,
+        iter_fn: F,
+    ) -> f64
+    where
+        F: Fn(&[bool], f64) -> (),
+    {
+        let (_, e) = self.timesteps_measure(
+            t,
+            beta,
+            (),
+            |_, state, weight| iter_fn(state, weight),
+            sampling_freq,
+        );
+        e
+    }
+
+    pub fn timesteps_sample_iter_zip<F, I, T>(
+        &mut self,
+        t: usize,
+        beta: f64,
+        sampling_freq: Option<usize>,
+        zip_with: I,
+        iter_fn: F,
+    ) -> f64
+    where
+        F: Fn(T, &[bool], f64) -> (),
+        I: Iterator<Item = T>,
+    {
+        let (_, e) = self.timesteps_measure(
+            t,
+            beta,
+            Some(zip_with),
+            |zip_iter, state, weight| {
+                if let Some(mut zip_iter) = zip_iter {
+                    let next = zip_iter.next();
+                    if let Some(next) = next {
+                        iter_fn(next, state, weight);
+                        Some(zip_iter)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            },
+            sampling_freq,
+        );
+        e
+    }
+
     pub fn timesteps_measure<F, T>(
         &mut self,
         timesteps: usize,
@@ -181,9 +238,43 @@ impl<
     where
         F: Fn(T, &[bool], f64) -> T,
     {
+        let mut acc = init_t;
+        let mut steps_measured = 0;
+        let mut total_n = 0;
+        let sampling_freq = sampling_freq.unwrap_or(1);
+
+        for t in 0..timesteps {
+            // Ignore first one.
+            let get_weight = (t + 1) % sampling_freq == 0;
+            let weight = self.timestep(beta, get_weight);
+
+            if let Some(weight) = weight {
+                acc = state_fold(acc, self.state.as_ref().unwrap(), weight);
+                steps_measured += 1;
+                total_n += self.op_manager.as_ref().unwrap().get_n();
+            }
+        }
+        let average_energy = -(total_n as f64 / (steps_measured as f64 * beta));
+        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
+        let twosite_energy_offset = self.twosite_energy_offset;
+        let singlesite_energy_offset = self.singlesite_energy_offset;
+        let nvars = self.state.as_ref().unwrap().len();
+
+        let offset =
+            twosite_energy_offset * self.edges.len() as f64 + singlesite_energy_offset * nvars as f64;
+        (acc, average_energy + offset)
+    }
+
+    pub fn timestep(
+        &mut self,
+        beta: f64,
+        get_weight: bool,
+    ) -> Option<f64> {
         let mut state = self.state.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
         let nvars = state.len();
         let edges = &self.edges;
+        let vars = &self.vars;
         let transverse = self.transverse;
         let twosite_energy_offset = self.twosite_energy_offset;
         let singlesite_energy_offset = self.singlesite_energy_offset;
@@ -206,13 +297,6 @@ impl<
                 unreachable!()
             }
         };
-
-        let mut acc = init_t;
-        let mut steps_measured = 0;
-        let mut total_n = 0;
-        let sampling_freq = sampling_freq.unwrap_or(1);
-        let vars = (0..nvars).collect::<Vec<_>>();
-
         let num_bonds = edges.len() + nvars;
         let bonds_fn = |b: usize| -> &[usize] {
             if b < edges.len() {
@@ -223,65 +307,56 @@ impl<
             }
         };
 
-        for t in 0..timesteps {
-            // Start by editing the ops list
-            let mut manager = self.op_manager.take().unwrap();
-            let rng = &mut self.rng;
+        let mut manager = self.op_manager.take().unwrap();
 
-            let bond_weights = if self.use_heatbath_diagonal_update {
-                Some(SimpleOpDiagonal::make_bond_weights(
-                    &state, h, num_bonds, bonds_fn,
-                ))
-            } else {
-                None
-            };
-            manager.make_diagonal_update_with_rng(
-                self.cutoff,
-                beta,
-                &state,
-                h,
-                (num_bonds, bonds_fn, bond_weights),
-                rng,
-            );
-            self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
+        // Start by editing the ops list
+        let bond_weights = if self.use_heatbath_diagonal_update {
+            Some(SimpleOpDiagonal::make_bond_weights(
+                &state, h, num_bonds, bonds_fn,
+            ))
+        } else {
+            None
+        };
+        manager.make_diagonal_update_with_rng(
+            self.cutoff,
+            beta,
+            &state,
+            h,
+            (num_bonds, bonds_fn, bond_weights),
+            rng,
+        );
+        let new_cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
-            let mut manager = manager.convert_to_looper();
-            // Now we can do loop updates easily.
-            if self.use_loop_update {
-                let state_updates = manager.make_loop_update_with_rng(None, h, rng);
-                state_updates.into_iter().for_each(|(i, v)| {
-                    state[i] = v;
-                });
-            }
-
-            let state_updates = manager.flip_each_cluster_rng(0.5, rng);
+        let mut manager = manager.convert_to_looper();
+        // Now we can do loop updates easily.
+        if self.use_loop_update {
+            let state_updates = manager.make_loop_update_with_rng(None, h, rng);
             state_updates.into_iter().for_each(|(i, v)| {
                 state[i] = v;
             });
-
-            let manager = manager;
-            state.iter_mut().enumerate().for_each(|(var, state)| {
-                if !manager.does_var_have_ops(var) && rng.gen_bool(0.5) {
-                    *state = !*state;
-                }
-            });
-
-            // Ignore first one.
-            if (t + 1) % sampling_freq == 0 {
-                let weight = manager.weight(h);
-                acc = state_fold(acc, &state, weight);
-                steps_measured += 1;
-                total_n += manager.get_n();
-            }
-
-            self.op_manager = Some(manager.convert_to_diagonal());
         }
-        self.state = Some(state);
-        let average_energy = -(total_n as f64 / (steps_measured as f64 * beta));
-        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
-        let offset =
-            twosite_energy_offset * edges.len() as f64 + singlesite_energy_offset * nvars as f64;
-        (acc, average_energy + offset)
+
+        let state_updates = manager.flip_each_cluster_rng(0.5, rng);
+        state_updates.into_iter().for_each(|(i, v)| {
+            state[i] = v;
+        });
+
+        let manager = manager;
+        state.iter_mut().enumerate().for_each(|(var, state)| {
+            if !manager.does_var_have_ops(var) && rng.gen_bool(0.5) {
+                *state = !*state;
+            }
+        });
+
+        let ret_val = if get_weight {
+            Some(manager.weight(h))
+        } else {
+            None
+        };
+
+        self.op_manager = Some(manager.convert_to_diagonal());
+        self.cutoff =  new_cutoff;
+        ret_val
     }
 
     pub fn calculate_variable_autocorrelation(

@@ -279,42 +279,40 @@ impl ConvertsToLooper<SimpleOpNode, SimpleOpLooper> for SimpleOpDiagonal {
             })
             .collect::<Vec<_>>();
 
-        let nth_ps = self
-            .ops
-            .iter()
-            .enumerate()
-            .filter_map(|(n, op)| op.as_ref().map(|op| (n, op)))
-            .map(|(p, op)| {
-                match p_ends {
-                    None => p_ends = Some((p, p)),
-                    Some((_, last_p)) => {
-                        let last_op = opnodes[last_p].as_mut().unwrap();
-                        last_op.next_p = Some(p);
-                        p_ends.as_mut().unwrap().1 = p;
-                        let this_opnode = opnodes[p].as_mut().unwrap();
-                        this_opnode.previous_p = Some(last_p);
-                    }
-                }
-                op.vars
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .for_each(|(indx, v)| match var_ends.get(v) {
-                        Some(None) => var_ends[v] = Some((p, p)),
-                        Some(Some((_, last_p))) => {
-                            let last_p = *last_p;
+        let nth_ps =
+            self.ops
+                .iter()
+                .enumerate()
+                .filter_map(|(n, op)| op.as_ref().map(|op| (n, op)))
+                .map(|(p, op)| {
+                    match p_ends {
+                        None => p_ends = Some((p, p)),
+                        Some((_, last_p)) => {
                             let last_op = opnodes[last_p].as_mut().unwrap();
-                            let last_relvar = last_op.op.index_of_var(v).unwrap();
-                            arena[&last_op.next_for_vars][last_relvar] = Some(p);
-                            var_ends[v].as_mut().unwrap().1 = p;
+                            last_op.next_p = Some(p);
+                            p_ends.as_mut().unwrap().1 = p;
                             let this_opnode = opnodes[p].as_mut().unwrap();
-                            arena[&this_opnode.previous_for_vars][indx] = Some(last_p);
-                        },
-                        None => unreachable!()
+                            this_opnode.previous_p = Some(last_p);
+                        }
+                    }
+                    op.vars.iter().cloned().enumerate().for_each(|(indx, v)| {
+                        match var_ends.get(v) {
+                            Some(None) => var_ends[v] = Some((p, p)),
+                            Some(Some((_, last_p))) => {
+                                let last_p = *last_p;
+                                let last_op = opnodes[last_p].as_mut().unwrap();
+                                let last_relvar = last_op.op.index_of_var(v).unwrap();
+                                arena[&last_op.next_for_vars][last_relvar] = Some(p);
+                                var_ends[v].as_mut().unwrap().1 = p;
+                                let this_opnode = opnodes[p].as_mut().unwrap();
+                                arena[&this_opnode.previous_for_vars][indx] = Some(last_p);
+                            }
+                            None => unreachable!(),
+                        }
                     });
-                p
-            })
-            .collect();
+                    p
+                })
+                .collect();
 
         SimpleOpLooper {
             ops: opnodes,

@@ -1,7 +1,7 @@
 use crate::sse::qmc_types::*;
 use rand::Rng;
-use std::cmp::min;
 use smallvec::SmallVec;
+use std::cmp::min;
 
 pub trait OpNode {
     fn get_op(&self) -> Op;
@@ -555,7 +555,8 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                 while let Some((p, frontier_side)) = frontier.pop() {
                     let node = self.get_node_ref(p).unwrap();
                     match boundaries.get(p) {
-                        Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */ }
+                        Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */
+                        }
                         Some(_) => {
                             self.expand_whole_cluster(
                                 p,
@@ -567,7 +568,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                             );
                             cluster_num += 1;
                         }
-                        None => unreachable!()
+                        None => unreachable!(),
                     }
                 }
                 // Check if any site ops are not yet set to a cluster.
