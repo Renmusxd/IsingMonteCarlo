@@ -150,7 +150,7 @@ impl<
 
     pub fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
         let (_, average_energy) =
-            self.timesteps_measure(t, beta, (), |_acc, _state, _weight| (), None);
+            self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
         average_energy
     }
 
@@ -165,7 +165,7 @@ impl<
             t,
             beta,
             acc,
-            |mut acc, state, _weight| {
+            |mut acc, state| {
                 acc.push(state.to_vec());
                 acc
             },
@@ -181,13 +181,13 @@ impl<
         iter_fn: F,
     ) -> f64
     where
-        F: Fn(&[bool], f64) -> (),
+        F: Fn(&[bool]) -> (),
     {
         let (_, e) = self.timesteps_measure(
             t,
             beta,
             (),
-            |_, state, weight| iter_fn(state, weight),
+            |_, state| iter_fn(state),
             sampling_freq,
         );
         e
@@ -202,18 +202,18 @@ impl<
         iter_fn: F,
     ) -> f64
     where
-        F: Fn(T, &[bool], f64) -> (),
+        F: Fn(T, &[bool]) -> (),
         I: Iterator<Item = T>,
     {
         let (_, e) = self.timesteps_measure(
             t,
             beta,
             Some(zip_with),
-            |zip_iter, state, weight| {
+            |zip_iter, state| {
                 if let Some(mut zip_iter) = zip_iter {
                     let next = zip_iter.next();
                     if let Some(next) = next {
-                        iter_fn(next, state, weight);
+                        iter_fn(next, state);
                         Some(zip_iter)
                     } else {
                         None
@@ -236,7 +236,7 @@ impl<
         sampling_freq: Option<usize>,
     ) -> (T, f64)
     where
-        F: Fn(T, &[bool], f64) -> T,
+        F: Fn(T, &[bool]) -> T,
     {
         let mut acc = init_t;
         let mut steps_measured = 0;
@@ -244,12 +244,12 @@ impl<
         let sampling_freq = sampling_freq.unwrap_or(1);
 
         for t in 0..timesteps {
-            // Ignore first one.
-            let get_weight = (t + 1) % sampling_freq == 0;
-            let weight = self.timestep(beta, get_weight);
+            self.timestep(beta);
 
-            if let Some(weight) = weight {
-                acc = state_fold(acc, self.state.as_ref().unwrap(), weight);
+            // Sample every `sampling_freq`
+            // Ignore first one.
+            if (t + 1) % sampling_freq == 0 {
+                acc = state_fold(acc, self.state.as_ref().unwrap());
                 steps_measured += 1;
                 total_n += self.op_manager.as_ref().unwrap().get_n();
             }
@@ -267,9 +267,8 @@ impl<
 
     pub fn timestep(
         &mut self,
-        beta: f64,
-        get_weight: bool,
-    ) -> Option<f64> {
+        beta: f64
+    ) {
         let mut state = self.state.take().unwrap();
         let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
@@ -348,16 +347,9 @@ impl<
             }
         });
 
-        let ret_val = if get_weight {
-            Some(manager.weight(h))
-        } else {
-            None
-        };
-
         self.op_manager = Some(manager.convert_to_diagonal());
         self.state = Some(state);
         self.cutoff =  new_cutoff;
-        ret_val
     }
 
     pub fn calculate_variable_autocorrelation(
@@ -415,7 +407,7 @@ impl<
             timesteps,
             beta,
             acc,
-            |mut acc, state, _weight| {
+            |mut acc, state| {
                 acc.push(state.to_vec());
                 acc
             },
