@@ -271,7 +271,9 @@ impl<
         get_weight: bool,
     ) -> Option<f64> {
         let mut state = self.state.take().unwrap();
+        let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
+
         let nvars = state.len();
         let edges = &self.edges;
         let vars = &self.vars;
@@ -306,8 +308,6 @@ impl<
                 &vars[b..b + 1]
             }
         };
-
-        let mut manager = self.op_manager.take().unwrap();
 
         // Start by editing the ops list
         let bond_weights = if self.use_heatbath_diagonal_update {
@@ -355,6 +355,7 @@ impl<
         };
 
         self.op_manager = Some(manager.convert_to_diagonal());
+        self.state = Some(state);
         self.cutoff =  new_cutoff;
         ret_val
     }
