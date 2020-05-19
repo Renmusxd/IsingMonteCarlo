@@ -1,6 +1,6 @@
 [package]
 name = "monte_carlo"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["sumnernh@gmail.com <sumnernh@gmail.com>"]
 edition = "2018"
 
