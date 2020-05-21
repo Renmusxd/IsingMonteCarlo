@@ -705,20 +705,20 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
     }
 
     fn find_single_site(&self) -> Option<usize> {
-        let first_p = self.get_first_p();
-        self.find_single_site_rec(first_p)
-    }
-
-    fn find_single_site_rec(&self, node_p: Option<usize>) -> Option<usize> {
-        let node = node_p.and_then(|node_p| self.get_node_ref(node_p));
-        node.and_then(|node| {
-            if node.get_op_ref().vars.len() == 1 {
-                node_p
+        let mut p = self.get_first_p();
+        while let Some(node_p) = p {
+            let node = self.get_node_ref(node_p);
+            if let Some(node) = node {
+                if node.get_op_ref().vars.len() == 1 {
+                    return Some(node_p)
+                } else {
+                    p = self.get_next_p(node);
+                }
             } else {
-                let next_p = self.get_next_p(node);
-                self.find_single_site_rec(next_p)
+                unreachable!()
             }
-        })
+        };
+        None
     }
 }
 
