@@ -461,11 +461,11 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
 
         let inputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Inputs));
         let outputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Outputs));
-        let legs = inputs_legs.chain(outputs_legs).collect::<Vec<_>>();
-        let weights = legs
+        let legs: SmallVec<[(usize, OpSide); 4]> = inputs_legs.chain(outputs_legs).collect();
+        let weights: SmallVec<[f64; 4]> = legs
             .iter()
             .map(|leg| h(&sel_op, entrance_leg, *leg))
-            .collect::<Vec<_>>();
+            .collect();
         let total_weight: f64 = weights.iter().sum();
         let choice = rng.gen_range(0.0, total_weight);
         let exit_leg = *weights

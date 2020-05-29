@@ -6,16 +6,16 @@ pub struct FastOps {
     ops: Vec<Option<FastOpNode>>,
     n: usize,
     p_ends: Option<(usize, usize)>,
-    var_ends: Vec<Option<(usize, usize)>>,
+    var_ends: Vec<Option<(usize, usize)>>
 }
 
 #[derive(Clone, Debug)]
 pub struct FastOpNode {
-    pub(crate) op: Op,
-    pub(crate) previous_p: Option<usize>,
-    pub(crate) next_p: Option<usize>,
-    pub(crate) previous_for_vars: SmallVec<[Option<usize>; 2]>,
-    pub(crate) next_for_vars: SmallVec<[Option<usize>; 2]>,
+    op: Op,
+    previous_p: Option<usize>,
+    next_p: Option<usize>,
+    previous_for_vars: SmallVec<[Option<usize>; 2]>,
+    next_for_vars: SmallVec<[Option<usize>; 2]>,
 }
 
 impl FastOpNode {
@@ -170,7 +170,6 @@ impl DiagonalUpdater for FastOps {
 
                     if let Some(new_op) = new_op {
                         // Install the new one
-
                         let (prevs, nexts): (
                             SmallVec<[Option<usize>; 2]>,
                             SmallVec<[Option<usize>; 2]>,
@@ -376,7 +375,8 @@ impl LoopUpdater<FastOpNode> for FastOps {
 
     fn get_nth_p(&self, n: usize) -> usize {
         let n = n % self.n;
-        (0..n).fold(self.p_ends.map(|(head, _)| head).unwrap(), |p, _| {
+        let init = self.p_ends.map(|(head, _)| head).unwrap();
+        (0..n).fold(init, |p, _| {
             self.ops[p].as_ref().unwrap().next_p.unwrap()
         })
     }

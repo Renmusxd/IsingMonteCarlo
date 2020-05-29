@@ -432,35 +432,6 @@ impl<
     pub fn into_vec(self) -> Vec<bool> {
         self.state.unwrap()
     }
-
-    // pub fn debug_print(&self) {
-    //     let twosite_energy_offset = self.twosite_energy_offset;
-    //     let singlesite_energy_offset = self.singlesite_energy_offset;
-    //     let transverse = self.transverse;
-    //     let edges = &self.edges;
-    //     let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-    //         if vars.len() == 2 {
-    //             two_site_hamiltonian(
-    //                 (input_state[0], input_state[1]),
-    //                 (output_state[0], output_state[1]),
-    //                 edges[bond].1,
-    //                 twosite_energy_offset,
-    //             )
-    //         } else if vars.len() == 1 {
-    //             single_site_hamiltonian(
-    //                 input_state[0],
-    //                 output_state[0],
-    //                 transverse,
-    //                 singlesite_energy_offset,
-    //             )
-    //         } else {
-    //             unreachable!()
-    //         }
-    //     };
-    //     if let Some(opm) = self.op_manager.as_ref() {
-    //         opm.debug_print(h)
-    //     }
-    // }
 }
 
 fn two_site_hamiltonian(
