@@ -20,7 +20,3 @@ features = ["small_rng"]
 [dependencies.smallvec]
 version = "^1.4"
 features = ["specialization"]
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
