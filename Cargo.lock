@@ -86,6 +86,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ising_monte_carlo"
+version = "1.1.0"
+dependencies = [
+ "num",
+ "rand",
+ "rayon",
+ "rustfft",
+ "smallvec",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -110,17 +121,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4fc2c02a7e374099d4ee95a193111f72d2110197fe200272371758f6c3643d8"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "monte_carlo"
-version = "1.1.0"
-dependencies = [
- "num",
- "rand",
- "rayon",
- "rustfft",
- "smallvec",
 ]
 
 [[package]]
