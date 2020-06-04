@@ -1,17 +1,18 @@
 [package]
 name = "monte_carlo"
-version = "1.0.3"
+version = "1.1.0"
 authors = ["sumnernh@gmail.com <sumnernh@gmail.com>"]
 edition = "2018"
 
+[features]
+default = ["autocorrelations"]
+
+autocorrelations = ["rayon", "rustfft"]
+
 [dependencies]
 num = "^0.2"
-rayon = "^1.2"
-rustfft = "^3.0"
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
+rayon = {version = "^1.2", optional = true}
+rustfft = {version = "^3.0", optional = true}
 
 [dependencies.rand]
 version = "^0.7"
@@ -20,3 +21,7 @@ features = ["small_rng"]
 [dependencies.smallvec]
 version = "^1.4"
 features = ["specialization"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

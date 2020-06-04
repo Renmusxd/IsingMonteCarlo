@@ -2,14 +2,10 @@ use crate::graph::{Edge, GraphState};
 use crate::sse::fast_ops::{FastOpNode, FastOps};
 use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::*;
-use num::{Complex, Zero};
 use rand::rngs::ThreadRng;
 use rand::Rng;
-use rayon::prelude::*;
-use rustfft::FFTplanner;
 use std::cmp::max;
 use std::marker::PhantomData;
-use std::ops::DivAssign;
 
 type VecEdge = Vec<usize>;
 pub struct QMCGraph<
@@ -342,6 +338,7 @@ impl<
         self.cutoff = new_cutoff;
     }
 
+    #[cfg(feature = "autocorrelations")]
     pub fn calculate_variable_autocorrelation(
         &mut self,
         timesteps: usize,
@@ -357,6 +354,7 @@ impl<
         })
     }
 
+    #[cfg(feature = "autocorrelations")]
     pub fn calculate_bond_autocorrelation(
         &mut self,
         timesteps: usize,
@@ -381,6 +379,7 @@ impl<
         })
     }
 
+    #[cfg(feature = "autocorrelations")]
     pub fn calculate_autocorrelation<F>(
         &mut self,
         timesteps: usize,
@@ -409,9 +408,9 @@ impl<
             .collect::<Vec<Vec<f64>>>();
 
         if use_fft.unwrap_or(true) {
-            fft_autocorrelation(&samples)
+            autocorrelations::fft_autocorrelation(&samples)
         } else {
-            naive_autocorrelation(&samples)
+            autocorrelations::naive_autocorrelation(&samples)
         }
     }
 
@@ -462,80 +461,88 @@ fn single_site_hamiltonian(
     }
 }
 
-pub fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
-    let tmax = samples.len();
-    let n = samples[0].len();
+#[cfg(feature = "autocorrelations")]
+mod autocorrelations {
+    use num::{Complex, Zero};
+    use rayon::prelude::*;
+    use rustfft::FFTplanner;
+    use std::ops::DivAssign;
 
-    let means = (0..n)
-        .map(|i| (0..tmax).map(|t| samples[t][i]).sum::<f64>() / tmax as f64)
-        .collect::<Vec<_>>();
+    pub fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
+        let tmax = samples.len();
+        let n = samples[0].len();
 
-    let mut input = (0..n)
-        .map(|i| {
-            let mut v = (0..tmax)
-                .map(|t| Complex::<f64>::new(samples[t][i] - means[i], 0.0))
-                .collect::<Vec<Complex<f64>>>();
-            let norm = v.iter().map(|v| v.powi(2).re).sum::<f64>().sqrt();
-            v.iter_mut().for_each(|c| c.div_assign(norm));
-            v
-        })
-        .collect::<Vec<_>>();
-    let mut planner = FFTplanner::new(false);
-    let fft = planner.plan_fft(tmax);
-    let mut iplanner = FFTplanner::new(true);
-    let ifft = iplanner.plan_fft(tmax);
+        let means = (0..n)
+            .map(|i| (0..tmax).map(|t| samples[t][i]).sum::<f64>() / tmax as f64)
+            .collect::<Vec<_>>();
 
-    let mut output = vec![Complex::zero(); tmax];
-    input.iter_mut().for_each(|input| {
-        fft.process(input, &mut output);
-        output
-            .iter_mut()
-            .for_each(|c| *c = Complex::new(c.norm_sqr(), 0.0));
-        ifft.process(&mut output, input);
-    });
+        let mut input = (0..n)
+            .map(|i| {
+                let mut v = (0..tmax)
+                    .map(|t| Complex::<f64>::new(samples[t][i] - means[i], 0.0))
+                    .collect::<Vec<Complex<f64>>>();
+                let norm = v.iter().map(|v| v.powi(2).re).sum::<f64>().sqrt();
+                v.iter_mut().for_each(|c| c.div_assign(norm));
+                v
+            })
+            .collect::<Vec<_>>();
+        let mut planner = FFTplanner::new(false);
+        let fft = planner.plan_fft(tmax);
+        let mut iplanner = FFTplanner::new(true);
+        let ifft = iplanner.plan_fft(tmax);
 
-    (0..tmax)
-        .map(|t| (0..n).map(|i| input[i][t].re).sum::<f64>() / ((n * tmax) as f64))
-        .collect()
-}
+        let mut output = vec![Complex::zero(); tmax];
+        input.iter_mut().for_each(|input| {
+            fft.process(input, &mut output);
+            output
+                .iter_mut()
+                .for_each(|c| *c = Complex::new(c.norm_sqr(), 0.0));
+            ifft.process(&mut output, input);
+        });
 
-pub fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
-    let tmax = samples.len();
-    let n: usize = samples[0].len();
-    let mu = (0..n)
-        .map(|i| -> f64 {
-            let total = samples.iter().map(|sample| sample[i]).sum::<f64>();
-            total / samples.len() as f64
-        })
-        .collect::<Vec<_>>();
+        (0..tmax)
+            .map(|t| (0..n).map(|i| input[i][t].re).sum::<f64>() / ((n * tmax) as f64))
+            .collect()
+    }
 
-    (0..tmax)
-        .into_par_iter()
-        .map(|tau| {
-            (0..tmax)
-                .map(|t| (t, (t + tau) % tmax))
-                .map(|(ta, tb)| {
-                    let sample_a = &samples[ta];
-                    let sample_b = &samples[tb];
-                    let (d, ma, mb) = sample_a
-                        .iter()
-                        .enumerate()
-                        .zip(sample_b.iter().enumerate())
-                        .fold(
-                            (0.0, 0.0, 0.0),
-                            |(mut dot_acc, mut a_acc, mut b_acc), ((i, a), (j, b))| {
-                                let da = a - mu[i];
-                                let db = b - mu[j];
-                                dot_acc += da * db;
-                                a_acc += da.powi(2);
-                                b_acc += db.powi(2);
-                                (dot_acc, a_acc, b_acc)
-                            },
-                        );
-                    d / (ma * mb).sqrt()
-                })
-                .sum::<f64>()
-                / (tmax as f64)
-        })
-        .collect::<Vec<_>>()
+    pub fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
+        let tmax = samples.len();
+        let n: usize = samples[0].len();
+        let mu = (0..n)
+            .map(|i| -> f64 {
+                let total = samples.iter().map(|sample| sample[i]).sum::<f64>();
+                total / samples.len() as f64
+            })
+            .collect::<Vec<_>>();
+
+        (0..tmax)
+            .into_par_iter()
+            .map(|tau| {
+                (0..tmax)
+                    .map(|t| (t, (t + tau) % tmax))
+                    .map(|(ta, tb)| {
+                        let sample_a = &samples[ta];
+                        let sample_b = &samples[tb];
+                        let (d, ma, mb) = sample_a
+                            .iter()
+                            .enumerate()
+                            .zip(sample_b.iter().enumerate())
+                            .fold(
+                                (0.0, 0.0, 0.0),
+                                |(mut dot_acc, mut a_acc, mut b_acc), ((i, a), (j, b))| {
+                                    let da = a - mu[i];
+                                    let db = b - mu[j];
+                                    dot_acc += da * db;
+                                    a_acc += da.powi(2);
+                                    b_acc += db.powi(2);
+                                    (dot_acc, a_acc, b_acc)
+                                },
+                            );
+                        d / (ma * mb).sqrt()
+                    })
+                    .sum::<f64>()
+                    / (tmax as f64)
+            })
+            .collect::<Vec<_>>()
+    }
 }
