@@ -9,6 +9,7 @@ mod tests {
     use monte_carlo::sse::qmc_traits::*;
     use monte_carlo::sse::qmc_types::Op;
     use monte_carlo::sse::simple_ops::*;
+    use smallvec::smallvec;
     use test::Bencher;
 
     #[bench]
@@ -31,10 +32,10 @@ mod tests {
             a.set_pth(
                 i,
                 Some(Op {
-                    vars: vec![vara, varb],
+                    vars: smallvec![vara, varb],
                     bond: 0,
-                    inputs: vec![false, false],
-                    outputs: vec![false, false],
+                    inputs: smallvec![false, false],
+                    outputs: smallvec![false, false],
                 }),
             );
         });
@@ -54,10 +55,10 @@ mod tests {
             a.set_pth(
                 nvars * i,
                 Some(Op {
-                    vars: vec![vara, varb],
+                    vars: smallvec![vara, varb],
                     bond: 0,
-                    inputs: vec![false, false],
-                    outputs: vec![false, false],
+                    inputs: smallvec![false, false],
+                    outputs: smallvec![false, false],
                 }),
             );
         });
