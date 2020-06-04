@@ -710,14 +710,14 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             let node = self.get_node_ref(node_p);
             if let Some(node) = node {
                 if node.get_op_ref().vars.len() == 1 {
-                    return Some(node_p)
+                    return Some(node_p);
                 } else {
                     p = self.get_next_p(node);
                 }
             } else {
                 unreachable!()
             }
-        };
+        }
         None
     }
 }

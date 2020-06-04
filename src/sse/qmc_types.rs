@@ -1,19 +1,22 @@
 use smallvec::SmallVec;
 use std::ops::IndexMut;
 
+type Vars = SmallVec<[usize; 2]>;
+type SubState = SmallVec<[bool; 2]>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Op {
-    pub vars: SmallVec<[usize; 2]>,
+    pub vars: Vars,
     pub bond: usize,
-    pub inputs: SmallVec<[bool; 2]>,
-    pub outputs: SmallVec<[bool; 2]>,
+    pub inputs: SubState,
+    pub outputs: SubState,
 }
 
 impl Op {
     pub fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
     where
-        A: Into<SmallVec<[usize; 2]>>,
-        B: Into<SmallVec<[bool; 2]>>,
+        A: Into<Vars>,
+        B: Into<SubState>,
     {
         let outputs = state.into();
         Self {
@@ -26,9 +29,9 @@ impl Op {
 
     pub fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
     where
-        A: Into<SmallVec<[usize; 2]>>,
-        B: Into<SmallVec<[bool; 2]>>,
-        C: Into<SmallVec<[bool; 2]>>,
+        A: Into<Vars>,
+        B: Into<SubState>,
+        C: Into<SubState>,
     {
         Self {
             vars: vars.into(),

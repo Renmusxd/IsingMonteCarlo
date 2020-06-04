@@ -124,7 +124,7 @@ impl<
             rng: Some(rng),
             phantom_n: PhantomData,
             phantom_l: PhantomData,
-            vars: (0..nvars).collect()
+            vars: (0..nvars).collect(),
         }
     }
 
@@ -149,8 +149,7 @@ impl<
     }
 
     pub fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
-        let (_, average_energy) =
-            self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
+        let (_, average_energy) = self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
         average_energy
     }
 
@@ -181,15 +180,9 @@ impl<
         iter_fn: F,
     ) -> f64
     where
-        F: Fn(&[bool]) -> (),
+        F: Fn(&[bool]),
     {
-        let (_, e) = self.timesteps_measure(
-            t,
-            beta,
-            (),
-            |_, state| iter_fn(state),
-            sampling_freq,
-        );
+        let (_, e) = self.timesteps_measure(t, beta, (), |_, state| iter_fn(state), sampling_freq);
         e
     }
 
@@ -202,7 +195,7 @@ impl<
         iter_fn: F,
     ) -> f64
     where
-        F: Fn(T, &[bool]) -> (),
+        F: Fn(T, &[bool]),
         I: Iterator<Item = T>,
     {
         let (_, e) = self.timesteps_measure(
@@ -260,15 +253,12 @@ impl<
         let singlesite_energy_offset = self.singlesite_energy_offset;
         let nvars = self.state.as_ref().unwrap().len();
 
-        let offset =
-            twosite_energy_offset * self.edges.len() as f64 + singlesite_energy_offset * nvars as f64;
+        let offset = twosite_energy_offset * self.edges.len() as f64
+            + singlesite_energy_offset * nvars as f64;
         (acc, average_energy + offset)
     }
 
-    pub fn timestep(
-        &mut self,
-        beta: f64
-    ) {
+    pub fn timestep(&mut self, beta: f64) {
         let mut state = self.state.take().unwrap();
         let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
@@ -349,7 +339,7 @@ impl<
 
         self.op_manager = Some(manager.convert_to_diagonal());
         self.state = Some(state);
-        self.cutoff =  new_cutoff;
+        self.cutoff = new_cutoff;
     }
 
     pub fn calculate_variable_autocorrelation(
