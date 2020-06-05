@@ -421,6 +421,14 @@ impl<
     pub fn into_vec(self) -> Vec<bool> {
         self.state.unwrap()
     }
+
+    pub fn get_nvars(&self) -> usize {
+        self.vars.len()
+    }
+
+    pub fn get_manager_ref(&self) -> &M {
+        self.op_manager.as_ref().unwrap()
+    }
 }
 
 fn two_site_hamiltonian(

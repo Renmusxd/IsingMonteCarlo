@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "ising_monte_carlo"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "num",
  "rand",
