@@ -309,7 +309,11 @@ impl OpContainer for FastOps {
     }
 
     fn get_pth(&self, p: usize) -> Option<&Op> {
-        self.ops[p].as_ref().map(|opnode| &opnode.op)
+        if p < self.ops.len() {
+            self.ops[p].as_ref().map(|opnode| &opnode.op)
+        } else {
+            None
+        }
     }
 
     fn weight<H>(&self, h: H) -> f64

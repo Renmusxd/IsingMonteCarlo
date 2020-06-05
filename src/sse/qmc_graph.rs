@@ -414,6 +414,8 @@ impl<
         }
     }
 
+    pub fn state_ref(&self) -> &Vec<bool> { self.state.as_ref().unwrap() }
+
     pub fn clone_state(&self) -> Vec<bool> {
         self.state.as_ref().unwrap().clone()
     }
@@ -424,6 +426,10 @@ impl<
 
     pub fn get_nvars(&self) -> usize {
         self.vars.len()
+    }
+
+    pub fn get_cutoff(&self) -> usize {
+        self.cutoff
     }
 
     pub fn get_manager_ref(&self) -> &M {
