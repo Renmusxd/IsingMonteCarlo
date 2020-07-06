@@ -1,14 +1,14 @@
 #![feature(test)]
 
-extern crate monte_carlo;
+extern crate ising_monte_carlo;
 extern crate test;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use monte_carlo::sse::qmc_traits::*;
-    use monte_carlo::sse::qmc_types::Op;
-    use monte_carlo::sse::simple_ops::*;
+    use ising_monte_carlo::sse::qmc_traits::*;
+    use ising_monte_carlo::sse::qmc_types::Op;
+    use ising_monte_carlo::sse::simple_ops::*;
     use smallvec::smallvec;
     use test::Bencher;
 

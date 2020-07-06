@@ -9,6 +9,8 @@ use rand::Rng;
 use smallvec::SmallVec;
 use std::cmp::max;
 
+pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
+
 pub struct TemperingContainer<
     R1: Rng,
     R2: Rng,

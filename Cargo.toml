@@ -5,7 +5,7 @@ authors = ["sumnernh@gmail.com <sumnernh@gmail.com>"]
 edition = "2018"
 
 [features]
-default = ["parallel-tempering"]
+default = []
 autocorrelations = ["rayon", "rustfft"]
 tempering = ["itertools"]
 parallel-tempering = ["rayon", "tempering"]

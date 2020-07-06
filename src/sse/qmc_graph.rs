@@ -7,6 +7,8 @@ use rand::Rng;
 use std::cmp::max;
 use std::marker::PhantomData;
 
+pub type DefaultQMCGraph<R> = QMCGraph<R, FastOpNode, FastOps, FastOps>;
+
 type VecEdge = Vec<usize>;
 pub struct QMCGraph<
     R: Rng,
@@ -37,9 +39,9 @@ pub fn new_qmc(
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
     state: Option<Vec<bool>>,
-) -> QMCGraph<ThreadRng, FastOpNode, FastOps, FastOps> {
+) -> DefaultQMCGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+    DefaultQMCGraph::<ThreadRng>::new_with_rng(
         edges,
         transverse,
         cutoff,
@@ -56,9 +58,9 @@ pub fn new_qmc_from_graph(
     cutoff: usize,
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
-) -> QMCGraph<ThreadRng, FastOpNode, FastOps, FastOps> {
+) -> DefaultQMCGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_from_graph(
+    DefaultQMCGraph::<ThreadRng>::new_from_graph(
         graph,
         transverse,
         cutoff,

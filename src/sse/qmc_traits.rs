@@ -119,7 +119,10 @@ pub trait DiagonalUpdater: OpContainer {
         let weight_and_cumulative = (0..num_bonds)
             .map(|i| {
                 let vars = bonds_fn(i);
-                let substate = vars.iter().map(|v| state[*v]).collect::<Vec<_>>();
+                let substate = vars
+                    .iter()
+                    .map(|v| state[*v])
+                    .collect::<SmallVec<[bool; 2]>>();
                 let weight = hamiltonian(vars, i, &substate, &substate);
                 total += weight;
                 (weight, total)
@@ -236,7 +239,10 @@ pub trait DiagonalUpdater: OpContainer {
                     let val = rng.gen_range(0.0, bond_weights.total);
                     let b = bond_weights.index_for_cumulative(val);
                     let vars = edges_fn(b);
-                    let substate = vars.iter().map(|v| state[*v]).collect::<SmallVec<_>>();
+                    let substate = vars
+                        .iter()
+                        .map(|v| state[*v])
+                        .collect::<SmallVec<[bool; 2]>>();
                     let op = Op::diagonal(vars, b, substate);
                     Some(Some(op))
                 } else {
@@ -297,7 +303,10 @@ pub trait DiagonalUpdater: OpContainer {
             }
         };
         let vars = edges_fn(b);
-        let substate = vars.iter().map(|v| state[*v]).collect::<SmallVec<_>>();
+        let substate = vars
+            .iter()
+            .map(|v| state[*v])
+            .collect::<SmallVec<[bool; 2]>>();
         let mat_element = hamiltonian(vars, b, &substate, &substate);
 
         // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
@@ -493,11 +502,13 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
 
         let inputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Inputs));
         let outputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Outputs));
-        let legs: SmallVec<[(usize, OpSide); 4]> = inputs_legs.chain(outputs_legs).collect();
-        let weights: SmallVec<[f64; 4]> = legs
+        let legs = inputs_legs
+            .chain(outputs_legs)
+            .collect::<SmallVec<[(usize, OpSide); 4]>>();
+        let weights = legs
             .iter()
             .map(|leg| h(&sel_op, entrance_leg, *leg))
-            .collect();
+            .collect::<SmallVec<[f64; 4]>>();
         let total_weight: f64 = weights.iter().sum();
         let choice = rng.gen_range(0.0, total_weight);
         let exit_leg = *weights
