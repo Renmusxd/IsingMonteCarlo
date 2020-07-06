@@ -2,22 +2,23 @@ use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::Op;
 use smallvec::SmallVec;
 
+#[derive(Debug)]
 pub struct FastOps {
-    ops: Vec<Option<FastOpNode>>,
-    n: usize,
-    p_ends: Option<(usize, usize)>,
-    var_ends: Vec<Option<(usize, usize)>>,
+    pub(crate) ops: Vec<Option<FastOpNode>>,
+    pub(crate) n: usize,
+    pub(crate) p_ends: Option<(usize, usize)>,
+    pub(crate) var_ends: Vec<Option<(usize, usize)>>,
 }
 
 type LinkVars = SmallVec<[Option<usize>; 2]>;
 
 #[derive(Clone, Debug)]
 pub struct FastOpNode {
-    op: Op,
-    previous_p: Option<usize>,
-    next_p: Option<usize>,
-    previous_for_vars: LinkVars,
-    next_for_vars: LinkVars,
+    pub(crate) op: Op,
+    pub(crate) previous_p: Option<usize>,
+    pub(crate) next_p: Option<usize>,
+    pub(crate) previous_for_vars: LinkVars,
+    pub(crate) next_for_vars: LinkVars,
 }
 
 impl FastOpNode {
@@ -51,7 +52,7 @@ impl OpNode for FastOpNode {
 
 impl DiagonalUpdater for FastOps {
     fn set_pth(&mut self, _p: usize, _op: Option<Op>) -> Option<Op> {
-        unimplemented!()
+        unreachable!()
     }
 
     /// This is actually what's called, if you override this you may leave set_pth unimplemented.
@@ -294,6 +295,10 @@ impl OpContainerConstructor for FastOps {
 }
 
 impl OpContainer for FastOps {
+    fn get_cutoff(&self) -> usize {
+        self.ops.len()
+    }
+
     fn set_cutoff(&mut self, cutoff: usize) {
         if cutoff > self.ops.len() {
             self.ops.resize_with(cutoff, || None)
@@ -314,20 +319,6 @@ impl OpContainer for FastOps {
         } else {
             None
         }
-    }
-
-    fn weight<H>(&self, h: H) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let mut t = 1.0;
-        let mut p = self.p_ends.map(|(p, _)| p);
-        while p.is_some() {
-            let op = self.ops[p.unwrap()].as_ref().unwrap();
-            t *= h(&op.op.vars, op.op.bond, &op.op.inputs, &op.op.outputs);
-            p = op.next_p;
-        }
-        t
     }
 }
 

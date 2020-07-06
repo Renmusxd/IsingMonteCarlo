@@ -1,10 +1,10 @@
-extern crate monte_carlo;
+extern crate ising_monte_carlo;
 extern crate rand;
-use monte_carlo::graph::Edge;
-use monte_carlo::sse::fast_ops::*;
-use monte_carlo::sse::qmc_graph::QMCGraph;
-use monte_carlo::sse::qmc_traits::*;
-use monte_carlo::sse::simple_ops::*;
+use ising_monte_carlo::graph::Edge;
+use ising_monte_carlo::sse::fast_ops::*;
+use ising_monte_carlo::sse::qmc_graph::QMCGraph;
+use ising_monte_carlo::sse::qmc_traits::*;
+use ising_monte_carlo::sse::simple_ops::*;
 use rand::prelude::*;
 
 fn one_d_periodic(l: usize) -> Vec<(Edge, f64)> {

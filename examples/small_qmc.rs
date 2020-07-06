@@ -1,7 +1,7 @@
-extern crate monte_carlo;
-use monte_carlo::graph::GraphState;
-use monte_carlo::sse::fast_ops::*;
-use monte_carlo::sse::qmc_graph::{new_qmc, QMCGraph};
+extern crate ising_monte_carlo;
+use ising_monte_carlo::graph::GraphState;
+use ising_monte_carlo::sse::fast_ops::*;
+use ising_monte_carlo::sse::qmc_graph::{new_qmc, QMCGraph};
 use rand::prelude::ThreadRng;
 use rayon::prelude::*;
 use std::cmp::max;

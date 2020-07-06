@@ -254,6 +254,41 @@ impl<
         (acc, average_energy + offset)
     }
 
+    pub fn make_haminfo(&self) -> HamInfo {
+        HamInfo {
+            edges: &self.edges,
+            transverse: self.transverse,
+            singlesite_energy_offset: self.singlesite_energy_offset,
+            twosite_energy_offset: self.twosite_energy_offset,
+        }
+    }
+
+    pub fn hamiltonian(
+        info: &HamInfo,
+        vars: &[usize],
+        bond: usize,
+        input_state: &[bool],
+        output_state: &[bool],
+    ) -> f64 {
+        if vars.len() == 2 {
+            two_site_hamiltonian(
+                (input_state[0], input_state[1]),
+                (output_state[0], output_state[1]),
+                info.edges[bond].1,
+                info.twosite_energy_offset,
+            )
+        } else if vars.len() == 1 {
+            single_site_hamiltonian(
+                input_state[0],
+                output_state[0],
+                info.transverse,
+                info.singlesite_energy_offset,
+            )
+        } else {
+            unreachable!()
+        }
+    }
+
     pub fn timestep(&mut self, beta: f64) {
         let mut state = self.state.take().unwrap();
         let mut manager = self.op_manager.take().unwrap();
@@ -266,24 +301,17 @@ impl<
         let twosite_energy_offset = self.twosite_energy_offset;
         let singlesite_energy_offset = self.singlesite_energy_offset;
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            if vars.len() == 2 {
-                two_site_hamiltonian(
-                    (input_state[0], input_state[1]),
-                    (output_state[0], output_state[1]),
-                    edges[bond].1,
-                    twosite_energy_offset,
-                )
-            } else if vars.len() == 1 {
-                single_site_hamiltonian(
-                    input_state[0],
-                    output_state[0],
-                    transverse,
-                    singlesite_energy_offset,
-                )
-            } else {
-                unreachable!()
-            }
+            // Have to remake the struct because rng is borrowed as mutable, shouldn't actually
+            // have a noticeable performance hit though since it's doing the same thing either way.
+            let hinfo = HamInfo {
+                edges,
+                transverse,
+                singlesite_energy_offset,
+                twosite_energy_offset,
+            };
+            Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
+
         let num_bonds = edges.len() + nvars;
         let bonds_fn = |b: usize| -> &[usize] {
             if b < edges.len() {
@@ -414,7 +442,28 @@ impl<
         }
     }
 
-    pub fn state_ref(&self) -> &Vec<bool> { self.state.as_ref().unwrap() }
+    pub fn print_debug(&self) {
+        debug_print_diagonal(
+            self.op_manager.as_ref().unwrap(),
+            self.state.as_ref().unwrap(),
+        )
+    }
+
+    pub fn verify(&self) -> bool {
+        self.op_manager
+            .as_ref()
+            .and_then(|op| self.state.as_ref().map(|state| (op, state)))
+            .map(|(op, state)| op.verify(state))
+            .unwrap_or(false)
+    }
+
+    pub fn state_ref(&self) -> &Vec<bool> {
+        self.state.as_ref().unwrap()
+    }
+
+    pub fn state_mut(&mut self) -> &mut Vec<bool> {
+        self.state.as_mut().unwrap()
+    }
 
     pub fn clone_state(&self) -> Vec<bool> {
         self.state.as_ref().unwrap().clone()
@@ -435,6 +484,10 @@ impl<
     pub fn get_manager_ref(&self) -> &M {
         self.op_manager.as_ref().unwrap()
     }
+
+    pub fn get_manager_mut(&mut self) -> &mut M {
+        self.op_manager.as_mut().unwrap()
+    }
 }
 
 fn two_site_hamiltonian(
@@ -452,12 +505,7 @@ fn two_site_hamiltonian(
                 (true, true) => -bond,
             }
     } else {
-        let diff_state = (inputs.0 == outputs.0, inputs.1 == outputs.1);
-        match diff_state {
-            (false, false) => 0.0,
-            (true, false) | (false, true) => 0.0,
-            (true, true) => unreachable!(),
-        }
+        0.0
     };
     assert!(matentry >= 0.0);
     matentry
@@ -473,6 +521,13 @@ fn single_site_hamiltonian(
         (false, false) | (true, true) => energy_offset,
         (false, true) | (true, false) => transverse,
     }
+}
+
+pub struct HamInfo<'a> {
+    edges: &'a [(VecEdge, f64)],
+    transverse: f64,
+    singlesite_energy_offset: f64,
+    twosite_energy_offset: f64,
 }
 
 #[cfg(feature = "autocorrelations")]

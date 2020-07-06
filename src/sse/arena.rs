@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Arena<T: Clone> {
     arena: Vec<T>,
     default: T,
@@ -51,7 +51,7 @@ impl<T: Clone> IndexMut<&ArenaIndex> for Arena<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ArenaIndex {
     start: usize,
     stop: usize,

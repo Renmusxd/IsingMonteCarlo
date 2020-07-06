@@ -14,13 +14,32 @@ pub trait OpContainerConstructor {
 }
 
 pub trait OpContainer {
+    fn get_cutoff(&self) -> usize;
     fn set_cutoff(&mut self, cutoff: usize);
     fn get_n(&self) -> usize;
     fn get_nvars(&self) -> usize;
     fn get_pth(&self, p: usize) -> Option<&Op>;
-    fn weight<H>(&self, h: H) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
+
+    fn verify(&self, state: &[bool]) -> bool {
+        let mut rolling_state = state.to_vec();
+        for p in 0..self.get_cutoff() {
+            let op = self.get_pth(p);
+            if let Some(op) = op {
+                for (v, inp) in op.vars.iter().zip(op.inputs.iter()) {
+                    if rolling_state[*v] != *inp {
+                        return false;
+                    }
+                }
+                op.vars.iter().zip(op.outputs.iter()).for_each(|(v, out)| {
+                    rolling_state[*v] = *out;
+                })
+            }
+        }
+        rolling_state
+            .into_iter()
+            .zip(state.iter())
+            .all(|(a, b)| a == *b)
+    }
 }
 
 pub struct BondWeights {
@@ -58,7 +77,7 @@ pub trait DiagonalUpdater: OpContainer {
     fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op>;
 
     /// This is actually what's called, if you override this you may leave set_pth unimplemented.
-    /// Folds across the p values, passing T down.
+    /// Folds across the p values, passing T down. Mutates op if returned values is Some(...)
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
@@ -70,6 +89,19 @@ pub trait DiagonalUpdater: OpContainer {
                 self.set_pth(p, op);
             }
             t
+        })
+    }
+
+    /// This is actually what's called, if you override this you may leave set_pth unimplemented.
+    /// Folds across the p values, passing T down.
+    fn iterate_ps<F, T>(&self, t: T, f: F) -> T
+    where
+        F: Fn(&Self, Option<&Op>, T) -> T,
+    {
+        let cutoff = self.get_cutoff();
+        (0..cutoff).fold(t, |t, p| {
+            let op = self.get_pth(p);
+            f(&self, op, t)
         })
     }
 
@@ -763,56 +795,49 @@ fn flip_state_for_op(op: &mut Op, side: OpSide) {
     }
 }
 
-//fn debug_print_looper<L: LoopUpdater<Node>, Node: OpNode, H>(looper: L, h: H)
-//    where
-//        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-//{
-//    let mut last_p = 0;
-//    let nvars = looper.get_nvars();
-//    for i in 0..nvars {
-//        print!("=");
-//    }
-//    println!();
-//    let p_ends = looper.get_first_p().and_then(|first_p| looper.get_last_p().map(|last_p| (first_p, last_p)));
-//    if let Some((p_start, p_end)) = p_ends {
-//        let mut next_p = Some(p_start);
-//        while next_p.is_some() {
-//            let np = next_p.unwrap();
-//            for p in last_p + 1..np {
-//                for i in 0..nvars {
-//                    print!("|");
-//                }
-//                println!("\tp={}", p);
-//            }
-//            let opnode = looper.get_node_ref(np).unwrap();
-//            let op = opnode.get_op_ref();
-//            for v in 0..op.vara {
-//                print!("|");
-//            }
-//            print!("{}", if op.inputs.0 { 1 } else { 0 });
-//            for v in op.vara + 1..op.varb {
-//                print!("|");
-//            }
-//            print!("{}", if op.inputs.1 { 1 } else { 0 });
-//            for v in op.varb + 1..nvars {
-//                print!("|");
-//            }
-//            println!("\tp={}\t\tW: {:?}", np, looper.p_matrix_weight(np, &h));
-//
-//            for v in 0..op.vara {
-//                print!("|");
-//            }
-//            print!("{}", if op.outputs.0 { 1 } else { 0 });
-//            for v in op.vara + 1..op.varb {
-//                print!("|");
-//            }
-//            print!("{}", if op.outputs.1 { 1 } else { 0 });
-//            for v in op.varb + 1..nvars {
-//                print!("|");
-//            }
-//            println!("\top: {:?}", &op);
-//            last_p = np;
-//            next_p = looper.get_next_p(opnode);
-//        }
-//    }
-//}
+pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bool]) {
+    let nvars = diagonal.get_nvars();
+    for _ in 0..nvars {
+        print!("=");
+    }
+    println!();
+    for b in state {
+        print!("{}", if *b { "1" } else { "0" });
+    }
+    println!();
+
+    diagonal.iterate_ps(0, |_, op, p| {
+        if let Some(op) = op {
+            let mut last_var = 0;
+            // for (var, inp) in op.vars.iter().zip(op.inputs.iter()) {
+            //     for _ in last_var..*var {
+            //         print!("|");
+            //     }
+            //     print!("{}", if *inp { 1 } else { 0 });
+            //     last_var = var + 1;
+            // }
+            // for _ in last_var..nvars {
+            //     print!("|");
+            // }
+            // println!();
+            // last_var = 0;
+            for (var, outp) in op.vars.iter().zip(op.outputs.iter()) {
+                for _ in last_var..*var {
+                    print!("|");
+                }
+                print!("{}", if *outp { 1 } else { 0 });
+                last_var = var + 1;
+            }
+            for _ in last_var..nvars {
+                print!("|");
+            }
+        } else {
+            for _ in 0..nvars {
+                print!("|");
+            }
+        }
+
+        println!("\tp={}", p);
+        p + 1
+    });
+}

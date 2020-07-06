@@ -2,9 +2,9 @@ use crate::sse::arena::*;
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::Op;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SimpleOpDiagonal {
-    ops: Vec<Option<Op>>,
+    pub(crate) ops: Vec<Option<Op>>,
     n: usize,
     nvars: usize,
     arena: Arena<Option<usize>>,
@@ -71,6 +71,10 @@ impl OpContainerConstructor for SimpleOpDiagonal {
 }
 
 impl OpContainer for SimpleOpDiagonal {
+    fn get_cutoff(&self) -> usize {
+        self.ops.len()
+    }
+
     fn set_cutoff(&mut self, cutoff: usize) {
         self.set_min_size(cutoff)
     }
@@ -90,19 +94,6 @@ impl OpContainer for SimpleOpDiagonal {
             self.ops[p].as_ref()
         }
     }
-
-    fn weight<H>(&self, h: H) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        self.ops
-            .iter()
-            .filter(|op| op.is_some())
-            .fold(1.0, |t, op| {
-                let op = op.as_ref().unwrap();
-                h(&op.vars, op.bond, &op.inputs, &op.outputs) * t
-            })
-    }
 }
 
 impl DiagonalUpdater for SimpleOpDiagonal {
@@ -114,7 +105,7 @@ impl DiagonalUpdater for SimpleOpDiagonal {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SimpleOpNode {
     pub(crate) op: Op,
     pub(crate) previous_p: Option<usize>,
@@ -161,6 +152,10 @@ pub struct SimpleOpLooper {
 }
 
 impl OpContainer for SimpleOpLooper {
+    fn get_cutoff(&self) -> usize {
+        self.ops.len()
+    }
+
     fn set_cutoff(&mut self, cutoff: usize) {
         if cutoff > self.ops.len() {
             self.ops.resize_with(cutoff, || None);
@@ -177,20 +172,6 @@ impl OpContainer for SimpleOpLooper {
 
     fn get_pth(&self, p: usize) -> Option<&Op> {
         self.ops[p].as_ref().map(|opnode| &opnode.op)
-    }
-
-    fn weight<H>(&self, h: H) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let mut t = 1.0;
-        let mut p = self.p_ends.map(|(p, _)| p);
-        while p.is_some() {
-            let op = self.ops[p.unwrap()].as_ref().unwrap();
-            t *= h(&op.op.vars, op.op.bond, &op.op.inputs, &op.op.outputs);
-            p = op.next_p;
-        }
-        t
     }
 }
 

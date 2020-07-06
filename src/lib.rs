@@ -3,4 +3,6 @@
 /// using monte carlo methods.
 ///
 pub mod graph;
+#[cfg(feature = "tempering")]
+pub mod parallel_tempering;
 pub mod sse;

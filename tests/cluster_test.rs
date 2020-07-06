@@ -1,8 +1,9 @@
-extern crate monte_carlo;
+extern crate ising_monte_carlo;
 extern crate rand;
-use monte_carlo::sse::qmc_traits::*;
-use monte_carlo::sse::qmc_types::Op;
-use monte_carlo::sse::simple_ops::*;
+use ising_monte_carlo::sse::qmc_traits::*;
+use ising_monte_carlo::sse::qmc_types::Op;
+use ising_monte_carlo::sse::simple_ops::*;
+use smallvec::smallvec;
 
 #[test]
 fn single_cluster_test() {
@@ -10,10 +11,10 @@ fn single_cluster_test() {
     manager.set_pth(
         0,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     let mut manager = manager.convert_to_looper();
@@ -29,19 +30,19 @@ fn simple_cluster_test() {
     manager.set_pth(
         0,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     manager.set_pth(
         1,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     let mut manager = manager.convert_to_looper();
@@ -57,38 +58,38 @@ fn multi_cluster_test() {
     manager.set_pth(
         0,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     manager.set_pth(
         1,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
 
     manager.set_pth(
         2,
         Some(Op {
-            vars: vec![1],
+            vars: smallvec![1],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     manager.set_pth(
         3,
         Some(Op {
-            vars: vec![1],
+            vars: smallvec![1],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
 
@@ -105,38 +106,38 @@ fn multi_twosite_cluster_test() {
     manager.set_pth(
         0,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     manager.set_pth(
         1,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
 
     manager.set_pth(
         2,
         Some(Op {
-            vars: vec![1, 2],
+            vars: smallvec![1, 2],
             bond: 0,
-            inputs: vec![false, false],
-            outputs: vec![false, false],
+            inputs: smallvec![false, false],
+            outputs: smallvec![false, false],
         }),
     );
     manager.set_pth(
         3,
         Some(Op {
-            vars: vec![2, 3],
+            vars: smallvec![2, 3],
             bond: 0,
-            inputs: vec![false, false],
-            outputs: vec![false, false],
+            inputs: smallvec![false, false],
+            outputs: smallvec![false, false],
         }),
     );
 
@@ -153,28 +154,28 @@ fn multi_multisite_cluster_test() {
     manager.set_pth(
         0,
         Some(Op {
-            vars: vec![0],
+            vars: smallvec![0],
             bond: 0,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
     manager.set_pth(
         1,
         Some(Op {
-            vars: vec![1, 2],
+            vars: smallvec![1, 2],
             bond: 1,
-            inputs: vec![false, false],
-            outputs: vec![false, false],
+            inputs: smallvec![false, false],
+            outputs: smallvec![false, false],
         }),
     );
     manager.set_pth(
         2,
         Some(Op {
-            vars: vec![1],
+            vars: smallvec![1],
             bond: 2,
-            inputs: vec![false],
-            outputs: vec![false],
+            inputs: smallvec![false],
+            outputs: smallvec![false],
         }),
     );
 
