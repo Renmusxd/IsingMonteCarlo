@@ -156,6 +156,9 @@ impl<
     pub fn graph_ref(&self) -> &[(QMCGraph<R2, N, M, L>, f64)] {
         &self.graphs
     }
+    pub fn graph_mut(&mut self) -> &mut [(QMCGraph<R2, N, M, L>, f64)] {
+        &mut self.graphs
+    }
 
     pub fn nvars(&self) -> usize {
         self.nvars
