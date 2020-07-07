@@ -9,7 +9,8 @@ use rand::Rng;
 use smallvec::SmallVec;
 use std::cmp::max;
 
-pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
+pub type DefaultTemperingContainer<R1, R2> =
+    TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
 
 pub struct TemperingContainer<
     R1: Rng,
@@ -35,7 +36,7 @@ pub fn new_with_rng<R2: Rng, R: Rng>(
     cutoff: usize,
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
-) -> TemperingContainer<R, R2, FastOpNode, FastOps, FastOps> {
+) -> DefaultTemperingContainer<R, R2> {
     TemperingContainer::new(
         rng,
         edges,
@@ -50,7 +51,7 @@ pub fn new_thread_rng(
     cutoff: usize,
     use_loop_update: bool,
     use_heatbath_diagonal_update: bool,
-) -> TemperingContainer<ThreadRng, ThreadRng, FastOpNode, FastOps, FastOps> {
+) -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
     TemperingContainer::new(
         rand::thread_rng(),
         edges,
@@ -121,10 +122,13 @@ impl<
     }
 
     pub fn tempering_step(&mut self) {
+        if self.graphs.len() <= 1 {
+            return;
+        }
         let mut rng = self.rng.take().unwrap();
 
         let first_subgraphs = if self.graphs.len() % 2 == 0 {
-            &mut self.graphs
+            self.graphs.as_mut_slice()
         } else {
             let n = self.graphs.len();
             &mut self.graphs[0..n - 1]
@@ -184,6 +188,10 @@ fn perform_swaps<
     mut rng: R1,
     graphs: &mut [(QMCGraph<R2, N, M, L>, f64)],
 ) {
+    assert!(graphs.len() % 2 == 0);
+    if graphs.is_empty() {
+        return;
+    }
     graphs
         .iter_mut()
         .map(|(g, _)| g)
@@ -230,9 +238,9 @@ fn swap_on_chunks<
         QMCGraph::<R, N, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
     };
 
-    let bstate = ga.relative_weight_for_state(ha, &mut b_state);
-    let astate = gb.relative_weight_for_state(hb, &mut a_state);
-    let p_swap = bstate * astate;
+    let rel_bstate = ga.relative_weight_for_state(ha, &mut b_state);
+    let rel_astate = gb.relative_weight_for_state(hb, &mut a_state);
+    let p_swap = rel_bstate * rel_astate;
     if p_swap > p {
         ga.set_state(b_state);
         gb.set_state(a_state);
@@ -318,6 +326,10 @@ pub mod rayon_tempering {
         mut rng: R1,
         graphs: &mut [(QMCGraph<R2, N, M, L>, f64)],
     ) {
+        assert!(graphs.len() % 2 == 0);
+        if graphs.is_empty() {
+            return;
+        }
         // Generate probs for bools ahead of time, this way we can parallelize.
         let probs = (0..graphs.len() / 2)
             .map(|_| rng.gen_range(0.0, 1.0))
