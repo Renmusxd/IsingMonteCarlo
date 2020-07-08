@@ -1,13 +1,14 @@
 use crate::graph::Edge;
 use crate::parallel_tempering::tempering_traits::*;
 use crate::sse::fast_ops::{FastOpNode, FastOps};
+use crate::sse::qmc_graph;
 use crate::sse::qmc_graph::QMCGraph;
 use crate::sse::qmc_traits::*;
 use itertools::Itertools;
 use rand::prelude::ThreadRng;
 use rand::Rng;
 use smallvec::SmallVec;
-use std::cmp::max;
+use std::cmp::{max, min};
 
 pub type DefaultTemperingContainer<R1, R2> =
     TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
@@ -146,6 +147,50 @@ impl<
         self.rng = Some(rng);
     }
 
+    pub fn timesteps_sample(
+        &mut self,
+        timesteps: usize,
+        replica_swap_freq: usize,
+        sampling_freq: usize,
+    ) -> Vec<(Vec<Vec<bool>>, f64)> {
+        let mut states = (0..self.num_graphs())
+            .map(|_| Vec::<Vec<bool>>::with_capacity(timesteps / sampling_freq))
+            .collect::<Vec<_>>();
+        let mut energy_acc = vec![0.0; self.num_graphs()];
+
+        let mut remaining_timesteps = timesteps;
+        let mut time_to_swap = replica_swap_freq;
+        let mut time_to_sample = sampling_freq;
+
+        while remaining_timesteps > 0 {
+            let t = min(min(time_to_sample, time_to_swap), remaining_timesteps);
+            self.graphs
+                .iter_mut()
+                .map(|(g, beta)| g.timesteps(t, *beta))
+                .zip(energy_acc.iter_mut())
+                .for_each(|(te, e)| {
+                    *e += te * t as f64;
+                });
+            time_to_sample -= t;
+            time_to_swap -= t;
+            remaining_timesteps -= t;
+
+            if time_to_swap == 0 {
+                self.tempering_step();
+                time_to_swap = replica_swap_freq;
+            }
+            if time_to_sample == 0 {
+                let graphs = self.graphs.iter().map(|(g, _)| g);
+                states
+                    .iter_mut()
+                    .zip(graphs)
+                    .for_each(|(s, g)| s.push(g.state_ref().to_vec()));
+                time_to_sample = sampling_freq;
+            }
+        }
+        states.into_iter().zip(energy_acc.into_iter()).collect()
+    }
+
     pub fn iter_over_states<F>(&self, f: F)
     where
         F: Fn(&[bool]),
@@ -261,6 +306,12 @@ pub mod rayon_tempering {
         fn parallel_iter_over_states<F>(&self, f: F)
         where
             F: Fn(&[bool]) + Sync;
+        fn parallel_timesteps_sample(
+            &mut self,
+            timesteps: usize,
+            replica_swap_freq: usize,
+            sampling_freq: usize,
+        ) -> Vec<(Vec<Vec<bool>>, f64)>;
     }
 
     impl<
@@ -311,6 +362,50 @@ pub mod rayon_tempering {
         {
             self.graphs.par_iter().for_each(|(g, _)| f(g.state_ref()))
         }
+
+        fn parallel_timesteps_sample(
+            &mut self,
+            timesteps: usize,
+            replica_swap_freq: usize,
+            sampling_freq: usize,
+        ) -> Vec<(Vec<Vec<bool>>, f64)> {
+            let mut states = (0..self.num_graphs())
+                .map(|_| Vec::<Vec<bool>>::with_capacity(timesteps / sampling_freq))
+                .collect::<Vec<_>>();
+            let mut energy_acc = vec![0.0; self.num_graphs()];
+
+            let mut remaining_timesteps = timesteps;
+            let mut time_to_swap = replica_swap_freq;
+            let mut time_to_sample = sampling_freq;
+
+            while remaining_timesteps > 0 {
+                let t = min(min(time_to_sample, time_to_swap), remaining_timesteps);
+                self.graphs
+                    .par_iter_mut()
+                    .map(|(g, beta)| g.timesteps(t, *beta))
+                    .zip(energy_acc.par_iter_mut())
+                    .for_each(|(te, e)| {
+                        *e += te * t as f64;
+                    });
+                time_to_sample -= t;
+                time_to_swap -= t;
+                remaining_timesteps -= t;
+
+                if time_to_swap == 0 {
+                    self.parallel_tempering_step();
+                    time_to_swap = replica_swap_freq;
+                }
+                if time_to_sample == 0 {
+                    let graphs = self.graphs.par_iter().map(|(g, _)| g);
+                    states
+                        .par_iter_mut()
+                        .zip(graphs)
+                        .for_each(|(s, g)| s.push(g.state_ref().to_vec()));
+                    time_to_sample = sampling_freq;
+                }
+            }
+            states.into_iter().zip(energy_acc.into_iter()).collect()
+        }
     }
 
     fn parallel_perform_swaps<
@@ -329,7 +424,7 @@ pub mod rayon_tempering {
         mut rng: R1,
         graphs: &mut [(QMCGraph<R2, N, M, L>, f64)],
     ) {
-        assert!(graphs.len() % 2 == 0);
+        assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
             return;
         }
@@ -344,6 +439,139 @@ pub mod rayon_tempering {
             .map(|g| unwrap_chunk(g.into_iter()))
             .zip(probs.into_par_iter())
             .for_each(|((ga, gb), p)| swap_on_chunks(ga, gb, p));
+    }
+
+    #[cfg(feature = "autocorrelations")]
+    pub mod autocorrelations {
+        use super::*;
+
+        pub trait ParallelTemperingAutocorrelations {
+            fn calculate_variable_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>>;
+            fn calculate_bond_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>>;
+            fn calculate_autocorrelation<F>(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+                sample_mapper: F,
+            ) -> Vec<Vec<f64>>
+            where
+                F: Fn(Vec<bool>) -> Vec<f64> + Copy + Send + Sync;
+        }
+
+        impl<
+                R1: Rng,
+                R2: Rng + Send + Sync,
+                N: OpNode + Send + Sync,
+                M: OpContainerConstructor
+                    + DiagonalUpdater
+                    + ConvertsToLooper<N, L>
+                    + StateSetter
+                    + OpWeights
+                    + Send
+                    + Sync,
+                L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Send + Sync,
+            > ParallelTemperingAutocorrelations for TemperingContainer<R1, R2, N, M, L>
+        {
+            #[cfg(feature = "autocorrelations")]
+            fn calculate_variable_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>> {
+                self.calculate_autocorrelation(
+                    timesteps,
+                    replica_swap_freq,
+                    sampling_freq,
+                    use_fft,
+                    |sample| {
+                    sample
+                        .into_iter()
+                        .map(|b| if b { 1.0 } else { -1.0 })
+                        .collect()
+                })
+            }
+
+            fn calculate_bond_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>> {
+                let edges = self.edges.clone();
+                self.calculate_autocorrelation(
+                    timesteps,
+                    replica_swap_freq,
+                    sampling_freq,
+                    use_fft,
+                    |sample| {
+                        let even = |(a, b): &(usize, usize)| -> bool {
+                            match (sample[*a], sample[*b]) {
+                                (true, true) | (false, false) => true,
+                                _ => false,
+                            }
+                        };
+                        edges
+                            .iter()
+                            .map(|(edge, j)| -> f64 {
+                                let b = if *j < 0.0 { even(edge) } else { !even(edge) };
+                                if b {
+                                    1.0
+                                } else {
+                                    -1.0
+                                }
+                            })
+                            .collect()
+                    },
+                )
+            }
+
+            fn calculate_autocorrelation<F>(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+                sample_mapper: F,
+            ) -> Vec<Vec<f64>>
+            where
+                F: Fn(Vec<bool>) -> Vec<f64> + Copy + Send + Sync,
+            {
+                let replica_swap_freq = replica_swap_freq.unwrap_or(1);
+                let sampling_freq = sampling_freq.unwrap_or(1);
+                let states_and_energies =
+                    self.parallel_timesteps_sample(timesteps, replica_swap_freq, sampling_freq);
+
+                states_and_energies
+                    .into_iter()
+                    .map(|(samples, _)| {
+                        let samples = samples.into_iter().map(sample_mapper).collect::<Vec<_>>();
+
+                        if use_fft.unwrap_or(true) {
+                            qmc_graph::autocorrelations::fft_autocorrelation(&samples)
+                        } else {
+                            qmc_graph::autocorrelations::naive_autocorrelation(&samples)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
+        }
     }
 
     #[cfg(test)]

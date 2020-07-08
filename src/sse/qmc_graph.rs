@@ -531,7 +531,7 @@ pub struct HamInfo<'a> {
 }
 
 #[cfg(feature = "autocorrelations")]
-mod autocorrelations {
+pub(crate) mod autocorrelations {
     use num::{Complex, Zero};
     use rayon::prelude::*;
     use rustfft::FFTplanner;
