@@ -302,15 +302,13 @@ impl<
         let transverse = self.transverse;
         let twosite_energy_offset = self.twosite_energy_offset;
         let singlesite_energy_offset = self.singlesite_energy_offset;
+        let hinfo = HamInfo {
+            edges,
+            transverse,
+            singlesite_energy_offset,
+            twosite_energy_offset,
+        };
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            // Have to remake the struct because rng is borrowed as mutable, shouldn't actually
-            // have a noticeable performance hit though since it's doing the same thing either way.
-            let hinfo = HamInfo {
-                edges,
-                transverse,
-                singlesite_energy_offset,
-                twosite_energy_offset,
-            };
             Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
 
