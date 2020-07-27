@@ -73,6 +73,28 @@ impl BondWeights {
     }
 }
 
+pub struct Hamiltonian<
+    'a,
+    H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    E: Fn(usize) -> &'a [usize],
+> {
+    hamiltonian: H,
+    num_edges: usize,
+    edge_fn: E,
+}
+
+impl<'a, H: Fn(&[usize], usize, &[bool], &[bool]) -> f64, E: Fn(usize) -> &'a [usize]>
+    Hamiltonian<'a, H, E>
+{
+    pub fn new(hamiltonian: H, edge_fn: E, num_edges: usize) -> Self {
+        Hamiltonian {
+            hamiltonian,
+            edge_fn,
+            num_edges,
+        }
+    }
+}
+
 pub trait DiagonalUpdater: OpContainer {
     fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op>;
 
@@ -140,8 +162,8 @@ pub trait DiagonalUpdater: OpContainer {
         cutoff: usize,
         beta: f64,
         state: &[bool],
-        hamiltonian: H,
-        edges: (usize, E, Option<BondWeights>),
+        hamiltonian: &Hamiltonian<'b, H, E>,
+        bond_weights: Option<BondWeights>,
     ) -> Option<BondWeights>
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
@@ -152,7 +174,7 @@ pub trait DiagonalUpdater: OpContainer {
             beta,
             state,
             hamiltonian,
-            edges,
+            bond_weights,
             &mut rand::thread_rng(),
         )
     }
@@ -162,8 +184,8 @@ pub trait DiagonalUpdater: OpContainer {
         cutoff: usize,
         beta: f64,
         state: &[bool],
-        hamiltonian: H,
-        edges: (usize, E, Option<BondWeights>),
+        hamiltonian: &Hamiltonian<'b, H, E>,
+        bond_weights: Option<BondWeights>,
         rng: &mut R,
     ) -> Option<BondWeights>
     where
@@ -171,7 +193,6 @@ pub trait DiagonalUpdater: OpContainer {
         E: Fn(usize) -> &'b [usize],
     {
         let state = state.to_vec();
-        let (n_edges, edge_fn, bond_weights) = edges;
 
         // Either use metropolis or heat bath.
         match bond_weights {
@@ -183,8 +204,7 @@ pub trait DiagonalUpdater: OpContainer {
                         s.get_n(),
                         beta,
                         &mut state,
-                        &hamiltonian,
-                        (n_edges, &edge_fn),
+                        hamiltonian,
                         rng,
                     );
                     (op, (state, rng))
@@ -203,7 +223,7 @@ pub trait DiagonalUpdater: OpContainer {
                             beta,
                             &mut state,
                             &hamiltonian,
-                            (&edge_fn, bond_weights),
+                            bond_weights,
                             rng,
                         );
                         (op, (state, rng, bond_weights))
@@ -220,16 +240,14 @@ pub trait DiagonalUpdater: OpContainer {
         n: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian: H,
-        edges: (E, BondWeights),
+        hamiltonian: &Hamiltonian<'b, H, E>,
+        mut bond_weights: BondWeights,
         rng: &mut R,
     ) -> (Option<Option<Op>>, BondWeights)
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let (edges_fn, mut bond_weights) = edges;
-
         let new_op = match op {
             None => {
                 let numerator = beta * bond_weights.total;
@@ -238,7 +256,7 @@ pub trait DiagonalUpdater: OpContainer {
                     // Find the bond to use, weighted by their matrix element.
                     let val = rng.gen_range(0.0, bond_weights.total);
                     let b = bond_weights.index_for_cumulative(val);
-                    let vars = edges_fn(b);
+                    let vars = (hamiltonian.edge_fn)(b);
                     let substate = vars
                         .iter()
                         .map(|v| state[*v])
@@ -268,7 +286,7 @@ pub trait DiagonalUpdater: OpContainer {
                 vars.iter()
                     .zip(outputs.iter())
                     .for_each(|(v, b)| state[*v] = *b);
-                let weight = hamiltonian(vars, *bond, inputs, outputs);
+                let weight = (hamiltonian.hamiltonian)(vars, *bond, inputs, outputs);
                 bond_weights.update_weight(*bond, weight);
                 None
             }
@@ -282,18 +300,15 @@ pub trait DiagonalUpdater: OpContainer {
         n: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian: H,
-        edges: (usize, E),
+        hamiltonian: &Hamiltonian<'b, H, E>,
         rng: &mut R,
     ) -> Option<Option<Op>>
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let (num_edges, edges_fn) = edges;
-
         let b = match op {
-            None => rng.gen_range(0, num_edges),
+            None => rng.gen_range(0, hamiltonian.num_edges),
             Some(op) if op.is_diagonal() => op.bond,
             Some(Op { vars, outputs, .. }) => {
                 vars.iter()
@@ -302,15 +317,15 @@ pub trait DiagonalUpdater: OpContainer {
                 return None;
             }
         };
-        let vars = edges_fn(b);
+        let vars = (hamiltonian.edge_fn)(b);
         let substate = vars
             .iter()
             .map(|v| state[*v])
             .collect::<SmallVec<[bool; 2]>>();
-        let mat_element = hamiltonian(vars, b, &substate, &substate);
+        let mat_element = (hamiltonian.hamiltonian)(vars, b, &substate, &substate);
 
         // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
-        let numerator = beta * (num_edges as f64) * mat_element;
+        let numerator = beta * (hamiltonian.num_edges as f64) * mat_element;
         let denominator = (cutoff - n) as f64;
 
         match op {
@@ -578,32 +593,35 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
 
 pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
     fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R) -> Vec<(usize, bool)> {
+        let mut state_changes = vec![];
+        self.flip_each_cluster_rng_to_acc(prob, rng, &mut state_changes);
+        state_changes
+    }
+
+    fn flip_each_cluster_rng_to_acc<R: Rng>(&mut self, prob: f64, rng: &mut R, state_changes: &mut Vec<(usize, bool)>){
         if self.get_n() == 0 {
-            return vec![];
+            return;
         }
 
         let last_p = self.get_last_p().unwrap();
-        let mut boundaries: Vec<(Option<usize>, Option<usize>)> = vec![(None, None); last_p + 1];
+        let mut boundaries = self.get_boundaries_alloc(last_p + 1);
 
         let single_site_p = self.find_single_site();
         let n_clusters = if let Some(single_site_p) = single_site_p {
             // Expand to edges of cluster
-            let mut frontier: Vec<(usize, OpSide)> = vec![
-                (single_site_p, OpSide::Outputs),
-                (single_site_p, OpSide::Inputs),
-            ];
-            // (single_site_p, OpSide::Inputs)
+            let mut frontier = self.get_frontier_alloc();
+            frontier.push((single_site_p, OpSide::Outputs));
+            frontier.push((single_site_p, OpSide::Inputs));
+
             let mut cluster_num = 1;
             loop {
                 while let Some((p, frontier_side)) = frontier.pop() {
-                    let node = self.get_node_ref(p).unwrap();
                     match boundaries.get(p) {
                         Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */
                         }
                         Some(_) => {
                             self.expand_whole_cluster(
                                 p,
-                                node,
                                 (0, frontier_side),
                                 cluster_num,
                                 &mut boundaries,
@@ -628,6 +646,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                     break;
                 }
             }
+            self.return_frontier_alloc(frontier);
             cluster_num
         } else {
             // The whole thing is one cluster.
@@ -640,12 +659,11 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
             1
         };
 
-        let flips = (0..n_clusters)
-            .map(|_| rng.gen_bool(prob))
-            .collect::<Vec<_>>();
-        let mut state_changes = vec![];
+        let mut flips = self.get_flip_alloc();
+        flips.extend((0..n_clusters)
+            .map(|_| rng.gen_bool(prob)));
         boundaries
-            .into_iter()
+            .iter()
             .enumerate()
             .filter_map(|(p, clust)| match clust {
                 (Some(a), Some(b)) => Some((p, (a, b))),
@@ -653,7 +671,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                 _ => unreachable!(),
             })
             .for_each(|(p, (input_cluster, output_cluster))| {
-                if flips[input_cluster] {
+                if flips[*input_cluster] {
                     let node = self.get_node_mut(p).unwrap();
                     let op = node.get_op_mut();
                     flip_state_for_op(op, OpSide::Inputs);
@@ -667,39 +685,41 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                         }
                     });
                 }
-                if flips[output_cluster] {
+                if flips[*output_cluster] {
                     let node = self.get_node_mut(p).unwrap();
                     let op = node.get_op_mut();
                     flip_state_for_op(op, OpSide::Outputs)
                 }
             });
-        state_changes
+        self.return_boundaries_alloc(boundaries);
+        self.return_flip_alloc(flips);
     }
 
     fn expand_whole_cluster(
-        &self,
+        &mut self,
         p: usize,
-        node: &Node,
         leg: Leg,
         cluster_num: usize,
         boundaries: &mut [(Option<usize>, Option<usize>)],
         frontier: &mut Vec<(usize, OpSide)>,
     ) {
-        let mut interior_frontier = if node.get_op().vars.len() > 1 {
+        let mut interior_frontier = self.get_interior_frontier_alloc();
+        let node = self.get_node_ref(p).unwrap();
+        if node.get_op().vars.len() > 1 {
             // Add all legs
             assert_eq!(boundaries[p], (None, None));
             let op = node.get_op_ref();
             let inputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Inputs));
             let outputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Outputs));
             let all_legs = inputs_legs.chain(outputs_legs);
-            all_legs.map(|l| (p, l, node)).collect()
+            interior_frontier.extend(all_legs.map(|l| (p, l)));
         } else {
-            vec![(p, leg, node)]
+            interior_frontier.push((p, leg))
         };
 
-        while let Some((p, leg, node)) = interior_frontier.pop() {
+        while let Some((p, leg)) = interior_frontier.pop() {
             set_boundary(p, leg.1, cluster_num, boundaries);
-
+            let node = self.get_node_ref(p).unwrap();
             let op = node.get_op_ref();
             let relvar = leg.0;
             let var = op.vars[relvar];
@@ -739,12 +759,13 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                         let outputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Outputs));
                         let new_legs = inputs_legs.chain(outputs_legs).filter(|l| *l != next_leg);
 
-                        interior_frontier.extend(new_legs.map(|leg| (next_p, leg, next_node)));
+                        interior_frontier.extend(new_legs.map(|leg| (next_p, leg)));
                     }
                     _ => (),
                 }
             }
         }
+        self.return_interior_frontier_alloc(interior_frontier);
     }
 
     fn find_single_site(&self) -> Option<usize> {
@@ -763,6 +784,31 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
         }
         None
     }
+
+    // Overwrite these functions to reduce the number of memory allocs in the cluster step.
+    fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
+        vec![]
+    }
+
+    fn get_interior_frontier_alloc(&mut self) -> Vec<(usize, Leg)> {
+        vec![]
+    }
+
+    fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
+        vec![(None, None); size]
+    }
+
+    fn get_flip_alloc(&mut self) -> Vec<bool> {
+        vec![]
+    }
+
+    fn return_frontier_alloc(&mut self, _frontier: Vec<(usize, OpSide)>) {}
+
+    fn return_interior_frontier_alloc(&mut self, _interior_frontier: Vec<(usize, Leg)>) {}
+
+    fn return_boundaries_alloc(&mut self, _boundaries: Vec<(Option<usize>, Option<usize>)>) {}
+
+    fn return_flip_alloc(&mut self, _flips: Vec<bool>) {}
 }
 
 pub trait ConvertsToDiagonal<D: DiagonalUpdater> {
@@ -820,18 +866,6 @@ pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bo
     diagonal.iterate_ps(0, |_, op, p| {
         if let Some(op) = op {
             let mut last_var = 0;
-            // for (var, inp) in op.vars.iter().zip(op.inputs.iter()) {
-            //     for _ in last_var..*var {
-            //         print!("|");
-            //     }
-            //     print!("{}", if *inp { 1 } else { 0 });
-            //     last_var = var + 1;
-            // }
-            // for _ in last_var..nvars {
-            //     print!("|");
-            // }
-            // println!();
-            // last_var = 0;
             for (var, outp) in op.vars.iter().zip(op.outputs.iter()) {
                 for _ in last_var..*var {
                     print!("|");

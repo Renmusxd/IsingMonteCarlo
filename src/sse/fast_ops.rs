@@ -1,5 +1,5 @@
 use crate::sse::qmc_traits::*;
-use crate::sse::qmc_types::Op;
+use crate::sse::qmc_types::{Leg, Op, OpSide};
 use smallvec::SmallVec;
 
 #[derive(Debug)]
@@ -8,6 +8,13 @@ pub struct FastOps {
     pub(crate) n: usize,
     pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(usize, usize)>>,
+
+    frontier: Option<Vec<(usize, OpSide)>>,
+    interior_frontier: Option<Vec<(usize, Leg)>>,
+    boundaries: Option<Vec<(Option<usize>, Option<usize>)>>,
+    flips: Option<Vec<bool>>,
+    // Reusable vector
+    last_vars_alloc: Option<Vec<Option<usize>>>
 }
 
 type LinkVars = SmallVec<[Option<usize>; 2]>;
@@ -66,9 +73,11 @@ impl DiagonalUpdater for FastOps {
         };
 
         let last_p: Option<usize> = None;
-        let last_vars: Vec<Option<usize>> = vec![None; self.var_ends.len()];
+        let mut last_vars = self.last_vars_alloc.take().unwrap();
+        last_vars.clear();
+        last_vars.resize_with(self.var_ends.len(), || None);
 
-        let (t, _, _) = (0..cutoff).fold(
+        let (t, _, last_vars) = (0..cutoff).fold(
             (t, last_p, last_vars),
             |(t, mut last_p, mut last_vars), p| {
                 let op_ref = self.get_pth(p);
@@ -279,6 +288,7 @@ impl DiagonalUpdater for FastOps {
                 (t, last_p, last_vars)
             },
         );
+        self.last_vars_alloc = Some(last_vars);
         t
     }
 }
@@ -290,6 +300,11 @@ impl OpContainerConstructor for FastOps {
             n: 0,
             p_ends: None,
             var_ends: vec![None; nvars],
+            frontier: Some(vec![]),
+            interior_frontier: Some(vec![]),
+            boundaries: Some(vec![]),
+            flips: Some(vec![]),
+            last_vars_alloc: Some(vec![])
         }
     }
 }
@@ -370,7 +385,49 @@ impl LoopUpdater<FastOpNode> for FastOps {
     }
 }
 
-impl ClusterUpdater<FastOpNode> for FastOps {}
+impl ClusterUpdater<FastOpNode> for FastOps {
+    // No need for logic here, just reuse some allocations.
+    fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
+        let mut frontier = self.frontier.take().unwrap();
+        frontier.clear();
+        frontier
+    }
+
+    fn get_interior_frontier_alloc(&mut self) -> Vec<(usize, Leg)> {
+        let mut interior_frontier = self.interior_frontier.take().unwrap();
+        interior_frontier.clear();
+        interior_frontier
+    }
+
+    fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
+        let mut boundaries = self.boundaries.take().unwrap();
+        boundaries.clear();
+        boundaries.resize_with(size, || (None, None));
+        boundaries
+    }
+
+    fn get_flip_alloc(&mut self) -> Vec<bool> {
+        let mut flips = self.flips.take().unwrap();
+        flips.clear();
+        flips
+    }
+
+    fn return_frontier_alloc(&mut self, frontier: Vec<(usize, OpSide)>) {
+        self.frontier = Some(frontier);
+    }
+
+    fn return_interior_frontier_alloc(&mut self, interior_frontier: Vec<(usize, Leg)>) {
+        self.interior_frontier = Some(interior_frontier)
+    }
+
+    fn return_boundaries_alloc(&mut self, boundaries: Vec<(Option<usize>, Option<usize>)>) {
+        self.boundaries = Some(boundaries)
+    }
+
+    fn return_flip_alloc(&mut self, flips: Vec<bool>) {
+        self.flips = Some(flips)
+    }
+}
 
 impl ConvertsToDiagonal<FastOps> for FastOps {
     fn convert_to_diagonal(self) -> FastOps {

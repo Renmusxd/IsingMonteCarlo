@@ -30,6 +30,8 @@ pub struct QMCGraph<
     phantom_l: PhantomData<L>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
+    // An alloc to reuse in cluster updates
+    state_updates: Vec<(usize, bool)>
 }
 
 pub fn new_qmc(
@@ -123,6 +125,7 @@ impl<
             phantom_n: PhantomData,
             phantom_l: PhantomData,
             vars: (0..nvars).collect(),
+            state_updates: vec![]
         }
     }
 
@@ -330,14 +333,8 @@ impl<
         } else {
             None
         };
-        manager.make_diagonal_update_with_rng(
-            self.cutoff,
-            beta,
-            &state,
-            h,
-            (num_bonds, bonds_fn, bond_weights),
-            rng,
-        );
+        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
+        manager.make_diagonal_update_with_rng(self.cutoff, beta, &state, &ham, bond_weights, rng);
         let new_cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         let mut manager = manager.convert_to_looper();
@@ -349,8 +346,10 @@ impl<
             });
         }
 
-        let state_updates = manager.flip_each_cluster_rng(0.5, rng);
-        state_updates.into_iter().for_each(|(i, v)| {
+        let state_changes = &mut self.state_updates;
+        state_changes.clear();
+        manager.flip_each_cluster_rng_to_acc(0.5, rng, state_changes);
+        state_changes.iter().cloned().for_each(|(i, v)| {
             state[i] = v;
         });
 

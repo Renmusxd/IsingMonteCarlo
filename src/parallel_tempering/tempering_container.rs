@@ -13,6 +13,8 @@ use std::cmp::{max, min};
 pub type DefaultTemperingContainer<R1, R2> =
     TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
 
+pub type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
+
 pub struct TemperingContainer<
     R1: Rng,
     R2: Rng,
@@ -27,7 +29,7 @@ pub struct TemperingContainer<
     use_heatbath_diagonal_update: bool,
 
     // Graph and beta
-    graphs: Vec<(QMCGraph<R2, N, M, L>, f64)>,
+    graphs: Vec<GraphBeta<R2, N, M, L>>,
     rng: Option<R1>,
 }
 
@@ -198,10 +200,10 @@ impl<
         self.graphs.iter().for_each(|(g, _)| f(g.state_ref()))
     }
 
-    pub fn graph_ref(&self) -> &[(QMCGraph<R2, N, M, L>, f64)] {
+    pub fn graph_ref(&self) -> &[GraphBeta<R2, N, M, L>] {
         &self.graphs
     }
-    pub fn graph_mut(&mut self) -> &mut [(QMCGraph<R2, N, M, L>, f64)] {
+    pub fn graph_mut(&mut self) -> &mut [GraphBeta<R2, N, M, L>] {
         &mut self.graphs
     }
 
@@ -234,7 +236,7 @@ fn perform_swaps<
     L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
 >(
     mut rng: R1,
-    graphs: &mut [(QMCGraph<R2, N, M, L>, f64)],
+    graphs: &mut [GraphBeta<R2, N, M, L>],
 ) {
     assert!(graphs.len() % 2 == 0);
     if graphs.is_empty() {
@@ -422,7 +424,7 @@ pub mod rayon_tempering {
         L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Send + Sync,
     >(
         mut rng: R1,
-        graphs: &mut [(QMCGraph<R2, N, M, L>, f64)],
+        graphs: &mut [GraphBeta<R2, N, M, L>],
     ) {
         assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
@@ -500,11 +502,12 @@ pub mod rayon_tempering {
                     sampling_freq,
                     use_fft,
                     |sample| {
-                    sample
-                        .into_iter()
-                        .map(|b| if b { 1.0 } else { -1.0 })
-                        .collect()
-                })
+                        sample
+                            .into_iter()
+                            .map(|b| if b { 1.0 } else { -1.0 })
+                            .collect()
+                    },
+                )
             }
 
             fn calculate_bond_autocorrelation(

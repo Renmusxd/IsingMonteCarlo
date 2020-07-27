@@ -35,17 +35,16 @@ mod tests {
     use ising_monte_carlo::sse::fast_ops::*;
     use ising_monte_carlo::sse::qmc_graph::QMCGraph;
     use ising_monte_carlo::sse::simple_ops::*;
-    use rand::prelude::*;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
     use test::Bencher;
 
     #[bench]
-    fn one_d_no_loopupdate(b: &mut Bencher) {
+    fn one_d(b: &mut Bencher) {
         let l = 16;
-        let rng = rand::thread_rng();
+        let rng = SmallRng::seed_from_u64(1234);
         let mut g =
-            QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+            QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
                 one_d_periodic(l),
                 1.0,
                 l,
@@ -59,11 +58,11 @@ mod tests {
     }
 
     #[bench]
-    fn two_d_no_loopupdate(b: &mut Bencher) {
+    fn two_d(b: &mut Bencher) {
         let l = 4;
-        let rng = rand::thread_rng();
+        let rng = SmallRng::seed_from_u64(1234);
         let mut g =
-            QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+            QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
                 two_d_periodic(l),
                 1.0,
                 l,
@@ -78,10 +77,10 @@ mod tests {
     }
 
     #[bench]
-    fn one_d_no_loopupdate_new(b: &mut Bencher) {
+    fn one_d_new(b: &mut Bencher) {
         let l = 16;
-        let rng = rand::thread_rng();
-        let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
             one_d_periodic(l),
             1.0,
             l,
@@ -95,10 +94,10 @@ mod tests {
     }
 
     #[bench]
-    fn two_d_no_loopupdate_new(b: &mut Bencher) {
+    fn two_d_new(b: &mut Bencher) {
         let l = 4;
-        let rng = rand::thread_rng();
-        let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
             two_d_periodic(l),
             1.0,
             l,
@@ -113,46 +112,9 @@ mod tests {
     }
 
     #[bench]
-    fn two_d_no_loopupdate_large(b: &mut Bencher) {
+    fn two_d_large(b: &mut Bencher) {
         let l = 16;
-        let rng = rand::thread_rng();
-        let mut g =
-            QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
-                two_d_periodic(l),
-                1.0,
-                l,
-                false,
-                false,
-                rng,
-                None,
-            );
-
-        let beta = 1.0;
-        b.iter(|| g.timesteps(100, beta));
-    }
-
-    #[bench]
-    fn two_d_no_loopupdate_large_new(b: &mut Bencher) {
-        let l = 16;
-        let rng = rand::thread_rng();
-        let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
-            two_d_periodic(l),
-            1.0,
-            l,
-            false,
-            false,
-            rng,
-            None,
-        );
-
-        let beta = 1.0;
-        b.iter(|| g.timesteps(100, beta));
-    }
-
-    #[bench]
-    fn two_d_no_loopupdate_large_smallrng(b: &mut Bencher) {
-        let l = 16;
-        let rng = SmallRng::from_entropy();
+        let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
                 two_d_periodic(l),
@@ -169,9 +131,9 @@ mod tests {
     }
 
     #[bench]
-    fn two_d_no_loopupdate_large_new_smallrng(b: &mut Bencher) {
+    fn two_d_large_new(b: &mut Bencher) {
         let l = 16;
-        let rng = SmallRng::from_entropy();
+        let rng = SmallRng::seed_from_u64(1234);
         let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
             two_d_periodic(l),
             1.0,
