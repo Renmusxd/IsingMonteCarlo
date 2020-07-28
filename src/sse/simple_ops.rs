@@ -57,6 +57,13 @@ impl SimpleOpDiagonal {
             };
         })
     }
+
+    fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op> {
+        self.set_min_size(p + 1);
+        let temp = self.ops[p].take();
+        self.ops[p] = op;
+        temp
+    }
 }
 
 impl OpContainerConstructor for SimpleOpDiagonal {
@@ -97,11 +104,18 @@ impl OpContainer for SimpleOpDiagonal {
 }
 
 impl DiagonalUpdater for SimpleOpDiagonal {
-    fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op> {
-        self.set_min_size(p + 1);
-        let temp = self.ops[p].take();
-        self.ops[p] = op;
-        temp
+    fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
+    where
+        F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
+    {
+        (0..cutoff).fold(t, |t, p| {
+            let op = self.get_pth(p);
+            let (op, t) = f(&self, op, t);
+            if let Some(op) = op {
+                self.set_pth(p, op);
+            }
+            t
+        })
     }
 }
 

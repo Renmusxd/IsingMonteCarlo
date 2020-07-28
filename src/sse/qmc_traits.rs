@@ -65,26 +65,11 @@ impl<'a, H: Fn(&[usize], usize, &[bool], &[bool]) -> f64, E: Fn(usize) -> &'a [u
 }
 
 pub trait DiagonalUpdater: OpContainer {
-    fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op>;
-
-    /// This is actually what's called, if you override this you may leave set_pth unimplemented.
     /// Folds across the p values, passing T down. Mutates op if returned values is Some(...)
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
-        F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
-    {
-        (0..cutoff).fold(t, |t, p| {
-            let op = self.get_pth(p);
-            let (op, t) = f(&self, op, t);
-            if let Some(op) = op {
-                self.set_pth(p, op);
-            }
-            t
-        })
-    }
+        F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T);
 
-    /// This is actually what's called, if you override this you may leave set_pth unimplemented.
-    /// Folds across the p values, passing T down.
     fn iterate_ps<F, T>(&self, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Op>, T) -> T,

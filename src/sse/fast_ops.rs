@@ -58,12 +58,6 @@ impl OpNode for FastOpNode {
 }
 
 impl DiagonalUpdater for FastOps {
-    fn set_pth(&mut self, _p: usize, _op: Option<Op>) -> Option<Op> {
-        unreachable!()
-    }
-
-    /// This is actually what's called, if you override this you may leave set_pth unimplemented.
-    /// Folds across the p values, passing T down.
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
