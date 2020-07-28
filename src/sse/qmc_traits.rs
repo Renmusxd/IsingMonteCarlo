@@ -598,7 +598,12 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
         state_changes
     }
 
-    fn flip_each_cluster_rng_to_acc<R: Rng>(&mut self, prob: f64, rng: &mut R, state_changes: &mut Vec<(usize, bool)>){
+    fn flip_each_cluster_rng_to_acc<R: Rng>(
+        &mut self,
+        prob: f64,
+        rng: &mut R,
+        state_changes: &mut Vec<(usize, bool)>,
+    ) {
         if self.get_n() == 0 {
             return;
         }
@@ -660,8 +665,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
         };
 
         let mut flips = self.get_flip_alloc();
-        flips.extend((0..n_clusters)
-            .map(|_| rng.gen_bool(prob)));
+        flips.extend((0..n_clusters).map(|_| rng.gen_bool(prob)));
         boundaries
             .iter()
             .enumerate()

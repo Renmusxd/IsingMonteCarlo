@@ -14,7 +14,7 @@ pub struct FastOps {
     boundaries: Option<Vec<(Option<usize>, Option<usize>)>>,
     flips: Option<Vec<bool>>,
     // Reusable vector
-    last_vars_alloc: Option<Vec<Option<usize>>>
+    last_vars_alloc: Option<Vec<Option<usize>>>,
 }
 
 type LinkVars = SmallVec<[Option<usize>; 2]>;
@@ -304,7 +304,7 @@ impl OpContainerConstructor for FastOps {
             interior_frontier: Some(vec![]),
             boundaries: Some(vec![]),
             flips: Some(vec![]),
-            last_vars_alloc: Some(vec![])
+            last_vars_alloc: Some(vec![]),
         }
     }
 }

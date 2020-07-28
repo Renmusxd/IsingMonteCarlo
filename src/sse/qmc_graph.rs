@@ -31,7 +31,7 @@ pub struct QMCGraph<
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
     // An alloc to reuse in cluster updates
-    state_updates: Vec<(usize, bool)>
+    state_updates: Vec<(usize, bool)>,
 }
 
 pub fn new_qmc(
@@ -125,7 +125,7 @@ impl<
             phantom_n: PhantomData,
             phantom_l: PhantomData,
             vars: (0..nvars).collect(),
-            state_updates: vec![]
+            state_updates: vec![],
         }
     }
 
@@ -275,22 +275,20 @@ impl<
         input_state: &[bool],
         output_state: &[bool],
     ) -> f64 {
-        if vars.len() == 2 {
-            two_site_hamiltonian(
-                (input_state[0], input_state[1]),
-                (output_state[0], output_state[1]),
-                info.edges[bond].1,
-                info.twosite_energy_offset,
-            )
-        } else if vars.len() == 1 {
-            single_site_hamiltonian(
+        match vars.len() {
+            1 => single_site_hamiltonian(
                 input_state[0],
                 output_state[0],
                 info.transverse,
                 info.singlesite_energy_offset,
-            )
-        } else {
-            unreachable!()
+            ),
+            2 => two_site_hamiltonian(
+                (input_state[0], input_state[1]),
+                (output_state[0], output_state[1]),
+                info.edges[bond].1,
+                info.twosite_energy_offset,
+            ),
+            _ => unreachable!(),
         }
     }
 
