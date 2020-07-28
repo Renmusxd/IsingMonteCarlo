@@ -37,8 +37,8 @@ pub trait OpContainer {
         }
         rolling_state
             .into_iter()
-            .zip(state.iter())
-            .all(|(a, b)| a == *b)
+            .zip(state.iter().cloned())
+            .all(|(a, b)| a == b)
     }
 }
 
@@ -192,18 +192,40 @@ pub trait DiagonalUpdater: OpContainer {
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let state = state.to_vec();
+        let mut state = state.to_vec();
+        self.make_diagonal_update_with_rng_and_state_ref(
+            cutoff,
+            beta,
+            &mut state,
+            hamiltonian,
+            bond_weights,
+            rng,
+        )
+    }
 
+    fn make_diagonal_update_with_rng_and_state_ref<'b, H, E, R: Rng>(
+        &mut self,
+        cutoff: usize,
+        beta: f64,
+        state: &mut [bool],
+        hamiltonian: &Hamiltonian<'b, H, E>,
+        bond_weights: Option<BondWeights>,
+        rng: &mut R,
+    ) -> Option<BondWeights>
+    where
+        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+        E: Fn(usize) -> &'b [usize],
+    {
         // Either use metropolis or heat bath.
         match bond_weights {
             None => {
-                self.mutate_ps(cutoff, (state, rng), |s, op, (mut state, rng)| {
+                self.mutate_ps(cutoff, (state, rng), |s, op, (state, rng)| {
                     let op = Self::metropolis_single_diagonal_update(
                         op,
                         cutoff,
                         s.get_n(),
                         beta,
-                        &mut state,
+                        state,
                         hamiltonian,
                         rng,
                     );
@@ -215,15 +237,14 @@ pub trait DiagonalUpdater: OpContainer {
                 let (_, _, bond_weights) = self.mutate_ps(
                     cutoff,
                     (state, rng, bond_weights),
-                    |s, op, (mut state, rng, bond_weights)| {
+                    |s, op, (state, rng, bond_weights)| {
                         let (op, bond_weights) = Self::heat_bath_single_diagonal_update(
                             op,
                             cutoff,
                             s.get_n(),
                             beta,
-                            &mut state,
-                            &hamiltonian,
-                            bond_weights,
+                            state,
+                            (&hamiltonian, bond_weights),
                             rng,
                         );
                         (op, (state, rng, bond_weights))
@@ -240,14 +261,14 @@ pub trait DiagonalUpdater: OpContainer {
         n: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
-        mut bond_weights: BondWeights,
+        hamiltonian_and_weights: (&Hamiltonian<'b, H, E>, BondWeights),
         rng: &mut R,
     ) -> (Option<Option<Op>>, BondWeights)
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
+        let (hamiltonian, mut bond_weights) = hamiltonian_and_weights;
         let new_op = match op {
             None => {
                 let numerator = beta * bond_weights.total;
@@ -775,15 +796,11 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
     fn find_single_site(&self) -> Option<usize> {
         let mut p = self.get_first_p();
         while let Some(node_p) = p {
-            let node = self.get_node_ref(node_p);
-            if let Some(node) = node {
-                if node.get_op_ref().vars.len() == 1 {
-                    return Some(node_p);
-                } else {
-                    p = self.get_next_p(node);
-                }
+            let node = self.get_node_ref(node_p).unwrap();
+            if node.get_op_ref().vars.len() == 1 {
+                return Some(node_p);
             } else {
-                unreachable!()
+                p = self.get_next_p(node);
             }
         }
         None
@@ -839,10 +856,7 @@ fn set_boundary(
         (OpSide::Outputs, (t0, Some(c))) if *c == cluster_num => (*t0, Some(cluster_num)),
         _ => unreachable!(),
     };
-    match boundaries[p] {
-        (Some(_), Some(_)) => true,
-        _ => false,
-    }
+    matches!(boundaries[p], (Some(_), Some(_)))
 }
 fn set_boundaries(p: usize, cluster_num: usize, boundaries: &mut [(Option<usize>, Option<usize>)]) {
     set_boundary(p, OpSide::Inputs, cluster_num, boundaries);

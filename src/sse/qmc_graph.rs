@@ -332,7 +332,14 @@ impl<
             None
         };
         let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
-        manager.make_diagonal_update_with_rng(self.cutoff, beta, &state, &ham, bond_weights, rng);
+        manager.make_diagonal_update_with_rng_and_state_ref(
+            self.cutoff,
+            beta,
+            &mut state,
+            &ham,
+            bond_weights,
+            rng,
+        );
         let new_cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         let mut manager = manager.convert_to_looper();

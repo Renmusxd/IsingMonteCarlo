@@ -525,10 +525,7 @@ pub mod rayon_tempering {
                     use_fft,
                     |sample| {
                         let even = |(a, b): &(usize, usize)| -> bool {
-                            match (sample[*a], sample[*b]) {
-                                (true, true) | (false, false) => true,
-                                _ => false,
-                            }
+                            matches!((sample[*a], sample[*b]), (true, true) | (false, false))
                         };
                         edges
                             .iter()
