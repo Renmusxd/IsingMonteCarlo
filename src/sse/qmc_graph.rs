@@ -296,7 +296,7 @@ impl<
             &ham,
             rng,
         );
-        let new_cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
+        self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         let mut manager = manager.into();
         let state_changes = &mut self.state_updates;
@@ -306,16 +306,14 @@ impl<
             state[i] = v;
         });
 
-        let manager = manager;
         state.iter_mut().enumerate().for_each(|(var, state)| {
-            if !manager.does_var_have_ops(var) && rng.gen_bool(0.5) {
-                *state = !*state;
+            if !manager.does_var_have_ops(var) {
+                *state = rng.gen_bool(0.5);
             }
         });
 
         self.op_manager = Some(manager.into());
         self.state = Some(state);
-        self.cutoff = new_cutoff;
     }
 
     #[cfg(feature = "autocorrelations")]
