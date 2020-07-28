@@ -9,7 +9,7 @@ fn main() {
 
     let rng = rand::thread_rng();
     let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
-        edges, transverse, 3, false, false, rng, None,
+        edges, transverse, 3, rng, None,
     );
     let _a = g.timesteps(1000, 1.0);
 }

@@ -17,7 +17,7 @@ fn single_cluster_test() {
             outputs: smallvec![false],
         }),
     );
-    let mut manager = manager.convert_to_looper();
+    let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
     let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
@@ -45,7 +45,7 @@ fn simple_cluster_test() {
             outputs: smallvec![false],
         }),
     );
-    let mut manager = manager.convert_to_looper();
+    let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
     let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
@@ -93,7 +93,7 @@ fn multi_cluster_test() {
         }),
     );
 
-    let mut manager = manager.convert_to_looper();
+    let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
     let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
@@ -141,7 +141,7 @@ fn multi_twosite_cluster_test() {
         }),
     );
 
-    let mut manager = manager.convert_to_looper();
+    let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
     let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
@@ -179,7 +179,7 @@ fn multi_multisite_cluster_test() {
         }),
     );
 
-    let mut manager = manager.convert_to_looper();
+    let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
     let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);

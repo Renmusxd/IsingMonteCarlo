@@ -33,7 +33,7 @@ fn main() {
         .collect::<Vec<_>>();
 
     let cutoff = nvars;
-    let mut qmc_graph = new_qmc(edges, transverse, cutoff, false, false, None);
+    let mut qmc_graph = new_qmc(edges, transverse, cutoff, None);
 
     let _plot = qmc_graph.timesteps_sample(timesteps, beta, None);
 }

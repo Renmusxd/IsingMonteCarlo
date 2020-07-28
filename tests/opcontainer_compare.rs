@@ -20,8 +20,6 @@ fn single_cluster_test() {
         one_d_periodic(l),
         1.0,
         l,
-        false,
-        false,
         rng,
         Some(vec![true; l]),
     );
@@ -34,8 +32,6 @@ fn single_cluster_test() {
         one_d_periodic(l),
         1.0,
         l,
-        false,
-        false,
         rng,
         Some(vec![true; l]),
     );

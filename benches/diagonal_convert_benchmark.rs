@@ -12,13 +12,18 @@ mod tests {
     use smallvec::smallvec;
     use test::Bencher;
 
+    fn convert(s: SimpleOpDiagonal) -> SimpleOpDiagonal {
+        let l: SimpleOpLooper = s.into();
+        l.into()
+    }
+
     #[bench]
     fn bench_empty_graph(b: &mut Bencher) {
         let nvars = 10;
         let a = SimpleOpDiagonal::new(nvars);
         b.iter(|| {
             let a = a.clone();
-            (0..1000).fold(a, |a, _| a.convert_to_looper().convert_to_diagonal());
+            (0..1000).fold(a, |a, _| convert(a));
         });
     }
 
@@ -41,7 +46,7 @@ mod tests {
         });
         b.iter(|| {
             let a = a.clone();
-            (0..1000).fold(a, |a, _| a.convert_to_looper().convert_to_diagonal());
+            (0..1000).fold(a, |a, _| convert(a));
         });
     }
 
@@ -64,7 +69,7 @@ mod tests {
         });
         b.iter(|| {
             let a = a.clone();
-            (0..1000).fold(a, |a, _| a.convert_to_looper().convert_to_diagonal());
+            (0..1000).fold(a, |a, _| convert(a));
         });
     }
 }

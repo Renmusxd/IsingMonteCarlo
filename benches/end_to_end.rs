@@ -48,8 +48,6 @@ mod tests {
                 one_d_periodic(l),
                 1.0,
                 l,
-                false,
-                false,
                 rng,
                 None,
             );
@@ -67,8 +65,6 @@ mod tests {
                 two_d_periodic(l),
                 1.0,
                 l,
-                false,
-                false,
                 rng,
                 None,
             );
@@ -86,8 +82,6 @@ mod tests {
             one_d_periodic(l),
             1.0,
             l,
-            false,
-            false,
             rng,
             None,
         );
@@ -104,8 +98,6 @@ mod tests {
             two_d_periodic(l),
             1.0,
             l,
-            false,
-            false,
             rng,
             None,
         );
@@ -124,8 +116,6 @@ mod tests {
                 two_d_periodic(l),
                 1.0,
                 l,
-                false,
-                false,
                 rng,
                 None,
             );
@@ -143,8 +133,6 @@ mod tests {
             two_d_periodic(l),
             1.0,
             l,
-            false,
-            false,
             rng,
             None,
         );
