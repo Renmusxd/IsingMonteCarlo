@@ -54,6 +54,7 @@ mod tests {
                 None,
             );
         let beta = 1.0;
+        g.timesteps(1000, beta);
         b.iter(|| g.timesteps(1000, beta));
     }
 
@@ -73,6 +74,7 @@ mod tests {
             );
 
         let beta = 1.0;
+        g.timesteps(1000, beta);
         b.iter(|| g.timesteps(1000, beta));
     }
 
@@ -90,6 +92,7 @@ mod tests {
             None,
         );
         let beta = 1.0;
+        g.timesteps(1000, beta);
         b.iter(|| g.timesteps(1000, beta));
     }
 
@@ -108,6 +111,7 @@ mod tests {
         );
 
         let beta = 1.0;
+        g.timesteps(1000, beta);
         b.iter(|| g.timesteps(1000, beta));
     }
 
@@ -127,6 +131,7 @@ mod tests {
             );
 
         let beta = 1.0;
+        g.timesteps(1000, beta);
         b.iter(|| g.timesteps(100, beta));
     }
 
@@ -145,6 +150,7 @@ mod tests {
         );
 
         let beta = 1.0;
+        g.timesteps(1000, beta);
         b.iter(|| g.timesteps(100, beta));
     }
 }

@@ -2,7 +2,7 @@ use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, Op, OpSide};
 use smallvec::SmallVec;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FastOps {
     pub(crate) ops: Vec<Option<FastOpNode>>,
     pub(crate) n: usize,

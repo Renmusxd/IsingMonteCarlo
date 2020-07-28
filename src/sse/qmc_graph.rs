@@ -534,12 +534,40 @@ pub struct HamInfo<'a> {
     twosite_energy_offset: f64,
 }
 
+// Implement clone where available.
+impl<
+    R: Rng + Clone,
+    N: OpNode + Clone,
+    M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + Clone,
+    L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Clone,
+> Clone for QMCGraph<R, N, M, L> {
+    fn clone(&self) -> Self {
+        Self {
+            edges: self.edges.clone(),
+            transverse: self.transverse,
+            state: self.state.clone(),
+            cutoff: self.cutoff,
+            op_manager: self.op_manager.clone(),
+            twosite_energy_offset: self.twosite_energy_offset,
+            singlesite_energy_offset: self.singlesite_energy_offset,
+            use_loop_update: self.use_loop_update,
+            use_heatbath_diagonal_update: self.use_heatbath_diagonal_update,
+            rng: self.rng.clone(),
+            phantom_n: self.phantom_n,
+            phantom_l: self.phantom_l,
+            vars: self.vars.clone(),
+            state_updates: self.state_updates.clone()
+        }
+    }
+}
+
 #[cfg(feature = "autocorrelations")]
 pub(crate) mod autocorrelations {
-    use num::{Complex, Zero};
     use rayon::prelude::*;
     use rustfft::FFTplanner;
     use std::ops::DivAssign;
+    use rustfft::num_complex::Complex;
+    use rustfft::num_traits::Zero;
 
     pub fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
         let tmax = samples.len();
