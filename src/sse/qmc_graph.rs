@@ -1,7 +1,6 @@
 use crate::graph::{Edge, GraphState};
 use crate::sse::fast_ops::{FastOpNode, FastOps};
 use crate::sse::qmc_traits::*;
-use crate::sse::simple_ops::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 use std::cmp::max;
@@ -23,8 +22,6 @@ pub struct QMCGraph<
     op_manager: Option<M>,
     twosite_energy_offset: f64,
     singlesite_energy_offset: f64,
-    use_loop_update: bool,
-    use_heatbath_diagonal_update: bool,
     rng: Option<R>,
     phantom_n: PhantomData<N>,
     phantom_l: PhantomData<L>,
@@ -38,8 +35,6 @@ pub fn new_qmc(
     edges: Vec<(Edge, f64)>,
     transverse: f64,
     cutoff: usize,
-    use_loop_update: bool,
-    use_heatbath_diagonal_update: bool,
     state: Option<Vec<bool>>,
 ) -> DefaultQMCGraph<ThreadRng> {
     let rng = rand::thread_rng();
@@ -47,8 +42,6 @@ pub fn new_qmc(
         edges,
         transverse,
         cutoff,
-        use_loop_update,
-        use_heatbath_diagonal_update,
         rng,
         state,
     )
@@ -58,18 +51,9 @@ pub fn new_qmc_from_graph(
     graph: GraphState,
     transverse: f64,
     cutoff: usize,
-    use_loop_update: bool,
-    use_heatbath_diagonal_update: bool,
 ) -> DefaultQMCGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCGraph::<ThreadRng>::new_from_graph(
-        graph,
-        transverse,
-        cutoff,
-        use_loop_update,
-        use_heatbath_diagonal_update,
-        rng,
-    )
+    DefaultQMCGraph::<ThreadRng>::new_from_graph(graph, transverse, cutoff, rng)
 }
 
 impl<
@@ -83,8 +67,6 @@ impl<
         edges: Vec<(Edge, f64)>,
         transverse: f64,
         cutoff: usize,
-        use_loop_update: bool,
-        use_heatbath_diagonal_update: bool,
         rng: Rg,
         state: Option<Vec<bool>>,
     ) -> QMCGraph<Rg, N, M, L> {
@@ -119,8 +101,6 @@ impl<
             cutoff,
             twosite_energy_offset,
             singlesite_energy_offset,
-            use_loop_update,
-            use_heatbath_diagonal_update,
             rng: Some(rng),
             phantom_n: PhantomData,
             phantom_l: PhantomData,
@@ -133,8 +113,6 @@ impl<
         graph: GraphState,
         transverse: f64,
         cutoff: usize,
-        use_loop_update: bool,
-        use_heatbath_diagonal_update: bool,
         rng: Rg,
     ) -> QMCGraph<Rg, N, M, L> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
@@ -142,8 +120,6 @@ impl<
             graph.edges,
             transverse,
             cutoff,
-            use_loop_update,
-            use_heatbath_diagonal_update,
             rng,
             graph.state,
         )
@@ -324,33 +300,17 @@ impl<
         };
 
         // Start by editing the ops list
-        let bond_weights = if self.use_heatbath_diagonal_update {
-            Some(SimpleOpDiagonal::make_bond_weights(
-                &state, h, num_bonds, bonds_fn,
-            ))
-        } else {
-            None
-        };
         let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
         manager.make_diagonal_update_with_rng_and_state_ref(
             self.cutoff,
             beta,
             &mut state,
             &ham,
-            bond_weights,
             rng,
         );
         let new_cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         let mut manager = manager.convert_to_looper();
-        // Now we can do loop updates easily.
-        if self.use_loop_update {
-            let state_updates = manager.make_loop_update_with_rng(None, h, rng);
-            state_updates.into_iter().for_each(|(i, v)| {
-                state[i] = v;
-            });
-        }
-
         let state_changes = &mut self.state_updates;
         state_changes.clear();
         manager.flip_each_cluster_rng_to_acc(0.5, rng, state_changes);
@@ -536,11 +496,12 @@ pub struct HamInfo<'a> {
 
 // Implement clone where available.
 impl<
-    R: Rng + Clone,
-    N: OpNode + Clone,
-    M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + Clone,
-    L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Clone,
-> Clone for QMCGraph<R, N, M, L> {
+        R: Rng + Clone,
+        N: OpNode + Clone,
+        M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + Clone,
+        L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Clone,
+    > Clone for QMCGraph<R, N, M, L>
+{
     fn clone(&self) -> Self {
         Self {
             edges: self.edges.clone(),
@@ -550,13 +511,11 @@ impl<
             op_manager: self.op_manager.clone(),
             twosite_energy_offset: self.twosite_energy_offset,
             singlesite_energy_offset: self.singlesite_energy_offset,
-            use_loop_update: self.use_loop_update,
-            use_heatbath_diagonal_update: self.use_heatbath_diagonal_update,
             rng: self.rng.clone(),
             phantom_n: self.phantom_n,
             phantom_l: self.phantom_l,
             vars: self.vars.clone(),
-            state_updates: self.state_updates.clone()
+            state_updates: self.state_updates.clone(),
         }
     }
 }
@@ -564,10 +523,10 @@ impl<
 #[cfg(feature = "autocorrelations")]
 pub(crate) mod autocorrelations {
     use rayon::prelude::*;
-    use rustfft::FFTplanner;
-    use std::ops::DivAssign;
     use rustfft::num_complex::Complex;
     use rustfft::num_traits::Zero;
+    use rustfft::FFTplanner;
+    use std::ops::DivAssign;
 
     pub fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
         let tmax = samples.len();

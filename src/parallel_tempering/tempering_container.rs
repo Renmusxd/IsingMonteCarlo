@@ -25,8 +25,6 @@ pub struct TemperingContainer<
     nvars: usize,
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
-    use_loop_update: bool,
-    use_heatbath_diagonal_update: bool,
 
     // Graph and beta
     graphs: Vec<GraphBeta<R2, N, M, L>>,
@@ -37,30 +35,22 @@ pub fn new_with_rng<R2: Rng, R: Rng>(
     rng: R,
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
-    use_loop_update: bool,
-    use_heatbath_diagonal_update: bool,
 ) -> DefaultTemperingContainer<R, R2> {
     TemperingContainer::new(
         rng,
         edges,
         cutoff,
-        use_loop_update,
-        use_heatbath_diagonal_update,
     )
 }
 
 pub fn new_thread_rng(
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
-    use_loop_update: bool,
-    use_heatbath_diagonal_update: bool,
 ) -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
     TemperingContainer::new(
         rand::thread_rng(),
         edges,
         cutoff,
-        use_loop_update,
-        use_heatbath_diagonal_update,
     )
 }
 
@@ -76,16 +66,12 @@ impl<
         rng: R1,
         edges: Vec<(Edge, f64)>,
         cutoff: usize,
-        use_loop_update: bool,
-        use_heatbath_diagonal_update: bool,
     ) -> Self {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         Self {
             nvars,
             edges,
             cutoff,
-            use_loop_update,
-            use_heatbath_diagonal_update,
             rng: Some(rng),
             graphs: vec![],
         }
@@ -96,8 +82,6 @@ impl<
             self.edges.clone(),
             transverse,
             self.cutoff,
-            self.use_loop_update,
-            self.use_heatbath_diagonal_update,
             rng,
             None,
         );
@@ -110,8 +94,6 @@ impl<
             self.edges.clone(),
             transverse,
             self.cutoff,
-            self.use_loop_update,
-            self.use_heatbath_diagonal_update,
             rng,
             Some(state),
         );
