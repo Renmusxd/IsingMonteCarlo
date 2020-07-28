@@ -13,7 +13,7 @@ pub struct SimpleOpDiagonal {
 impl SimpleOpDiagonal {
     pub(crate) fn set_min_size(&mut self, n: usize) {
         if self.ops.len() < n {
-            self.ops.resize_with(n, || None)
+            self.ops.resize(n, None)
         }
     }
 
@@ -158,7 +158,7 @@ impl OpContainer for SimpleOpLooper {
 
     fn set_cutoff(&mut self, cutoff: usize) {
         if cutoff > self.ops.len() {
-            self.ops.resize_with(cutoff, || None);
+            self.ops.resize(cutoff, None);
         }
     }
 

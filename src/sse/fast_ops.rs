@@ -69,13 +69,13 @@ impl DiagonalUpdater for FastOps {
         F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
     {
         if cutoff > self.ops.len() {
-            self.ops.resize_with(cutoff, || None)
+            self.ops.resize(cutoff, None)
         };
 
         let last_p: Option<usize> = None;
         let mut last_vars = self.last_vars_alloc.take().unwrap();
         last_vars.clear();
-        last_vars.resize_with(self.var_ends.len(), || None);
+        last_vars.resize(self.var_ends.len(), None);
 
         let (t, _, last_vars) = (0..cutoff).fold(
             (t, last_p, last_vars),
@@ -316,7 +316,7 @@ impl OpContainer for FastOps {
 
     fn set_cutoff(&mut self, cutoff: usize) {
         if cutoff > self.ops.len() {
-            self.ops.resize_with(cutoff, || None)
+            self.ops.resize(cutoff, None)
         }
     }
 
@@ -402,7 +402,7 @@ impl ClusterUpdater<FastOpNode> for FastOps {
     fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
         let mut boundaries = self.boundaries.take().unwrap();
         boundaries.clear();
-        boundaries.resize_with(size, || (None, None));
+        boundaries.resize(size, (None, None));
         boundaries
     }
 
