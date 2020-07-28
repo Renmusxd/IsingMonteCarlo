@@ -1,9 +1,7 @@
 extern crate ising_monte_carlo;
-use ising_monte_carlo::graph::GraphState;
 use ising_monte_carlo::sse::fast_ops::*;
-use ising_monte_carlo::sse::qmc_graph::{new_qmc, QMCGraph};
+use ising_monte_carlo::sse::qmc_graph::QMCGraph;
 use rand::prelude::ThreadRng;
-use std::cmp::max;
 
 fn main() {
     let edges = vec![((0, 1), -1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 0), 1.0)];

@@ -15,8 +15,7 @@ fn one_d_periodic(l: usize) -> Vec<(Edge, f64)> {
 fn single_cluster_test() {
     let l = 8;
 
-    let mut rng: StdRng = SeedableRng::seed_from_u64(1234);
-
+    let rng: StdRng = SeedableRng::seed_from_u64(1234);
     let mut g = QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
         one_d_periodic(l),
         1.0,
@@ -30,7 +29,7 @@ fn single_cluster_test() {
     g.timesteps(1, beta);
     let state_a = g.into_vec();
 
-    let mut rng: StdRng = SeedableRng::seed_from_u64(1234);
+    let rng: StdRng = SeedableRng::seed_from_u64(1234);
     let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
         one_d_periodic(l),
         1.0,
