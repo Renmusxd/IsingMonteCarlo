@@ -428,15 +428,3 @@ impl ClusterUpdater<FastOpNode> for FastOps {
         self.flips = Some(flips)
     }
 }
-
-impl ConvertsToDiagonal<FastOps> for FastOps {
-    fn convert_to_diagonal(self) -> FastOps {
-        self
-    }
-}
-
-impl ConvertsToLooper<FastOpNode, FastOps> for FastOps {
-    fn convert_to_looper(self) -> FastOps {
-        self
-    }
-}

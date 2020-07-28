@@ -223,8 +223,8 @@ impl LoopUpdater<SimpleOpNode> for SimpleOpLooper {
 
 impl ClusterUpdater<SimpleOpNode> for SimpleOpLooper {}
 
-impl ConvertsToDiagonal<SimpleOpDiagonal> for SimpleOpLooper {
-    fn convert_to_diagonal(self) -> SimpleOpDiagonal {
+impl Into<SimpleOpDiagonal> for SimpleOpLooper {
+    fn into(self) -> SimpleOpDiagonal {
         let n = self.get_n();
         let nvars = self.get_nvars();
         let ops = self
@@ -243,8 +243,8 @@ impl ConvertsToDiagonal<SimpleOpDiagonal> for SimpleOpLooper {
     }
 }
 
-impl ConvertsToLooper<SimpleOpNode, SimpleOpLooper> for SimpleOpDiagonal {
-    fn convert_to_looper(self) -> SimpleOpLooper {
+impl Into<SimpleOpLooper> for SimpleOpDiagonal {
+    fn into(self) -> SimpleOpLooper {
         let mut p_ends = None;
         let mut var_ends = vec![None; self.nvars];
         let mut arena = self.arena;

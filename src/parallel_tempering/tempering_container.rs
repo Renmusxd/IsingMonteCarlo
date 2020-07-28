@@ -19,8 +19,8 @@ pub struct TemperingContainer<
     R1: Rng,
     R2: Rng,
     N: OpNode,
-    M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + StateSetter + OpWeights,
-    L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+    L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
 > {
     nvars: usize,
     edges: Vec<(Edge, f64)>,
@@ -36,37 +36,25 @@ pub fn new_with_rng<R2: Rng, R: Rng>(
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
 ) -> DefaultTemperingContainer<R, R2> {
-    TemperingContainer::new(
-        rng,
-        edges,
-        cutoff,
-    )
+    TemperingContainer::new(rng, edges, cutoff)
 }
 
 pub fn new_thread_rng(
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
 ) -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
-    TemperingContainer::new(
-        rand::thread_rng(),
-        edges,
-        cutoff,
-    )
+    TemperingContainer::new(rand::thread_rng(), edges, cutoff)
 }
 
 impl<
         R1: Rng,
         R2: Rng,
         N: OpNode,
-        M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + StateSetter + OpWeights,
-        L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
     > TemperingContainer<R1, R2, N, M, L>
 {
-    pub fn new(
-        rng: R1,
-        edges: Vec<(Edge, f64)>,
-        cutoff: usize,
-    ) -> Self {
+    pub fn new(rng: R1, edges: Vec<(Edge, f64)>, cutoff: usize) -> Self {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         Self {
             nvars,
@@ -214,8 +202,8 @@ fn perform_swaps<
     R1: Rng,
     R2: Rng,
     N: OpNode,
-    M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + StateSetter + OpWeights,
-    L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+    L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
 >(
     mut rng: R1,
     graphs: &mut [GraphBeta<R2, N, M, L>],
@@ -246,13 +234,8 @@ fn swap_on_chunks<
     'a,
     R: 'a + Rng,
     N: 'a + OpNode,
-    M: 'a
-        + OpContainerConstructor
-        + DiagonalUpdater
-        + ConvertsToLooper<N, L>
-        + StateSetter
-        + OpWeights,
-    L: 'a + LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+    M: 'a + OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+    L: 'a + LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
 >(
     ga: &'a mut QMCGraph<R, N, M, L>,
     gb: &'a mut QMCGraph<R, N, M, L>,
@@ -304,12 +287,12 @@ pub mod rayon_tempering {
             N: OpNode + Send + Sync,
             M: OpContainerConstructor
                 + DiagonalUpdater
-                + ConvertsToLooper<N, L>
+                + Into<L>
                 + StateSetter
                 + OpWeights
                 + Send
                 + Sync,
-            L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Send + Sync,
+            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Send + Sync,
         > ParallelQMCTimeSteps for TemperingContainer<R1, R2, N, M, L>
     {
         fn parallel_timesteps(&mut self, t: usize) {
@@ -396,14 +379,8 @@ pub mod rayon_tempering {
         R1: Rng,
         R2: Rng + Send + Sync,
         N: OpNode + Send + Sync,
-        M: OpContainerConstructor
-            + DiagonalUpdater
-            + ConvertsToLooper<N, L>
-            + StateSetter
-            + OpWeights
-            + Send
-            + Sync,
-        L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Send + Sync,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights + Send + Sync,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Send + Sync,
     >(
         mut rng: R1,
         graphs: &mut [GraphBeta<R2, N, M, L>],
@@ -462,12 +439,12 @@ pub mod rayon_tempering {
                 N: OpNode + Send + Sync,
                 M: OpContainerConstructor
                     + DiagonalUpdater
-                    + ConvertsToLooper<N, L>
+                    + Into<L>
                     + StateSetter
                     + OpWeights
                     + Send
                     + Sync,
-                L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Send + Sync,
+                L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Send + Sync,
             > ParallelTemperingAutocorrelations for TemperingContainer<R1, R2, N, M, L>
         {
             #[cfg(feature = "autocorrelations")]

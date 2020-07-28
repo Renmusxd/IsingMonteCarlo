@@ -12,8 +12,8 @@ type VecEdge = Vec<usize>;
 pub struct QMCGraph<
     R: Rng,
     N: OpNode,
-    M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L>,
-    L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
 > {
     edges: Vec<(VecEdge, f64)>,
     transverse: f64,
@@ -38,13 +38,7 @@ pub fn new_qmc(
     state: Option<Vec<bool>>,
 ) -> DefaultQMCGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCGraph::<ThreadRng>::new_with_rng(
-        edges,
-        transverse,
-        cutoff,
-        rng,
-        state,
-    )
+    DefaultQMCGraph::<ThreadRng>::new_with_rng(edges, transverse, cutoff, rng, state)
 }
 
 pub fn new_qmc_from_graph(
@@ -59,8 +53,8 @@ pub fn new_qmc_from_graph(
 impl<
         R: Rng,
         N: OpNode,
-        M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M>,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
     > QMCGraph<R, N, M, L>
 {
     pub fn new_with_rng<Rg: Rng>(
@@ -116,13 +110,7 @@ impl<
         rng: Rg,
     ) -> QMCGraph<Rg, N, M, L> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
-        Self::new_with_rng(
-            graph.edges,
-            transverse,
-            cutoff,
-            rng,
-            graph.state,
-        )
+        Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
     }
 
     pub fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
@@ -310,7 +298,7 @@ impl<
         );
         let new_cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
-        let mut manager = manager.convert_to_looper();
+        let mut manager = manager.into();
         let state_changes = &mut self.state_updates;
         state_changes.clear();
         manager.flip_each_cluster_rng_to_acc(0.5, rng, state_changes);
@@ -325,7 +313,7 @@ impl<
             }
         });
 
-        self.op_manager = Some(manager.convert_to_diagonal());
+        self.op_manager = Some(manager.into());
         self.state = Some(state);
         self.cutoff = new_cutoff;
     }
@@ -498,8 +486,8 @@ pub struct HamInfo<'a> {
 impl<
         R: Rng + Clone,
         N: OpNode + Clone,
-        M: OpContainerConstructor + DiagonalUpdater + ConvertsToLooper<N, L> + Clone,
-        L: LoopUpdater<N> + ClusterUpdater<N> + ConvertsToDiagonal<M> + Clone,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L> + Clone,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Clone,
     > Clone for QMCGraph<R, N, M, L>
 {
     fn clone(&self) -> Self {

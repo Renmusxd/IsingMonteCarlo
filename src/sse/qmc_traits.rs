@@ -672,14 +672,6 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
     fn return_flip_alloc(&mut self, _flips: Vec<bool>) {}
 }
 
-pub trait ConvertsToDiagonal<D: DiagonalUpdater> {
-    fn convert_to_diagonal(self) -> D;
-}
-
-pub trait ConvertsToLooper<N: OpNode, L: LoopUpdater<N>> {
-    fn convert_to_looper(self) -> L;
-}
-
 // Returns true if both sides have clusters attached.
 fn set_boundary(
     p: usize,
