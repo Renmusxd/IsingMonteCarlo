@@ -572,6 +572,7 @@ pub mod serialization {
     use super::*;
     use crate::sse::qmc_graph::serialization::*;
 
+    type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOpNode, FastOps, FastOps>;
     type SerializeGraphBeta<N, M, L> = (SerializeQMCGraph<N, M, L>, f64);
 
     #[derive(Serialize, Deserialize)]
