@@ -122,7 +122,6 @@ impl DiagonalUpdater for SimpleOpDiagonal {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct SimpleOpNode {
     pub(crate) op: Op,
     pub(crate) previous_p: Option<usize>,

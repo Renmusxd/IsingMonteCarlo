@@ -385,43 +385,41 @@ impl LoopUpdater<FastOpNode> for FastOps {
 impl ClusterUpdater<FastOpNode> for FastOps {
     // No need for logic here, just reuse some allocations.
     fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
-        let mut frontier = self.frontier.take().unwrap();
-        frontier.clear();
-        frontier
+        self.frontier.take().unwrap()
     }
 
     fn get_interior_frontier_alloc(&mut self) -> Vec<(usize, Leg)> {
-        let mut interior_frontier = self.interior_frontier.take().unwrap();
-        interior_frontier.clear();
-        interior_frontier
+        self.interior_frontier.take().unwrap()
     }
 
     fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
         let mut boundaries = self.boundaries.take().unwrap();
-        boundaries.clear();
         boundaries.resize(size, (None, None));
         boundaries
     }
 
     fn get_flip_alloc(&mut self) -> Vec<bool> {
-        let mut flips = self.flips.take().unwrap();
-        flips.clear();
-        flips
+        self.flips.take().unwrap()
     }
 
-    fn return_frontier_alloc(&mut self, frontier: Vec<(usize, OpSide)>) {
+    // Put all the clears in the returns so that serialization doesn't useless data.
+    fn return_frontier_alloc(&mut self, mut frontier: Vec<(usize, OpSide)>) {
+        frontier.clear();
         self.frontier = Some(frontier);
     }
 
-    fn return_interior_frontier_alloc(&mut self, interior_frontier: Vec<(usize, Leg)>) {
+    fn return_interior_frontier_alloc(&mut self, mut interior_frontier: Vec<(usize, Leg)>) {
+        interior_frontier.clear();
         self.interior_frontier = Some(interior_frontier)
     }
 
-    fn return_boundaries_alloc(&mut self, boundaries: Vec<(Option<usize>, Option<usize>)>) {
+    fn return_boundaries_alloc(&mut self, mut boundaries: Vec<(Option<usize>, Option<usize>)>) {
+        boundaries.clear();
         self.boundaries = Some(boundaries)
     }
 
-    fn return_flip_alloc(&mut self, flips: Vec<bool>) {
+    fn return_flip_alloc(&mut self, mut flips: Vec<bool>) {
+        flips.clear();
         self.flips = Some(flips)
     }
 }

@@ -19,6 +19,8 @@ impl<T: Clone> Arena<T> {
     }
 
     pub fn clear(&mut self) {
+        // Clear contents, keep capacity.
+        self.arena.clear();
         self.index = 0
     }
 
@@ -30,10 +32,6 @@ impl<T: Clone> Arena<T> {
             start: index,
             stop: index + size,
         };
-        let d = &self.default;
-        self.arena[index.start..index.stop]
-            .iter_mut()
-            .for_each(|v| *v = d.clone());
         self.index += size;
         index
     }
@@ -54,7 +52,6 @@ impl<T: Clone> IndexMut<&ArenaIndex> for Arena<T> {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct ArenaIndex {
     start: usize,
     stop: usize,
