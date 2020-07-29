@@ -567,7 +567,7 @@ pub mod rayon_tempering {
     }
 }
 
-#[cfg(feature = "serialization")]
+#[cfg(feature = "serialize")]
 pub mod serialization {
     use super::*;
     use crate::sse::qmc_graph::serialization::*;
@@ -588,11 +588,11 @@ pub mod serialization {
     }
 
     impl<
-            R1: Rng,
-            R2: Rng,
-            N: OpNode,
-            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        R1: Rng,
+        R2: Rng,
+        N: OpNode,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>
         > Into<SerializeTemperingContainer<N, M, L>> for TemperingContainer<R1, R2, N, M, L>
     {
         fn into(self) -> SerializeTemperingContainer<N, M, L> {
@@ -611,13 +611,13 @@ pub mod serialization {
 
     impl<
             N: OpNode,
-            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
             L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
         > SerializeTemperingContainer<N, M, L>
     {
         pub fn into_tempering_container<R1: Rng, R2: Rng>(
             self,
-            container_rng: R,
+            container_rng: R1,
             graph_rngs: Vec<R2>,
         ) -> TemperingContainer<R1, R2, N, M, L> {
             assert_eq!(self.graphs.len(), graph_rngs.len());
@@ -631,7 +631,7 @@ pub mod serialization {
                     .zip(graph_rngs.into_iter())
                     .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
                     .collect(),
-                rng: container_rng,
+                rng: Some(container_rng),
             }
         }
     }
