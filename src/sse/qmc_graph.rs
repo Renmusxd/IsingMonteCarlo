@@ -601,7 +601,7 @@ pub mod serialization {
     pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOpNode, FastOps, FastOps>;
 
     #[derive(Clone)]
-    #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+    #[derive(Serialize, Deserialize)]
     pub struct SerializeQMCGraph<
         N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
