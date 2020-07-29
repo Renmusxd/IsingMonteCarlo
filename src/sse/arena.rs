@@ -1,6 +1,8 @@
 use std::ops::{Index, IndexMut};
+#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct Arena<T: Clone> {
     arena: Vec<T>,
     default: T,
@@ -52,6 +54,7 @@ impl<T: Clone> IndexMut<&ArenaIndex> for Arena<T> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct ArenaIndex {
     start: usize,
     stop: usize,

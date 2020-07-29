@@ -547,7 +547,7 @@ pub mod rayon_tempering {
             let n = 5;
 
             let mut temper = new_with_rng::<SmallRng, _>(rng1, edges, 2 * n);
-            for i in 0..2 {
+            for _ in 0..2 {
                 let rng = SmallRng::seed_from_u64(0u64);
                 temper.add_graph(rng, 0.1, 10.0);
             }
@@ -577,7 +577,7 @@ mod swap_test {
         let n = 5;
 
         let mut temper = new_with_rng::<SmallRng, _>(rng1, edges, 2 * n);
-        for i in 0..2 {
+        for _ in 0..2 {
             let rng = SmallRng::seed_from_u64(0u64);
             temper.add_graph(rng, 0.1, 10.0);
         }

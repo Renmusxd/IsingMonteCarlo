@@ -1,8 +1,10 @@
 use crate::sse::arena::*;
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::Op;
+#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct SimpleOpDiagonal {
     pub(crate) ops: Vec<Option<Op>>,
     n: usize,
@@ -120,6 +122,7 @@ impl DiagonalUpdater for SimpleOpDiagonal {
 }
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct SimpleOpNode {
     pub(crate) op: Op,
     pub(crate) previous_p: Option<usize>,

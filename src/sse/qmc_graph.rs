@@ -5,10 +5,13 @@ use rand::rngs::ThreadRng;
 use rand::Rng;
 use std::cmp::max;
 use std::marker::PhantomData;
+#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 pub type DefaultQMCGraph<R> = QMCGraph<R, FastOpNode, FastOps, FastOps>;
 
 type VecEdge = Vec<usize>;
+
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct QMCGraph<
     R: Rng,
     N: OpNode,
@@ -587,5 +590,23 @@ pub(crate) mod autocorrelations {
                     / (tmax as f64)
             })
             .collect::<Vec<_>>()
+    }
+}
+
+#[cfg(feature = "serialize")]
+#[cfg(test)]
+mod serialize_test {
+    use super::*;
+    use rand_isaac::IsaacRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn test_serialize() {
+        let rng = IsaacRng::seed_from_u64(1234);
+        let mut g = DefaultQMCGraph::<IsaacRng>::new_with_rng(vec![((0,1),1.0)], 1.0, 1, rng, None);
+        g.timesteps(100, 1.0);
+        let mut v: Vec<u8> = Vec::default();
+        serde_json::to_writer_pretty(&mut v, &g).unwrap();
+        let _: DefaultQMCGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
     }
 }

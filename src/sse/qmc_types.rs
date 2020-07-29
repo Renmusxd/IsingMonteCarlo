@@ -1,10 +1,12 @@
 use smallvec::SmallVec;
 use std::ops::IndexMut;
+#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 type Vars = SmallVec<[usize; 2]>;
 type SubState = SmallVec<[bool; 2]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct Op {
     pub vars: Vars,
     pub bond: usize,
@@ -59,6 +61,7 @@ impl Op {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub enum OpSide {
     Inputs,
     Outputs,

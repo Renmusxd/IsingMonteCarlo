@@ -1,8 +1,10 @@
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, Op, OpSide};
 use smallvec::SmallVec;
+#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct FastOps {
     pub(crate) ops: Vec<Option<FastOpNode>>,
     pub(crate) n: usize,
@@ -20,6 +22,7 @@ pub struct FastOps {
 type LinkVars = SmallVec<[Option<usize>; 2]>;
 
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct FastOpNode {
     pub(crate) op: Op,
     pub(crate) previous_p: Option<usize>,
