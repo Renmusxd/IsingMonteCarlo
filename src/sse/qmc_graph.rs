@@ -600,8 +600,7 @@ pub mod serialization {
 
     pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOpNode, FastOps, FastOps>;
 
-    #[derive(Clone)]
-    #[derive(Serialize, Deserialize)]
+    #[derive(Clone, Serialize, Deserialize)]
     pub struct SerializeQMCGraph<
         N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
@@ -621,10 +620,10 @@ pub mod serialization {
     }
 
     impl<
-        N: OpNode,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > SerializeQMCGraph<N, M, L>
+            N: OpNode,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        > SerializeQMCGraph<N, M, L>
     {
         pub fn into_qmc<R: Rng>(self, rng: R) -> QMCGraph<R, N, M, L> {
             QMCGraph {
@@ -644,11 +643,11 @@ pub mod serialization {
     }
 
     impl<
-        R: Rng,
-        N: OpNode,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > Into<SerializeQMCGraph<N, M, L>> for QMCGraph<R, N, M, L>
+            R: Rng,
+            N: OpNode,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        > Into<SerializeQMCGraph<N, M, L>> for QMCGraph<R, N, M, L>
     {
         fn into(self) -> SerializeQMCGraph<N, M, L> {
             SerializeQMCGraph {
@@ -669,9 +668,9 @@ pub mod serialization {
     #[cfg(test)]
     mod serialize_test {
         use super::*;
+        use rand::prelude::SmallRng;
         use rand::SeedableRng;
         use rand_isaac::IsaacRng;
-        use rand::prelude::SmallRng;
 
         #[test]
         fn test_serialize() {

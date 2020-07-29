@@ -7,6 +7,8 @@ use crate::sse::qmc_traits::*;
 use itertools::Itertools;
 use rand::prelude::ThreadRng;
 use rand::Rng;
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::cmp::{max, min};
 
@@ -15,6 +17,7 @@ pub type DefaultTemperingContainer<R1, R2> =
 
 pub type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
 
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct TemperingContainer<
     R1: Rng,
     R2: Rng,
@@ -559,6 +562,75 @@ pub mod rayon_tempering {
             temper.debug_print_each();
 
             assert!(temper.verify());
+        }
+    }
+}
+
+#[cfg(feature = "serialization")]
+pub mod serialization {
+    use super::*;
+    use crate::sse::qmc_graph::serialization::*;
+
+    type SerializeGraphBeta<N, M, L> = (SerializeQMCGraph<N, M, L>, f64);
+
+    #[derive(Serialize, Deserialize)]
+    pub struct SerializeTemperingContainer<
+        N: OpNode,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    > {
+        nvars: usize,
+        edges: Vec<(Edge, f64)>,
+        cutoff: usize,
+        graphs: Vec<SerializeGraphBeta<N, M, L>>,
+    }
+
+    impl<
+            R1: Rng,
+            R2: Rng,
+            N: OpNode,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        > Into<SerializeTemperingContainer<N, M, L>> for TemperingContainer<R1, R2, N, M, L>
+    {
+        fn into(self) -> SerializeTemperingContainer<N, M, L> {
+            SerializeTemperingContainer {
+                nvars: self.nvars,
+                edges: self.edges,
+                cutoff: self.cutoff,
+                graphs: self
+                    .graphs
+                    .into_iter()
+                    .map(|(g, beta)| (g.into(), beta))
+                    .collect(),
+            }
+        }
+    }
+
+    impl<
+            N: OpNode,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        > SerializeTemperingContainer<N, M, L>
+    {
+        pub fn into_tempering_container<R1: Rng, R2: Rng>(
+            self,
+            container_rng: R,
+            graph_rngs: Vec<R2>,
+        ) -> TemperingContainer<R1, R2, N, M, L> {
+            assert_eq!(self.graphs.len(), graph_rngs.len());
+            TemperingContainer {
+                nvars: self.nvars,
+                edges: self.edges,
+                cutoff: self.cutoff,
+                graphs: self
+                    .graphs
+                    .into_iter()
+                    .zip(graph_rngs.into_iter())
+                    .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
+                    .collect(),
+                rng: container_rng,
+            }
         }
     }
 }
