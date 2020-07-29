@@ -1,6 +1,7 @@
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::ops::IndexMut;
-#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 type Vars = SmallVec<[usize; 2]>;
 type SubState = SmallVec<[bool; 2]>;

@@ -1,7 +1,8 @@
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, Op, OpSide};
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]

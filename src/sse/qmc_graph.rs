@@ -3,9 +3,10 @@ use crate::sse::fast_ops::{FastOpNode, FastOps};
 use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::marker::PhantomData;
-#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 pub type DefaultQMCGraph<R> = QMCGraph<R, FastOpNode, FastOps, FastOps>;
 
@@ -594,19 +595,108 @@ pub(crate) mod autocorrelations {
 }
 
 #[cfg(feature = "serialize")]
-#[cfg(test)]
-mod serialize_test {
+pub mod serialization {
     use super::*;
-    use rand_isaac::IsaacRng;
-    use rand::SeedableRng;
 
-    #[test]
-    fn test_serialize() {
-        let rng = IsaacRng::seed_from_u64(1234);
-        let mut g = DefaultQMCGraph::<IsaacRng>::new_with_rng(vec![((0,1),1.0)], 1.0, 1, rng, None);
-        g.timesteps(100, 1.0);
-        let mut v: Vec<u8> = Vec::default();
-        serde_json::to_writer_pretty(&mut v, &g).unwrap();
-        let _: DefaultQMCGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
+    pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOpNode, FastOps, FastOps>;
+
+    #[derive(Clone)]
+    #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+    pub struct SerializeQMCGraph<
+        N: OpNode,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    > {
+        edges: Vec<(VecEdge, f64)>,
+        transverse: f64,
+        state: Option<Vec<bool>>,
+        cutoff: usize,
+        op_manager: Option<M>,
+        twosite_energy_offset: f64,
+        singlesite_energy_offset: f64,
+        phantom: PhantomData<(L, N)>,
+        // Can be easily reconstructed
+        nvars: usize,
+        nstate_updates: usize,
+    }
+
+    impl<
+        N: OpNode,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    > SerializeQMCGraph<N, M, L>
+    {
+        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCGraph<R, N, M, L> {
+            QMCGraph {
+                edges: self.edges,
+                transverse: self.transverse,
+                state: self.state,
+                cutoff: self.cutoff,
+                op_manager: self.op_manager,
+                twosite_energy_offset: self.twosite_energy_offset,
+                singlesite_energy_offset: self.singlesite_energy_offset,
+                rng: Some(rng),
+                phantom: self.phantom,
+                vars: (0..self.nvars).collect(),
+                state_updates: Vec::with_capacity(self.nstate_updates),
+            }
+        }
+    }
+
+    impl<
+        R: Rng,
+        N: OpNode,
+        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    > Into<SerializeQMCGraph<N, M, L>> for QMCGraph<R, N, M, L>
+    {
+        fn into(self) -> SerializeQMCGraph<N, M, L> {
+            SerializeQMCGraph {
+                edges: self.edges,
+                transverse: self.transverse,
+                state: self.state,
+                cutoff: self.cutoff,
+                op_manager: self.op_manager,
+                twosite_energy_offset: self.twosite_energy_offset,
+                singlesite_energy_offset: self.singlesite_energy_offset,
+                phantom: self.phantom,
+                nvars: self.vars.len(),
+                nstate_updates: self.state_updates.len(),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod serialize_test {
+        use super::*;
+        use rand::SeedableRng;
+        use rand_isaac::IsaacRng;
+        use rand::prelude::SmallRng;
+
+        #[test]
+        fn test_serialize() {
+            let rng = IsaacRng::seed_from_u64(1234);
+            let mut g =
+                DefaultQMCGraph::<IsaacRng>::new_with_rng(vec![((0, 1), 1.0)], 1.0, 1, rng, None);
+            g.timesteps(100, 1.0);
+            let mut v: Vec<u8> = Vec::default();
+            serde_json::to_writer_pretty(&mut v, &g).unwrap();
+            let _: DefaultQMCGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
+        }
+
+        #[test]
+        fn test_serialize_no_rng() {
+            let rng = SmallRng::seed_from_u64(1234);
+            let mut g =
+                DefaultQMCGraph::<SmallRng>::new_with_rng(vec![((0, 1), 1.0)], 1.0, 1, rng, None);
+            g.timesteps(100, 1.0);
+            let mut v: Vec<u8> = Vec::default();
+            let sg: DefaultSerializeQMCGraph = g.into();
+            serde_json::to_writer_pretty(&mut v, &sg).unwrap();
+
+            let rng = SmallRng::seed_from_u64(1234);
+            let sg: DefaultSerializeQMCGraph = serde_json::from_slice(&v).unwrap();
+            let _g: DefaultQMCGraph<SmallRng> = sg.into_qmc(rng);
+        }
     }
 }

@@ -1,5 +1,6 @@
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use std::ops::{Index, IndexMut};
-#[cfg(feature = "serialize")] use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
