@@ -23,8 +23,7 @@ pub struct QMCGraph<
     twosite_energy_offset: f64,
     singlesite_energy_offset: f64,
     rng: Option<R>,
-    phantom_n: PhantomData<N>,
-    phantom_l: PhantomData<L>,
+    phantom: PhantomData<(L, N)>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
     // An alloc to reuse in cluster updates
@@ -96,8 +95,7 @@ impl<
             twosite_energy_offset,
             singlesite_energy_offset,
             rng: Some(rng),
-            phantom_n: PhantomData,
-            phantom_l: PhantomData,
+            phantom: PhantomData,
             vars: (0..nvars).collect(),
             state_updates: vec![],
         }
@@ -498,8 +496,7 @@ impl<
             twosite_energy_offset: self.twosite_energy_offset,
             singlesite_energy_offset: self.singlesite_energy_offset,
             rng: self.rng.clone(),
-            phantom_n: self.phantom_n,
-            phantom_l: self.phantom_l,
+            phantom: self.phantom,
             vars: self.vars.clone(),
             state_updates: self.state_updates.clone(),
         }
