@@ -9,15 +9,15 @@ pub struct FastOps {
     pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(usize, usize)>>,
 
-    frontier: Option<Vec<(usize, OpSide)>>,
-    interior_frontier: Option<Vec<(usize, Leg)>>,
-    boundaries: Option<Vec<(Option<usize>, Option<usize>)>>,
-    flips: Option<Vec<bool>>,
+    pub(crate) frontier: Option<Vec<(usize, OpSide)>>,
+    pub(crate) interior_frontier: Option<Vec<(usize, Leg)>>,
+    pub(crate) boundaries: Option<Vec<(Option<usize>, Option<usize>)>>,
+    pub(crate) flips: Option<Vec<bool>>,
     // Reusable vector
-    last_vars_alloc: Option<Vec<Option<usize>>>,
+    pub(crate) last_vars_alloc: Option<Vec<Option<usize>>>,
 }
 
-type LinkVars = SmallVec<[Option<usize>; 2]>;
+pub type LinkVars = SmallVec<[Option<usize>; 2]>;
 
 #[derive(Clone, Debug)]
 pub struct FastOpNode {

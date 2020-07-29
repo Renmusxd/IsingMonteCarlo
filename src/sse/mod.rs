@@ -5,4 +5,6 @@ pub mod heatbath;
 pub mod qmc_graph;
 pub mod qmc_traits;
 pub mod qmc_types;
+#[cfg(feature = "serialization")]
+pub mod serialization;
 pub mod simple_ops;

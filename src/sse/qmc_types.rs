@@ -1,8 +1,8 @@
 use smallvec::SmallVec;
 use std::ops::IndexMut;
 
-type Vars = SmallVec<[usize; 2]>;
-type SubState = SmallVec<[bool; 2]>;
+pub type Vars = SmallVec<[usize; 2]>;
+pub type SubState = SmallVec<[bool; 2]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Op {

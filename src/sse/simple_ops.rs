@@ -58,7 +58,7 @@ impl SimpleOpDiagonal {
         })
     }
 
-    fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op> {
+    pub fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op> {
         self.set_min_size(p + 1);
         let temp = self.ops[p].take();
         self.ops[p] = op;

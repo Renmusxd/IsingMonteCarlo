@@ -8,27 +8,26 @@ use std::marker::PhantomData;
 
 pub type DefaultQMCGraph<R> = QMCGraph<R, FastOpNode, FastOps, FastOps>;
 
-type VecEdge = Vec<usize>;
+pub(crate) type VecEdge = Vec<usize>;
 pub struct QMCGraph<
     R: Rng,
     N: OpNode,
     M: OpContainerConstructor + DiagonalUpdater + Into<L>,
     L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
 > {
-    edges: Vec<(VecEdge, f64)>,
-    transverse: f64,
-    state: Option<Vec<bool>>,
-    cutoff: usize,
-    op_manager: Option<M>,
-    twosite_energy_offset: f64,
-    singlesite_energy_offset: f64,
-    rng: Option<R>,
-    phantom_n: PhantomData<N>,
-    phantom_l: PhantomData<L>,
+    pub(crate) edges: Vec<(VecEdge, f64)>,
+    pub(crate) transverse: f64,
+    pub(crate) state: Option<Vec<bool>>,
+    pub(crate) cutoff: usize,
+    pub(crate) op_manager: Option<M>,
+    pub(crate) twosite_energy_offset: f64,
+    pub(crate) singlesite_energy_offset: f64,
+    pub(crate) rng: Option<R>,
+    pub(crate) phantom: PhantomData<(L, N)>,
     // This is just an array of the variables 0..nvars
-    vars: Vec<usize>,
+    pub(crate) vars: Vec<usize>,
     // An alloc to reuse in cluster updates
-    state_updates: Vec<(usize, bool)>,
+    pub(crate) state_updates: Vec<(usize, bool)>,
 }
 
 pub fn new_qmc(
@@ -96,8 +95,7 @@ impl<
             twosite_energy_offset,
             singlesite_energy_offset,
             rng: Some(rng),
-            phantom_n: PhantomData,
-            phantom_l: PhantomData,
+            phantom: PhantomData,
             vars: (0..nvars).collect(),
             state_updates: vec![],
         }
@@ -407,6 +405,14 @@ impl<
             .unwrap_or(false)
     }
 
+    pub fn get_edges(&self) -> &Vec<(VecEdge, f64)> {
+        &self.edges
+    }
+
+    pub fn get_transverse(&self) -> f64 {
+        self.transverse
+    }
+
     pub fn state_ref(&self) -> &Vec<bool> {
         self.state.as_ref().unwrap()
     }
@@ -437,6 +443,30 @@ impl<
 
     pub fn get_manager_mut(&mut self) -> &mut M {
         self.op_manager.as_mut().unwrap()
+    }
+
+    pub fn get_op_manager(&self) -> &Option<M> {
+        &self.op_manager
+    }
+
+    pub fn get_twosite_energy_offset(&self) -> f64 {
+        self.twosite_energy_offset
+    }
+
+    pub fn get_singlesite_energy_offset(&self) -> f64 {
+        self.singlesite_energy_offset
+    }
+
+    pub fn get_rng(&self) -> &Option<R> {
+        &self.rng
+    }
+
+    pub fn get_vars(&self) -> &Vec<usize> {
+        &self.vars
+    }
+
+    pub fn get_state_updates(&self) -> &Vec<(usize, bool)> {
+        &self.state_updates
     }
 }
 
@@ -498,8 +528,7 @@ impl<
             twosite_energy_offset: self.twosite_energy_offset,
             singlesite_energy_offset: self.singlesite_energy_offset,
             rng: self.rng.clone(),
-            phantom_n: self.phantom_n,
-            phantom_l: self.phantom_l,
+            phantom: self.phantom,
             vars: self.vars.clone(),
             state_updates: self.state_updates.clone(),
         }
