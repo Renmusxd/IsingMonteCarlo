@@ -615,12 +615,20 @@ pub mod serialization {
             L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
         > SerializeTemperingContainer<N, M, L>
     {
-        pub fn into_tempering_container<R1: Rng, R2: Rng>(
+        pub fn into_tempering_container_from_vec<R1: Rng, R2: Rng>(
             self,
             container_rng: R1,
             graph_rngs: Vec<R2>,
         ) -> TemperingContainer<R1, R2, N, M, L> {
             assert_eq!(self.graphs.len(), graph_rngs.len());
+            self.into_tempering_container(container_rng, graph_rngs.into_iter())
+        }
+
+        pub fn into_tempering_container<R1: Rng, R2: Rng, It: Iterator<Item=R2>>(
+            self,
+            container_rng: R1,
+            graph_rngs: It,
+        ) -> TemperingContainer<R1, R2, N, M, L> {
             TemperingContainer {
                 nvars: self.nvars,
                 edges: self.edges,
@@ -628,7 +636,7 @@ pub mod serialization {
                 graphs: self
                     .graphs
                     .into_iter()
-                    .zip(graph_rngs.into_iter())
+                    .zip(graph_rngs)
                     .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
                     .collect(),
                 rng: Some(container_rng),
