@@ -17,6 +17,7 @@ pub type DefaultTemperingContainer<R1, R2> =
 
 pub type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
 
+#[derive(Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct TemperingContainer<
     R1: Rng,
