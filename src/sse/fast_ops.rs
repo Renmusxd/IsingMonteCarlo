@@ -4,6 +4,7 @@ use crate::sse::qmc_types::{Leg, Op, OpSide};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
+/// A fast op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct FastOps {
@@ -22,6 +23,7 @@ pub struct FastOps {
 
 type LinkVars = SmallVec<[Option<usize>; 2]>;
 
+/// A node which contains ops for FastOps.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct FastOpNode {
@@ -403,7 +405,7 @@ impl ClusterUpdater<FastOpNode> for FastOps {
         self.flips.take().unwrap()
     }
 
-    // Put all the clears in the returns so that serialization doesn't useless data.
+    // Put all the clears in the returns so that serialization doesn't save useless data.
     fn return_frontier_alloc(&mut self, mut frontier: Vec<(usize, OpSide)>) {
         frontier.clear();
         self.frontier = Some(frontier);

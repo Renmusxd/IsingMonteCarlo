@@ -6,16 +6,22 @@ use std::ops::IndexMut;
 type Vars = SmallVec<[usize; 2]>;
 type SubState = SmallVec<[bool; 2]>;
 
+/// An op which covers a number of variables and changes the state from input to output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct Op {
+    /// Variables involved in op
     pub vars: Vars,
+    /// Bond number (index of op)
     pub bond: usize,
+    /// Input state into op.
     pub inputs: SubState,
+    /// Output state out of op.
     pub outputs: SubState,
 }
 
 impl Op {
+    /// Make a diagonal op.
     pub fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
     where
         A: Into<Vars>,
@@ -30,6 +36,7 @@ impl Op {
         }
     }
 
+    /// Make an offdiagonal op.
     pub fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
     where
         A: Into<Vars>,
@@ -44,6 +51,7 @@ impl Op {
         }
     }
 
+    /// Get the relative index of a variable.
     pub fn index_of_var(&self, var: usize) -> Option<usize> {
         let res =
             self.vars
@@ -56,19 +64,24 @@ impl Op {
         }
     }
 
+    /// Check if the op is diagonal (makes no state changes).
     pub fn is_diagonal(&self) -> bool {
         self.inputs == self.outputs
     }
 }
 
+/// Enum detailing which side of the op, input or output.
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub enum OpSide {
+    /// <p side
     Inputs,
+    /// >p side
     Outputs,
 }
 
 impl OpSide {
+    /// Swap from Inputs to Outputs
     pub fn reverse(self) -> Self {
         match self {
             OpSide::Inputs => OpSide::Outputs,
@@ -77,8 +90,10 @@ impl OpSide {
     }
 }
 
+/// A leg is a relative variable on a given side of the op.
 pub type Leg = (usize, OpSide);
 
+/// Toggle input or output states at the location given by `leg`.
 pub fn adjust_states<V>(mut before: V, mut after: V, leg: Leg) -> (V, V)
 where
     V: IndexMut<usize, Output = bool>,

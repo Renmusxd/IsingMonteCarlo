@@ -3,23 +3,35 @@ use rand::Rng;
 use smallvec::SmallVec;
 use std::cmp::min;
 
+/// A node for a loop updater to contain ops.
 pub trait OpNode {
+    /// Get the contained up
     fn get_op(&self) -> Op;
+    /// Get a reference to the contained op
     fn get_op_ref(&self) -> &Op;
+    /// Get a mutable reference to the contained op.
     fn get_op_mut(&mut self) -> &mut Op;
 }
 
+/// The ability to construct a new OpContainer
 pub trait OpContainerConstructor {
+    /// Make a new container for nvars.
     fn new(nvars: usize) -> Self;
 }
 
+/// Contain and manage ops.
 pub trait OpContainer {
+    /// Get the cutoff for this container.
     fn get_cutoff(&self) -> usize;
+    /// Set the cutoff for this container.
     fn set_cutoff(&mut self, cutoff: usize);
+    /// Get the number of non-identity ops.
     fn get_n(&self) -> usize;
+    /// Get the number of managed variables.
     fn get_nvars(&self) -> usize;
+    /// Get the pth op, None is identity.
     fn get_pth(&self, p: usize) -> Option<&Op>;
-
+    /// Verify the integrity of the OpContainer.
     fn verify(&self, state: &[bool]) -> bool {
         let mut rolling_state = state.to_vec();
         for p in 0..self.get_cutoff() {
@@ -42,6 +54,8 @@ pub trait OpContainer {
     }
 }
 
+/// A hamiltonian for the graph.
+#[derive(Debug)]
 pub struct Hamiltonian<
     'a,
     H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
@@ -55,6 +69,7 @@ pub struct Hamiltonian<
 impl<'a, H: Fn(&[usize], usize, &[bool], &[bool]) -> f64, E: Fn(usize) -> &'a [usize]>
     Hamiltonian<'a, H, E>
 {
+    /// Construct a new hamiltonian with a function, edge lookup function, and the number of bonds.
     pub fn new(hamiltonian: H, edge_fn: E, num_edges: usize) -> Self {
         Hamiltonian {
             hamiltonian,
@@ -64,12 +79,14 @@ impl<'a, H: Fn(&[usize], usize, &[bool], &[bool]) -> f64, E: Fn(usize) -> &'a [u
     }
 }
 
+/// Perform diagonal updates to an op container.
 pub trait DiagonalUpdater: OpContainer {
     /// Folds across the p values, passing T down. Mutates op if returned values is Some(...)
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T);
 
+    /// Iterate through the ops and call f.
     fn iterate_ps<F, T>(&self, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Op>, T) -> T,
@@ -81,6 +98,7 @@ pub trait DiagonalUpdater: OpContainer {
         })
     }
 
+    /// Perform a diagonal update step with thread rng.
     fn make_diagonal_update<'b, H, E>(
         &mut self,
         cutoff: usize,
@@ -100,6 +118,7 @@ pub trait DiagonalUpdater: OpContainer {
         )
     }
 
+    /// Perform a diagonal update step.
     fn make_diagonal_update_with_rng<'b, H, E, R: Rng>(
         &mut self,
         cutoff: usize,
@@ -115,6 +134,7 @@ pub trait DiagonalUpdater: OpContainer {
         self.make_diagonal_update_with_rng_and_state_ref(cutoff, beta, &mut state, hamiltonian, rng)
     }
 
+    /// Perform a diagonal update step using in place edits to state.
     fn make_diagonal_update_with_rng_and_state_ref<'b, H, E, R: Rng>(
         &mut self,
         cutoff: usize,
@@ -140,6 +160,7 @@ pub trait DiagonalUpdater: OpContainer {
         });
     }
 
+    /// Perform a single metropolis update.
     fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
         op: Option<&Op>,
         cutoff: usize,
@@ -196,26 +217,42 @@ pub trait DiagonalUpdater: OpContainer {
     }
 }
 
+/// Allow recursive loop updates with a trampoline mechanic
+#[derive(Debug, Clone, Copy)]
 pub enum LoopResult {
+    /// Done with recursion
     Return,
+    /// Continue to iterate.
     Iterate(usize, Leg),
 }
 
+/// Add loop updates to OpContainer.
 pub trait LoopUpdater<Node: OpNode>: OpContainer {
+    /// Get a ref to a node at position p
     fn get_node_ref(&self, p: usize) -> Option<&Node>;
+    /// Get a mutable ref to the node at position p
     fn get_node_mut(&mut self, p: usize) -> Option<&mut Node>;
 
+    /// Get the first occupied p if it exists.
     fn get_first_p(&self) -> Option<usize>;
+    /// Get the last occupied p if it exists.
     fn get_last_p(&self) -> Option<usize>;
+    /// Get the first p occupied which covers variable `var`.
     fn get_first_p_for_var(&self, var: usize) -> Option<usize>;
+    /// Get the last p occupied which covers variable `var`.
     fn get_last_p_for_var(&self, var: usize) -> Option<usize>;
 
+    /// Get the previous occupied p compared to `node`.
     fn get_previous_p(&self, node: &Node) -> Option<usize>;
+    /// Get the next occupied p compared to `node`.
     fn get_next_p(&self, node: &Node) -> Option<usize>;
 
+    /// Get the previous p for a given var, takes the relative var index in node.
     fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Node) -> Option<usize>;
+    /// Get the next p for a given var, takes the relative var index in node.
     fn get_next_p_for_rel_var(&self, relvar: usize, node: &Node) -> Option<usize>;
 
+    /// Get the previous p for a given var.
     fn get_previous_p_for_var(&self, var: usize, node: &Node) -> Result<Option<usize>, ()> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
@@ -224,6 +261,7 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
             Err(())
         }
     }
+    /// Get the next p for a given var.
     fn get_next_p_for_var(&self, var: usize, node: &Node) -> Result<Option<usize>, ()> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
@@ -233,6 +271,7 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
         }
     }
 
+    /// Get the nth occupied p.
     fn get_nth_p(&self, n: usize) -> usize {
         let acc = self
             .get_first_p()
@@ -246,10 +285,12 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
             .0
     }
 
+    /// Returns if a given variable is covered by any ops.
     fn does_var_have_ops(&self, var: usize) -> bool {
         self.get_first_p_for_var(var).is_some()
     }
 
+    /// Make a loop update to the graph with thread rng.
     fn make_loop_update<H>(
         &mut self,
         initial_n: Option<usize>,
@@ -261,6 +302,7 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
         self.make_loop_update_with_rng(initial_n, hamiltonian, &mut rand::thread_rng())
     }
 
+    /// Make a loop update to the graph.
     fn make_loop_update_with_rng<H, R: Rng>(
         &mut self,
         initial_n: Option<usize>,
@@ -315,6 +357,7 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
         }
     }
 
+    /// Apply loop update logic (call `make_loop_update` instead)
     fn apply_loop_update<H, R: Rng>(
         &mut self,
         initial_op_and_leg: (usize, Leg),
@@ -346,6 +389,7 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
         }
     }
 
+    /// Apply loop update logic (call `make_loop_update` instead)
     fn loop_body<H, R: Rng>(
         &mut self,
         initial_op_and_leg: (usize, Leg),
@@ -437,13 +481,16 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
     }
 }
 
+/// Add cluster updates to LoopUpdater.
 pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
+    /// Flip each cluster in the graph using an rng instance. Return the p=0 state changes.
     fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R) -> Vec<(usize, bool)> {
         let mut state_changes = vec![];
         self.flip_each_cluster_rng_to_acc(prob, rng, &mut state_changes);
         state_changes
     }
 
+    /// Flip each cluster in the graph using an rng instance, add to state changes in acc.
     fn flip_each_cluster_rng_to_acc<R: Rng>(
         &mut self,
         prob: f64,
@@ -545,6 +592,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
         self.return_flip_alloc(flips);
     }
 
+    /// Expand a cluster at a given p and leg.
     fn expand_whole_cluster(
         &mut self,
         p: usize,
@@ -618,6 +666,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
         self.return_interior_frontier_alloc(interior_frontier);
     }
 
+    /// Find a site with a single var op.
     fn find_single_site(&self) -> Option<usize> {
         let mut p = self.get_first_p();
         while let Some(node_p) = p {
@@ -632,28 +681,36 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
     }
 
     // Overwrite these functions to reduce the number of memory allocs in the cluster step.
+    /// Get an allocation for the frontier.
     fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
         vec![]
     }
 
+    /// Get an allocation for the interior frontier.
     fn get_interior_frontier_alloc(&mut self) -> Vec<(usize, Leg)> {
         vec![]
     }
 
+    /// Get an allocation for the bounaries.
     fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
         vec![(None, None); size]
     }
 
+    /// Get an allocation for the spin flips.
     fn get_flip_alloc(&mut self) -> Vec<bool> {
         vec![]
     }
 
+    /// Return an alloc.
     fn return_frontier_alloc(&mut self, _frontier: Vec<(usize, OpSide)>) {}
 
+    /// Return an alloc.
     fn return_interior_frontier_alloc(&mut self, _interior_frontier: Vec<(usize, Leg)>) {}
 
+    /// Return an alloc.
     fn return_boundaries_alloc(&mut self, _boundaries: Vec<(Option<usize>, Option<usize>)>) {}
 
+    /// Return an alloc.
     fn return_flip_alloc(&mut self, _flips: Vec<bool>) {}
 }
 

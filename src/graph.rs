@@ -1,6 +1,7 @@
 use rand::prelude::*;
 use std::fmt::{Debug, Error, Formatter};
 
+/// A graph definition for use in classical monte carlo.
 pub struct GraphState {
     pub(crate) edges: Vec<(Edge, f64)>,
     pub(crate) binding_mat: Vec<Vec<(usize, f64)>>,
@@ -24,13 +25,16 @@ impl Debug for GraphState {
     }
 }
 
+/// An edge between two variables.
 pub type Edge = (usize, usize);
 impl GraphState {
+    /// Make a new Graph from a list of edges `[((vara, varb), j), ...]` and longitudinal fields.
     pub fn new(edges: &[(Edge, f64)], biases: &[f64]) -> Self {
         let state = Self::make_random_spin_state(biases.len());
         Self::new_with_state(state, edges, biases)
     }
 
+    /// Make a new graph with an initial state, edges, and longitudinal fields.
     pub fn new_with_state(state: Vec<bool>, edges: &[(Edge, f64)], biases: &[f64]) -> Self {
         // Matrix of all bonds.
         let mut binding_mat: Vec<Vec<(usize, f64)>> = vec![vec![]; biases.len() * biases.len()];
@@ -52,6 +56,7 @@ impl GraphState {
         }
     }
 
+    /// Perform a random single spin flip.
     pub fn do_spin_flip(
         rng: &mut ThreadRng,
         beta: f64,
@@ -82,6 +87,7 @@ impl GraphState {
         }
     }
 
+    /// Randomly flip two spins attached by an edge.
     fn do_edge_flip(
         rng: &mut ThreadRng,
         beta: f64,
@@ -123,6 +129,7 @@ impl GraphState {
         }
     }
 
+    /// Randomly choose if a step should be made based on temperature and energy change.
     pub fn should_flip(rng: &mut ThreadRng, beta: f64, delta_e: f64) -> bool {
         // If dE < 0 then it will always flip, don't bother calculating odds.
         if delta_e > 0.0 {
@@ -133,8 +140,9 @@ impl GraphState {
         }
     }
 
+    /// Perform a monte carlo time step.
     pub fn do_time_step(&mut self, beta: f64, only_basic_moves: bool) -> Result<(), String> {
-        let mut rng = rand::thread_rng();
+        let mut rng = thread_rng();
         // Energy cost of this flip
         if let Some(mut spin_state) = self.state.take() {
             let choice = if only_basic_moves {
@@ -167,23 +175,28 @@ impl GraphState {
         }
     }
 
+    /// Get the spin state.
     pub fn get_state(self) -> Vec<bool> {
         self.state.unwrap()
     }
 
+    /// Clone the spin state.
     pub fn clone_state(&self) -> Vec<bool> {
         self.state.clone().unwrap()
     }
 
+    /// Get a refof the spin state.
     pub fn state_ref(&self) -> &[bool] {
         self.state.as_ref().unwrap()
     }
 
+    /// Overwrite the spin state.
     pub fn set_state(&mut self, state: Vec<bool>) {
         assert_eq!(self.state.as_ref().unwrap().len(), state.len());
         self.state = Some(state)
     }
 
+    /// Get the energy of the system.
     pub fn get_energy(&self) -> f64 {
         if let Some(state) = &self.state {
             state.iter().enumerate().fold(0.0, |acc, (i, si)| {
@@ -202,7 +215,9 @@ impl GraphState {
         }
     }
 
+    /// Randomly build a spin state.
     pub fn make_random_spin_state(n: usize) -> Vec<bool> {
-        (0..n).map(|_| -> bool { rand::random() }).collect()
+        let mut rng = thread_rng();
+        (0..n).map(|_| -> bool { rng.gen() }).collect()
     }
 }

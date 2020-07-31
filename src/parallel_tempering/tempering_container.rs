@@ -12,12 +12,14 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::cmp::{max, min};
 
+/// A tempering container using FastOps and FastOpNodes.
 pub type DefaultTemperingContainer<R1, R2> =
     TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
 
-pub type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
+type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
 
-#[derive(Clone)]
+/// A container to perform parallel tempering.
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct TemperingContainer<
     R1: Rng,
@@ -35,6 +37,7 @@ pub struct TemperingContainer<
     rng: Option<R1>,
 }
 
+/// Make a new parallel tempering container.
 pub fn new_with_rng<R2: Rng, R: Rng>(
     rng: R,
     edges: Vec<(Edge, f64)>,
@@ -43,6 +46,7 @@ pub fn new_with_rng<R2: Rng, R: Rng>(
     TemperingContainer::new(rng, edges, cutoff)
 }
 
+/// Make a new parallel tempering container.
 pub fn new_thread_rng(
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
@@ -58,6 +62,8 @@ impl<
         L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
     > TemperingContainer<R1, R2, N, M, L>
 {
+    /// Make a new tempering container. All graphs will share this set of edgesd
+    /// and start with this cutoff.
     pub fn new(rng: R1, edges: Vec<(Edge, f64)>, cutoff: usize) -> Self {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         Self {
@@ -69,6 +75,7 @@ impl<
         }
     }
 
+    /// Add a graph which uses this rng, transverse field, and beta.
     pub fn add_graph(&mut self, rng: R2, transverse: f64, beta: f64) {
         let graph = QMCGraph::<R2, N, M, L>::new_with_rng(
             self.edges.clone(),
@@ -80,6 +87,7 @@ impl<
         self.graphs.push((graph, beta))
     }
 
+    /// Add a graph which uses this rng, transverse field, and beta. Starts with an initial state.
     pub fn add_graph_with_state(&mut self, rng: R2, transverse: f64, beta: f64, state: Vec<bool>) {
         assert_eq!(state.len(), self.nvars);
         let graph = QMCGraph::<R2, N, M, L>::new_with_rng(
@@ -92,12 +100,14 @@ impl<
         self.graphs.push((graph, beta))
     }
 
+    /// Perform a series of qmc timesteps on each graph.
     pub fn timesteps(&mut self, t: usize) {
         self.graphs.iter_mut().for_each(|(g, beta)| {
             g.timesteps(t, *beta);
         })
     }
 
+    /// Perform a tempering step.
     pub fn tempering_step(&mut self) {
         if self.graphs.len() <= 1 {
             return;
@@ -123,6 +133,7 @@ impl<
         self.rng = Some(rng);
     }
 
+    /// Perform timesteps and sample spins. Return average energy for each graph.
     pub fn timesteps_sample(
         &mut self,
         timesteps: usize,
@@ -167,6 +178,7 @@ impl<
         states.into_iter().zip(energy_acc.into_iter()).collect()
     }
 
+    /// Apply f to each graph's state.
     pub fn iter_over_states<F>(&self, f: F)
     where
         F: Fn(&[bool]),
@@ -174,25 +186,27 @@ impl<
         self.graphs.iter().for_each(|(g, _)| f(g.state_ref()))
     }
 
+    /// Return a reference to the list of graphs and their temperatures.
     pub fn graph_ref(&self) -> &[GraphBeta<R2, N, M, L>] {
         &self.graphs
     }
+    /// Return a mutable reference to the list of graphs and their temperatures.
     pub fn graph_mut(&mut self) -> &mut [GraphBeta<R2, N, M, L>] {
         &mut self.graphs
     }
-
+    /// The number of variables in the graph.
     pub fn nvars(&self) -> usize {
         self.nvars
     }
-
+    /// Get the number of graphs in the container.
     pub fn num_graphs(&self) -> usize {
         self.graphs.len()
     }
-
+    /// Verify all the graphs' integrity.
     pub fn verify(&self) -> bool {
         self.graphs.iter().map(|(g, _)| g.verify()).all(|b| b)
     }
-
+    /// Print each graph.
     pub fn debug_print_each(&self) {
         println!("*********");
         for (g, _) in &self.graphs {
@@ -212,7 +226,7 @@ fn perform_swaps<
     mut rng: R1,
     graphs: &mut [GraphBeta<R2, N, M, L>],
 ) {
-    assert!(graphs.len() % 2 == 0);
+    assert_eq!(graphs.len() % 2, 0);
     if graphs.is_empty() {
         return;
     }
@@ -266,17 +280,26 @@ fn swap_on_chunks<
     }
 }
 
+/// Tempering using parallelization and threads.
 #[cfg(feature = "parallel-tempering")]
 pub mod rayon_tempering {
     use super::*;
     use rayon::prelude::*;
 
+    /// Parallel tempering steps.
     pub trait ParallelQMCTimeSteps {
+        /// Perform qmc steps.
         fn parallel_timesteps(&mut self, t: usize);
+
+        /// Perform a tempering step in parallel.
         fn parallel_tempering_step(&mut self);
+
+        /// Perform qmc steps and apply f to the states.
         fn parallel_iter_over_states<F>(&self, f: F)
         where
             F: Fn(&[bool]) + Sync;
+
+        /// Perform qmc steps and return states and energies.
         fn parallel_timesteps_sample(
             &mut self,
             timesteps: usize,
@@ -406,11 +429,14 @@ pub mod rayon_tempering {
             .for_each(|((ga, gb), p)| swap_on_chunks(ga, gb, p));
     }
 
+    /// Autocorrelation calculations for states.
     #[cfg(feature = "autocorrelations")]
     pub mod autocorrelations {
         use super::*;
 
+        /// A collection of functions to calculate autocorrelations.
         pub trait ParallelTemperingAutocorrelations {
+            /// Calculate autocorrelations on spin variables.
             fn calculate_variable_autocorrelation(
                 &mut self,
                 timesteps: usize,
@@ -418,6 +444,7 @@ pub mod rayon_tempering {
                 sampling_freq: Option<usize>,
                 use_fft: Option<bool>,
             ) -> Vec<Vec<f64>>;
+            /// Calculate autocorrelations on bonds.
             fn calculate_bond_autocorrelation(
                 &mut self,
                 timesteps: usize,
@@ -425,6 +452,7 @@ pub mod rayon_tempering {
                 sampling_freq: Option<usize>,
                 use_fft: Option<bool>,
             ) -> Vec<Vec<f64>>;
+            /// Calculate autocorrelations on the output of f applied to states.
             fn calculate_autocorrelation<F>(
                 &mut self,
                 timesteps: usize,
@@ -567,15 +595,19 @@ pub mod rayon_tempering {
     }
 }
 
+/// Add serialization helpers which drop rng to only store graph states.
 #[cfg(feature = "serialize")]
 pub mod serialization {
     use super::*;
     use crate::sse::qmc_graph::serialization::*;
 
-    pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOpNode, FastOps, FastOps>;
+    /// Default serializable tempering container.
+    pub type DefaultSerializeTemperingContainer =
+        SerializeTemperingContainer<FastOpNode, FastOps, FastOps>;
     type SerializeGraphBeta<N, M, L> = (SerializeQMCGraph<N, M, L>, f64);
 
-    #[derive(Serialize, Deserialize)]
+    /// A tempering container with no rng. Just for serialization.
+    #[derive(Debug, Serialize, Deserialize)]
     pub struct SerializeTemperingContainer<
         N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
@@ -588,11 +620,11 @@ pub mod serialization {
     }
 
     impl<
-        R1: Rng,
-        R2: Rng,
-        N: OpNode,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>
+            R1: Rng,
+            R2: Rng,
+            N: OpNode,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
         > Into<SerializeTemperingContainer<N, M, L>> for TemperingContainer<R1, R2, N, M, L>
     {
         fn into(self) -> SerializeTemperingContainer<N, M, L> {
@@ -615,6 +647,7 @@ pub mod serialization {
             L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
         > SerializeTemperingContainer<N, M, L>
     {
+        /// Convert into a tempering container using the set of rngs.
         pub fn into_tempering_container_from_vec<R1: Rng, R2: Rng>(
             self,
             container_rng: R1,
@@ -624,7 +657,8 @@ pub mod serialization {
             self.into_tempering_container(container_rng, graph_rngs.into_iter())
         }
 
-        pub fn into_tempering_container<R1: Rng, R2: Rng, It: Iterator<Item=R2>>(
+        /// Convert into a tempering container using the iterator of rngs.
+        pub fn into_tempering_container<R1: Rng, R2: Rng, It: Iterator<Item = R2>>(
             self,
             container_rng: R1,
             graph_rngs: It,

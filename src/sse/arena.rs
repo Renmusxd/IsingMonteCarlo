@@ -4,14 +4,14 @@ use std::ops::{Index, IndexMut};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct Arena<T: Clone> {
+pub(crate) struct Arena<T: Clone> {
     arena: Vec<T>,
     default: T,
     index: usize,
 }
 
 impl<T: Clone> Arena<T> {
-    pub fn new(default: T) -> Self {
+    pub(crate) fn new(default: T) -> Self {
         Self {
             arena: vec![],
             default,
@@ -19,13 +19,13 @@ impl<T: Clone> Arena<T> {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         // Clear contents, keep capacity.
         self.arena.clear();
         self.index = 0
     }
 
-    pub fn get_alloc(&mut self, size: usize) -> ArenaIndex {
+    pub(crate) fn get_alloc(&mut self, size: usize) -> ArenaIndex {
         let index = self.index;
         let def_ref = &self.default;
         self.arena.resize_with(index + size, || def_ref.clone());
@@ -53,13 +53,13 @@ impl<T: Clone> IndexMut<&ArenaIndex> for Arena<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ArenaIndex {
+pub(crate) struct ArenaIndex {
     start: usize,
     stop: usize,
 }
 
 impl ArenaIndex {
-    pub fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.stop - self.start
     }
 }

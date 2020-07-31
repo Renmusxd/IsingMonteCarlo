@@ -5,21 +5,30 @@ use crate::sse::simple_ops::SimpleOpDiagonal;
 use rand::Rng;
 use smallvec::{smallvec, SmallVec};
 
+/// Allows retrieving states.
 pub trait StateGetter {
+    /// Get the state of the instance.
     fn get_state_ref(&self) -> &[bool];
 }
 
+/// Allows setting states.
 pub trait StateSetter {
+    /// Set the state of the instance.
     fn set_state(&mut self, state: Vec<bool>);
 }
 
+/// Allow getting the relative weight for a state compared to default.
 pub trait OpWeights {
+    /// Get the relative weight for a state compared to the current one.
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
 }
 
+/// Operator with a hamiltonian.
 pub trait OpHam {
+    /// Take an input state and output state for a given set of variables and bond, output the
+    /// value of <a|H|b>.
     fn hamiltonian(
         &self,
         vars: &[usize],

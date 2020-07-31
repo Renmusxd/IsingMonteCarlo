@@ -4,6 +4,7 @@ use crate::sse::qmc_types::Op;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 
+/// A simple implementation of a diagonal op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct SimpleOpDiagonal {
@@ -14,12 +15,14 @@ pub struct SimpleOpDiagonal {
 }
 
 impl SimpleOpDiagonal {
+    /// Set the minimum size of the container.
     pub(crate) fn set_min_size(&mut self, n: usize) {
         if self.ops.len() < n {
             self.ops.resize(n, None)
         }
     }
 
+    /// Debug print the container.
     pub fn debug_print<H>(&self, h: H)
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
@@ -61,6 +64,7 @@ impl SimpleOpDiagonal {
         })
     }
 
+    /// Set the pth op.
     pub fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op> {
         self.set_min_size(p + 1);
         let temp = self.ops[p].take();
@@ -122,6 +126,7 @@ impl DiagonalUpdater for SimpleOpDiagonal {
     }
 }
 
+/// An op node for the simple op container.
 #[derive(Clone, Debug)]
 pub struct SimpleOpNode {
     pub(crate) op: Op,
@@ -160,6 +165,8 @@ impl OpNode for SimpleOpNode {
     }
 }
 
+/// A simple implementation of the linked list op container for loop updates.
+#[derive(Debug)]
 pub struct SimpleOpLooper {
     ops: Vec<Option<SimpleOpNode>>,
     nth_ps: Vec<usize>,

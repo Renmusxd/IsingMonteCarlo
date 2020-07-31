@@ -3,6 +3,8 @@ use crate::sse::qmc_types::Op;
 use rand::Rng;
 use smallvec::SmallVec;
 
+/// A container for quickly indexing bond weights.
+#[derive(Debug)]
 pub struct BondWeights {
     weight_and_cumulative: Vec<(f64, f64)>,
     total: f64,
@@ -10,12 +12,14 @@ pub struct BondWeights {
 }
 
 impl BondWeights {
+    /// Given a value find the index which tipped the cumulative weight over that threshold.
     fn index_for_cumulative(&self, val: f64) -> usize {
         self.weight_and_cumulative
             .binary_search_by(|(_, c)| c.partial_cmp(&val).unwrap())
             .unwrap_or_else(|x| x)
     }
 
+    /// Update the weight of a bond.
     fn update_weight(&mut self, b: usize, weight: f64) -> f64 {
         let old_weight = self.weight_and_cumulative[b].0;
         if (old_weight - weight).abs() > self.error {
@@ -34,7 +38,9 @@ impl BondWeights {
     }
 }
 
+/// Add heatbath diagonal updates to a diagonal updater.
 pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
+    /// Make a heatbath diagonal update using thread rng.
     fn make_heatbath_diagonal_update<'b, H, E>(
         &mut self,
         cutoff: usize,
@@ -57,6 +63,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         )
     }
 
+    /// Make a heatbath diagonal update.
     fn make_heatbath_diagonal_update_with_rng<'b, H, E, R: Rng>(
         &mut self,
         cutoff: usize,
@@ -81,6 +88,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         )
     }
 
+    /// Make a heatbath diagonal update, edit state in place but leave it unchanged after.
     fn make_heatbath_diagonal_update_with_rng_and_state_ref<'b, H, E, R: Rng>(
         &mut self,
         cutoff: usize,
@@ -113,6 +121,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         bond_weights
     }
 
+    /// Make the bond weights for the system.
     fn make_bond_weights<'b, H, E>(
         state: &[bool],
         hamiltonian: H,
@@ -143,6 +152,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         }
     }
 
+    /// Logic for a heat bath diagonal update.
     fn heat_bath_single_diagonal_update<'b, H, E, R: Rng>(
         op: Option<&Op>,
         cutoff: usize,
@@ -178,7 +188,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
             }
             Some(op) if op.is_diagonal() => {
                 let numerator = (cutoff - n + 1) as f64;
-                let denominator = numerator as f64 + beta * bond_weights.total;
+                let denominator = numerator + beta * bond_weights.total;
                 if rng.gen_bool(numerator / denominator) {
                     Some(None)
                 } else {

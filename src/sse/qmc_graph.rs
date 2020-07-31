@@ -8,10 +8,13 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::marker::PhantomData;
 
+/// Default QMC graph implementation.
 pub type DefaultQMCGraph<R> = QMCGraph<R, FastOpNode, FastOps, FastOps>;
 
 type VecEdge = Vec<usize>;
 
+/// A container to run QMC simulations.
+#[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct QMCGraph<
     R: Rng,
@@ -34,6 +37,7 @@ pub struct QMCGraph<
     state_updates: Vec<(usize, bool)>,
 }
 
+/// Build a new qmc graph with thread rng.
 pub fn new_qmc(
     edges: Vec<(Edge, f64)>,
     transverse: f64,
@@ -44,6 +48,7 @@ pub fn new_qmc(
     DefaultQMCGraph::<ThreadRng>::new_with_rng(edges, transverse, cutoff, rng, state)
 }
 
+/// Build a new qmc graph with thread rng from a classical graph.
 pub fn new_qmc_from_graph(
     graph: GraphState,
     transverse: f64,
@@ -60,6 +65,7 @@ impl<
         L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
     > QMCGraph<R, N, M, L>
 {
+    /// Make a new QMC graph with an rng instance.
     pub fn new_with_rng<Rg: Rng>(
         edges: Vec<(Edge, f64)>,
         transverse: f64,
@@ -105,6 +111,7 @@ impl<
         }
     }
 
+    /// Make a new QMC graph with an rng instance.
     pub fn new_from_graph<Rg: Rng>(
         graph: GraphState,
         transverse: f64,
@@ -115,11 +122,13 @@ impl<
         Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
     }
 
+    /// Take t qmc timesteps at beta.
     pub fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
         let (_, average_energy) = self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
         average_energy
     }
 
+    /// Take t qmc timesteps at beta and sample states.
     pub fn timesteps_sample(
         &mut self,
         t: usize,
@@ -139,6 +148,7 @@ impl<
         )
     }
 
+    /// Take t qmc timesteps at beta and sample states, apply f to each.
     pub fn timesteps_sample_iter<F>(
         &mut self,
         t: usize,
@@ -153,6 +163,7 @@ impl<
         e
     }
 
+    /// Take t qmc timesteps at beta and sample states, apply f to each and the zipped iterator.
     pub fn timesteps_sample_iter_zip<F, I, T>(
         &mut self,
         t: usize,
@@ -187,6 +198,7 @@ impl<
         e
     }
 
+    /// Take t qmc timesteps at beta and sample states, fold across states and output results.
     pub fn timesteps_measure<F, T>(
         &mut self,
         timesteps: usize,
@@ -225,6 +237,7 @@ impl<
         (acc, average_energy + offset)
     }
 
+    /// Make the hamiltonian struct.
     pub fn make_haminfo(&self) -> HamInfo {
         HamInfo {
             edges: &self.edges,
@@ -234,6 +247,7 @@ impl<
         }
     }
 
+    /// Evaluate the hamiltonian using the HamInfo for the graph.
     pub fn hamiltonian(
         info: &HamInfo,
         vars: &[usize],
@@ -258,6 +272,7 @@ impl<
         }
     }
 
+    /// Perform a single step of qmc.
     pub fn timestep(&mut self, beta: f64) {
         let mut state = self.state.take().unwrap();
         let mut manager = self.op_manager.take().unwrap();
@@ -318,6 +333,7 @@ impl<
         self.state = Some(state);
     }
 
+    /// Calculate the autcorrelation calculations for variables.
     #[cfg(feature = "autocorrelations")]
     pub fn calculate_variable_autocorrelation(
         &mut self,
@@ -334,6 +350,7 @@ impl<
         })
     }
 
+    /// Calculate the autcorrelation calculations for bonds.
     #[cfg(feature = "autocorrelations")]
     pub fn calculate_bond_autocorrelation(
         &mut self,
@@ -359,6 +376,7 @@ impl<
         })
     }
 
+    /// Calculate the autcorrelation calculations for the results of f(state).
     #[cfg(feature = "autocorrelations")]
     pub fn calculate_autocorrelation<F>(
         &mut self,
@@ -394,6 +412,7 @@ impl<
         }
     }
 
+    /// Prinbt debug output.
     pub fn print_debug(&self) {
         debug_print_diagonal(
             self.op_manager.as_ref().unwrap(),
@@ -401,6 +420,7 @@ impl<
         )
     }
 
+    /// Verify the integrity of the graph.
     pub fn verify(&self) -> bool {
         self.op_manager
             .as_ref()
@@ -409,34 +429,42 @@ impl<
             .unwrap_or(false)
     }
 
+    /// Get a reference to the state at p=0.
     pub fn state_ref(&self) -> &Vec<bool> {
         self.state.as_ref().unwrap()
     }
 
+    /// Get a mutable reference to the state at p=0 (can break integrity)
     pub fn state_mut(&mut self) -> &mut Vec<bool> {
         self.state.as_mut().unwrap()
     }
 
+    /// Clone the state at p=0.
     pub fn clone_state(&self) -> Vec<bool> {
         self.state.as_ref().unwrap().clone()
     }
 
+    /// Convert the state to a vector.
     pub fn into_vec(self) -> Vec<bool> {
         self.state.unwrap()
     }
 
+    /// Get the number of variables in the graph.
     pub fn get_nvars(&self) -> usize {
         self.vars.len()
     }
 
+    /// Get the cutoff used for qmc calculations (pmax).
     pub fn get_cutoff(&self) -> usize {
         self.cutoff
     }
 
+    /// Get a reference to the op manager.
     pub fn get_manager_ref(&self) -> &M {
         self.op_manager.as_ref().unwrap()
     }
 
+    /// Get a mutable reference to the op manager.
     pub fn get_manager_mut(&mut self) -> &mut M {
         self.op_manager.as_mut().unwrap()
     }
@@ -475,6 +503,8 @@ fn single_site_hamiltonian(
     }
 }
 
+/// Data required to evaluate the hamiltonian.
+#[derive(Debug)]
 pub struct HamInfo<'a> {
     edges: &'a [(VecEdge, f64)],
     transverse: f64,
@@ -515,7 +545,7 @@ pub(crate) mod autocorrelations {
     use rustfft::FFTplanner;
     use std::ops::DivAssign;
 
-    pub fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
+    pub(crate) fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
         let tmax = samples.len();
         let n = samples[0].len();
 
@@ -552,7 +582,7 @@ pub(crate) mod autocorrelations {
             .collect()
     }
 
-    pub fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
+    pub(crate) fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
         let tmax = samples.len();
         let n: usize = samples[0].len();
         let mu = (0..n)
@@ -594,13 +624,16 @@ pub(crate) mod autocorrelations {
     }
 }
 
+/// Structs for easy serialization.
 #[cfg(feature = "serialize")]
 pub mod serialization {
     use super::*;
 
+    /// The serializable version of the default QMC graph.
     pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOpNode, FastOps, FastOps>;
 
-    #[derive(Clone, Serialize, Deserialize)]
+    /// A QMC graph without rng for easy serialization.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SerializeQMCGraph<
         N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
@@ -625,6 +658,7 @@ pub mod serialization {
             L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
         > SerializeQMCGraph<N, M, L>
     {
+        /// Convert into a proper QMC graph using a new rng instance.
         pub fn into_qmc<R: Rng>(self, rng: R) -> QMCGraph<R, N, M, L> {
             QMCGraph {
                 edges: self.edges,
