@@ -1,5 +1,8 @@
 //! A module with various QMC algorithms and traits.
 
+pub use qmc_graph::DefaultQMCGraph;
+pub use qmc_traits::*;
+
 /// An arena for managing memory efficiently
 pub(crate) mod arena;
 

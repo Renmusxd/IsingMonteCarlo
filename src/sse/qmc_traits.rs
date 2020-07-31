@@ -147,7 +147,7 @@ pub trait DiagonalUpdater: OpContainer {
         E: Fn(usize) -> &'b [usize],
     {
         self.mutate_ps(cutoff, (state, rng), |s, op, (state, rng)| {
-            let op = Self::metropolis_single_diagonal_update(
+            let op = metropolis_single_diagonal_update(
                 op,
                 cutoff,
                 s.get_n(),
@@ -159,63 +159,64 @@ pub trait DiagonalUpdater: OpContainer {
             (op, (state, rng))
         });
     }
+}
 
-    /// Perform a single metropolis update.
-    fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
-        op: Option<&Op>,
-        cutoff: usize,
-        n: usize,
-        beta: f64,
-        state: &mut [bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
-        rng: &mut R,
-    ) -> Option<Option<Op>>
+/// Perform a single metropolis update.
+fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
+    op: Option<&Op>,
+    cutoff: usize,
+    n: usize,
+    beta: f64,
+    state: &mut [bool],
+    hamiltonian: &Hamiltonian<'b, H, E>,
+    rng: &mut R,
+) -> Option<Option<Op>>
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
-    {
-        let b = match op {
-            None => rng.gen_range(0, hamiltonian.num_edges),
-            Some(op) if op.is_diagonal() => op.bond,
-            Some(Op { vars, outputs, .. }) => {
-                vars.iter()
-                    .zip(outputs.iter())
-                    .for_each(|(v, b)| state[*v] = *b);
-                return None;
-            }
-        };
-        let vars = (hamiltonian.edge_fn)(b);
-        let substate = vars
-            .iter()
-            .map(|v| state[*v])
-            .collect::<SmallVec<[bool; 2]>>();
-        let mat_element = (hamiltonian.hamiltonian)(vars, b, &substate, &substate);
-
-        // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
-        let numerator = beta * (hamiltonian.num_edges as f64) * mat_element;
-        let denominator = (cutoff - n) as f64;
-
-        match op {
-            None => {
-                if numerator > denominator || rng.gen_bool(numerator / denominator) {
-                    let op = Op::diagonal(vars, b, substate);
-                    Some(Some(op))
-                } else {
-                    None
-                }
-            }
-            Some(op) if op.is_diagonal() => {
-                let denominator = denominator + 1.0;
-                if denominator > numerator || rng.gen_bool(denominator / numerator) {
-                    Some(None)
-                } else {
-                    None
-                }
-            }
-            _ => None,
+{
+    let b = match op {
+        None => rng.gen_range(0, hamiltonian.num_edges),
+        Some(op) if op.is_diagonal() => op.bond,
+        Some(Op { vars, outputs, .. }) => {
+            vars.iter()
+                .zip(outputs.iter())
+                .for_each(|(v, b)| state[*v] = *b);
+            return None;
         }
+    };
+    let vars = (hamiltonian.edge_fn)(b);
+    let substate = vars
+        .iter()
+        .map(|v| state[*v])
+        .collect::<SmallVec<[bool; 2]>>();
+    let mat_element = (hamiltonian.hamiltonian)(vars, b, &substate, &substate);
+
+    // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
+    let numerator = beta * (hamiltonian.num_edges as f64) * mat_element;
+    let denominator = (cutoff - n) as f64;
+
+    match op {
+        None => {
+            if numerator > denominator || rng.gen_bool(numerator / denominator) {
+                let op = Op::diagonal(vars, b, substate);
+                Some(Some(op))
+            } else {
+                None
+            }
+        }
+        Some(op) if op.is_diagonal() => {
+            let denominator = denominator + 1.0;
+            if denominator > numerator || rng.gen_bool(denominator / numerator) {
+                Some(None)
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
+
 
 /// Add loop updates to OpContainer.
 pub trait LoopUpdater<Node: OpNode>: OpContainer {

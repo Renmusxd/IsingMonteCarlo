@@ -91,10 +91,10 @@ impl OpSide {
 }
 
 /// A leg is a relative variable on a given side of the op.
-pub type Leg = (usize, OpSide);
+pub(crate) type Leg = (usize, OpSide);
 
 /// Toggle input or output states at the location given by `leg`.
-pub fn adjust_states<V>(mut before: V, mut after: V, leg: Leg) -> (V, V)
+pub(crate) fn adjust_states<V>(mut before: V, mut after: V, leg: Leg) -> (V, V)
 where
     V: IndexMut<usize, Output = bool>,
 {
