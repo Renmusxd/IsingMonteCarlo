@@ -217,15 +217,6 @@ pub trait DiagonalUpdater: OpContainer {
     }
 }
 
-/// Allow recursive loop updates with a trampoline mechanic
-#[derive(Debug, Clone, Copy)]
-pub enum LoopResult {
-    /// Done with recursion
-    Return,
-    /// Continue to iterate.
-    Iterate(usize, Leg),
-}
-
 /// Add loop updates to OpContainer.
 pub trait LoopUpdater<Node: OpNode>: OpContainer {
     /// Get a ref to a node at position p
@@ -335,7 +326,8 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
             };
             let initial_leg = (initial_var, initial_direction);
 
-            let updates = self.apply_loop_update(
+            let updates = apply_loop_update(
+                self,
                 (nth_p, initial_leg),
                 nth_p,
                 initial_leg,
@@ -356,127 +348,135 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
             vec![]
         }
     }
+}
 
-    /// Apply loop update logic (call `make_loop_update` instead)
-    fn apply_loop_update<H, R: Rng>(
-        &mut self,
-        initial_op_and_leg: (usize, Leg),
-        mut sel_op_pos: usize,
-        mut entrance_leg: Leg,
-        h: H,
-        rng: &mut R,
-        mut acc: Vec<Option<bool>>,
-    ) -> Vec<Option<bool>>
+/// Allow recursive loop updates with a trampoline mechanic
+#[derive(Debug, Clone, Copy)]
+enum LoopResult {
+    Return,
+    Iterate(usize, Leg),
+}
+
+/// Apply loop update logic (call `make_loop_update` instead)
+fn apply_loop_update<N: OpNode, L: LoopUpdater<N> + ?Sized, H, R: Rng>(
+    l: &mut L,
+    initial_op_and_leg: (usize, Leg),
+    mut sel_op_pos: usize,
+    mut entrance_leg: Leg,
+    h: H,
+    rng: &mut R,
+    mut acc: Vec<Option<bool>>,
+) -> Vec<Option<bool>>
     where
         H: Copy + Fn(&Op, Leg, Leg) -> f64,
-    {
-        loop {
-            let res = self.loop_body(
-                initial_op_and_leg,
-                sel_op_pos,
-                entrance_leg,
-                h,
-                rng,
-                &mut acc,
-            );
-            match res {
-                LoopResult::Return => break acc,
-                LoopResult::Iterate(new_sel_op_pos, new_entrance_leg) => {
-                    sel_op_pos = new_sel_op_pos;
-                    entrance_leg = new_entrance_leg;
-                }
+{
+    loop {
+        let res = loop_body(
+            l,
+            initial_op_and_leg,
+            sel_op_pos,
+            entrance_leg,
+            h,
+            rng,
+            &mut acc,
+        );
+        match res {
+            LoopResult::Return => break acc,
+            LoopResult::Iterate(new_sel_op_pos, new_entrance_leg) => {
+                sel_op_pos = new_sel_op_pos;
+                entrance_leg = new_entrance_leg;
             }
         }
     }
+}
 
-    /// Apply loop update logic (call `make_loop_update` instead)
-    fn loop_body<H, R: Rng>(
-        &mut self,
-        initial_op_and_leg: (usize, Leg),
-        sel_op_pos: usize,
-        entrance_leg: Leg,
-        h: H,
-        rng: &mut R,
-        acc: &mut [Option<bool>],
-    ) -> LoopResult
+/// Apply loop update logic (call `make_loop_update` instead)
+fn loop_body<N: OpNode, L: LoopUpdater<N> + ?Sized, H, R: Rng>(
+    l: &mut L,
+    initial_op_and_leg: (usize, Leg),
+    sel_op_pos: usize,
+    entrance_leg: Leg,
+    h: H,
+    rng: &mut R,
+    acc: &mut [Option<bool>],
+) -> LoopResult
     where
         H: Fn(&Op, Leg, Leg) -> f64,
-    {
-        let sel_opnode = self.get_node_mut(sel_op_pos).unwrap();
-        let sel_op = sel_opnode.get_op();
+{
+    let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
+    let sel_op = sel_opnode.get_op();
 
-        let inputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Inputs));
-        let outputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Outputs));
-        let legs = inputs_legs
-            .chain(outputs_legs)
-            .collect::<SmallVec<[(usize, OpSide); 4]>>();
-        let weights = legs
-            .iter()
-            .map(|leg| h(&sel_op, entrance_leg, *leg))
-            .collect::<SmallVec<[f64; 4]>>();
-        let total_weight: f64 = weights.iter().sum();
-        let choice = rng.gen_range(0.0, total_weight);
-        let exit_leg = *weights
-            .iter()
-            .zip(legs.iter())
-            .try_fold(choice, |c, (weight, leg)| {
-                if c < *weight {
-                    Err(leg)
-                } else {
-                    Ok(c - *weight)
-                }
-            })
-            .unwrap_err();
-        let (inputs, outputs) = adjust_states(
-            sel_opnode.get_op_ref().inputs.clone(),
-            sel_opnode.get_op_ref().outputs.clone(),
-            entrance_leg,
-        );
-        let (inputs, outputs) = adjust_states(inputs, outputs, exit_leg);
+    let inputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Inputs));
+    let outputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Outputs));
+    let legs = inputs_legs
+        .chain(outputs_legs)
+        .collect::<SmallVec<[(usize, OpSide); 4]>>();
+    let weights = legs
+        .iter()
+        .map(|leg| h(&sel_op, entrance_leg, *leg))
+        .collect::<SmallVec<[f64; 4]>>();
+    let total_weight: f64 = weights.iter().sum();
+    let choice = rng.gen_range(0.0, total_weight);
+    let exit_leg = *weights
+        .iter()
+        .zip(legs.iter())
+        .try_fold(choice, |c, (weight, leg)| {
+            if c < *weight {
+                Err(leg)
+            } else {
+                Ok(c - *weight)
+            }
+        })
+        .unwrap_err();
+    let (inputs, outputs) = adjust_states(
+        sel_opnode.get_op_ref().inputs.clone(),
+        sel_opnode.get_op_ref().outputs.clone(),
+        entrance_leg,
+    );
+    let (inputs, outputs) = adjust_states(inputs, outputs, exit_leg);
 
-        // Change the op now that we passed through.
-        let sel_op_mut = sel_opnode.get_op_mut();
-        sel_op_mut.inputs = inputs;
-        sel_op_mut.outputs = outputs;
+    // Change the op now that we passed through.
+    let sel_op_mut = sel_opnode.get_op_mut();
+    sel_op_mut.inputs = inputs;
+    sel_op_mut.outputs = outputs;
 
-        // No longer need mutability.
-        let sel_opnode = self.get_node_ref(sel_op_pos).unwrap();
-        let sel_op = sel_opnode.get_op_ref();
+    // No longer need mutability.
+    let sel_opnode = l.get_node_ref(sel_op_pos).unwrap();
+    let sel_op = sel_opnode.get_op_ref();
 
-        // Check if we closed the loop before going to next opnode.
-        if (sel_op_pos, exit_leg) == initial_op_and_leg {
+    // Check if we closed the loop before going to next opnode.
+    if (sel_op_pos, exit_leg) == initial_op_and_leg {
+        LoopResult::Return
+    } else {
+        // Get the next opnode and entrance leg, let us know if it changes the initial/final.
+        let (next_op_pos, var_to_match) = match exit_leg {
+            (var, OpSide::Outputs) => {
+                let next_var_op = l.get_next_p_for_rel_var(var, sel_opnode);
+                let next = next_var_op.unwrap_or_else(|| {
+                    acc[sel_op.vars[var]] = Some(sel_op.outputs[var]);
+                    l.get_first_p_for_var(sel_op.vars[var]).unwrap()
+                });
+                (next, sel_op.vars[var])
+            }
+            (var, OpSide::Inputs) => {
+                let prev_var_op = l.get_previous_p_for_rel_var(var, sel_opnode);
+                let next = prev_var_op.unwrap_or_else(|| {
+                    acc[sel_op.vars[var]] = Some(sel_op.inputs[var]);
+                    l.get_last_p_for_var(sel_op.vars[var]).unwrap()
+                });
+                (next, sel_op.vars[var])
+            }
+        };
+
+        let next_node = l.get_node_ref(next_op_pos).unwrap();
+        let next_var_index = next_node.get_op_ref().index_of_var(var_to_match).unwrap();
+        let new_entrance_leg = (next_var_index, exit_leg.1.reverse());
+
+        // If back where we started, close loop and return state changes.
+        if (next_op_pos, new_entrance_leg) == initial_op_and_leg {
             LoopResult::Return
         } else {
-            // Get the next opnode and entrance leg, let us know if it changes the initial/final.
-            let (next_op_pos, var_to_match) = match exit_leg {
-                (var, OpSide::Outputs) => {
-                    let next_var_op = self.get_next_p_for_rel_var(var, sel_opnode);
-                    let next = next_var_op.unwrap_or_else(|| {
-                        acc[sel_op.vars[var]] = Some(sel_op.outputs[var]);
-                        self.get_first_p_for_var(sel_op.vars[var]).unwrap()
-                    });
-                    (next, sel_op.vars[var])
-                }
-                (var, OpSide::Inputs) => {
-                    let prev_var_op = self.get_previous_p_for_rel_var(var, sel_opnode);
-                    let next = prev_var_op.unwrap_or_else(|| {
-                        acc[sel_op.vars[var]] = Some(sel_op.inputs[var]);
-                        self.get_last_p_for_var(sel_op.vars[var]).unwrap()
-                    });
-                    (next, sel_op.vars[var])
-                }
-            };
-
-            let next_node = self.get_node_ref(next_op_pos).unwrap();
-            let next_var_index = next_node.get_op_ref().index_of_var(var_to_match).unwrap();
-            let new_entrance_leg = (next_var_index, exit_leg.1.reverse());
-
-            // If back where we started, close loop and return state changes.
-            if (next_op_pos, new_entrance_leg) == initial_op_and_leg {
-                LoopResult::Return
-            } else {
-                LoopResult::Iterate(next_op_pos, new_entrance_leg)
-            }
+            LoopResult::Iterate(next_op_pos, new_entrance_leg)
         }
     }
 }
@@ -518,7 +518,8 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                         Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */
                         }
                         Some(_) => {
-                            self.expand_whole_cluster(
+                            expand_whole_cluster::<Node, Self>(
+                                self,
                                 p,
                                 (0, frontier_side),
                                 cluster_num,
@@ -592,80 +593,6 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
         self.return_flip_alloc(flips);
     }
 
-    /// Expand a cluster at a given p and leg.
-    fn expand_whole_cluster(
-        &mut self,
-        p: usize,
-        leg: Leg,
-        cluster_num: usize,
-        boundaries: &mut [(Option<usize>, Option<usize>)],
-        frontier: &mut Vec<(usize, OpSide)>,
-    ) {
-        let mut interior_frontier = self.get_interior_frontier_alloc();
-        let node = self.get_node_ref(p).unwrap();
-        if node.get_op().vars.len() > 1 {
-            // Add all legs
-            assert_eq!(boundaries[p], (None, None));
-            let op = node.get_op_ref();
-            let inputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Inputs));
-            let outputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Outputs));
-            let all_legs = inputs_legs.chain(outputs_legs);
-            interior_frontier.extend(all_legs.map(|l| (p, l)));
-        } else {
-            interior_frontier.push((p, leg))
-        };
-
-        while let Some((p, leg)) = interior_frontier.pop() {
-            set_boundary(p, leg.1, cluster_num, boundaries);
-            let node = self.get_node_ref(p).unwrap();
-            let op = node.get_op_ref();
-            let relvar = leg.0;
-            let var = op.vars[relvar];
-            let ((next_p, next_node), next_leg) = match leg.1 {
-                OpSide::Inputs => {
-                    let prev_p = self.get_previous_p_for_rel_var(relvar, node);
-                    let prev_p = prev_p.unwrap_or_else(|| self.get_last_p_for_var(var).unwrap());
-                    let prev_node = self.get_node_ref(prev_p).unwrap();
-                    let new_rel_var = prev_node.get_op_ref().index_of_var(var).unwrap();
-                    ((prev_p, prev_node), (new_rel_var, OpSide::Outputs))
-                }
-                OpSide::Outputs => {
-                    let next_p = self.get_next_p_for_rel_var(relvar, node);
-                    let next_p = next_p.unwrap_or_else(|| self.get_first_p_for_var(var).unwrap());
-                    let next_node = self.get_node_ref(next_p).unwrap();
-                    let new_rel_var = next_node.get_op_ref().index_of_var(var).unwrap();
-                    ((next_p, next_node), (new_rel_var, OpSide::Inputs))
-                }
-            };
-
-            // If we hit a 1-site, add to frontier and mark in boundary.
-            if next_node.get_op_ref().vars.len() == 1 {
-                if !set_boundary(next_p, next_leg.1, cluster_num, boundaries) {
-                    frontier.push((next_p, next_leg.1.reverse()))
-                }
-            } else {
-                // Allow (None, None), (Some(c), None) or (None, Some(c))
-                // For (None, None) just set c==cluster_num as a hack.
-                match (boundaries[next_p], cluster_num) {
-                    ((None, None), c) | ((Some(c), None), _) | ((None, Some(c)), _)
-                        if c == cluster_num =>
-                    {
-                        set_boundaries(next_p, cluster_num, boundaries);
-
-                        let next_op = next_node.get_op_ref();
-                        let inputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Inputs));
-                        let outputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Outputs));
-                        let new_legs = inputs_legs.chain(outputs_legs).filter(|l| *l != next_leg);
-
-                        interior_frontier.extend(new_legs.map(|leg| (next_p, leg)));
-                    }
-                    _ => (),
-                }
-            }
-        }
-        self.return_interior_frontier_alloc(interior_frontier);
-    }
-
     /// Find a site with a single var op.
     fn find_single_site(&self) -> Option<usize> {
         let mut p = self.get_first_p();
@@ -712,6 +639,80 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
 
     /// Return an alloc.
     fn return_flip_alloc(&mut self, _flips: Vec<bool>) {}
+}
+
+/// Expand a cluster at a given p and leg.
+fn expand_whole_cluster<N: OpNode, C: ClusterUpdater<N> + ?Sized>(
+    c: &mut C,
+    p: usize,
+    leg: Leg,
+    cluster_num: usize,
+    boundaries: &mut [(Option<usize>, Option<usize>)],
+    frontier: &mut Vec<(usize, OpSide)>,
+) {
+    let mut interior_frontier = c.get_interior_frontier_alloc();
+    let node = c.get_node_ref(p).unwrap();
+    if node.get_op().vars.len() > 1 {
+        // Add all legs
+        assert_eq!(boundaries[p], (None, None));
+        let op = node.get_op_ref();
+        let inputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Inputs));
+        let outputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Outputs));
+        let all_legs = inputs_legs.chain(outputs_legs);
+        interior_frontier.extend(all_legs.map(|l| (p, l)));
+    } else {
+        interior_frontier.push((p, leg))
+    };
+
+    while let Some((p, leg)) = interior_frontier.pop() {
+        set_boundary(p, leg.1, cluster_num, boundaries);
+        let node = c.get_node_ref(p).unwrap();
+        let op = node.get_op_ref();
+        let relvar = leg.0;
+        let var = op.vars[relvar];
+        let ((next_p, next_node), next_leg) = match leg.1 {
+            OpSide::Inputs => {
+                let prev_p = c.get_previous_p_for_rel_var(relvar, node);
+                let prev_p = prev_p.unwrap_or_else(|| c.get_last_p_for_var(var).unwrap());
+                let prev_node = c.get_node_ref(prev_p).unwrap();
+                let new_rel_var = prev_node.get_op_ref().index_of_var(var).unwrap();
+                ((prev_p, prev_node), (new_rel_var, OpSide::Outputs))
+            }
+            OpSide::Outputs => {
+                let next_p = c.get_next_p_for_rel_var(relvar, node);
+                let next_p = next_p.unwrap_or_else(|| c.get_first_p_for_var(var).unwrap());
+                let next_node = c.get_node_ref(next_p).unwrap();
+                let new_rel_var = next_node.get_op_ref().index_of_var(var).unwrap();
+                ((next_p, next_node), (new_rel_var, OpSide::Inputs))
+            }
+        };
+
+        // If we hit a 1-site, add to frontier and mark in boundary.
+        if next_node.get_op_ref().vars.len() == 1 {
+            if !set_boundary(next_p, next_leg.1, cluster_num, boundaries) {
+                frontier.push((next_p, next_leg.1.reverse()))
+            }
+        } else {
+            // Allow (None, None), (Some(c), None) or (None, Some(c))
+            // For (None, None) just set c==cluster_num as a hack.
+            match (boundaries[next_p], cluster_num) {
+                ((None, None), c) | ((Some(c), None), _) | ((None, Some(c)), _)
+                    if c == cluster_num =>
+                {
+                    set_boundaries(next_p, cluster_num, boundaries);
+
+                    let next_op = next_node.get_op_ref();
+                    let inputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Inputs));
+                    let outputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Outputs));
+                    let new_legs = inputs_legs.chain(outputs_legs).filter(|l| *l != next_leg);
+
+                    interior_frontier.extend(new_legs.map(|leg| (next_p, leg)));
+                }
+                _ => (),
+            }
+        }
+    }
+    c.return_interior_frontier_alloc(interior_frontier);
 }
 
 // Returns true if both sides have clusters attached.
