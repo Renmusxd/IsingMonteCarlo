@@ -333,6 +333,78 @@ impl<
         self.state = Some(state);
     }
 
+    /// Take a single diagonal step.
+    pub fn single_diagonal_step(&mut self, beta: f64) {
+        let mut state = self.state.take().unwrap();
+        let mut manager = self.op_manager.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
+
+        let nvars = state.len();
+        let edges = &self.edges;
+        let vars = &self.vars;
+        let transverse = self.transverse;
+        let twosite_energy_offset = self.twosite_energy_offset;
+        let singlesite_energy_offset = self.singlesite_energy_offset;
+        let hinfo = HamInfo {
+            edges,
+            transverse,
+            singlesite_energy_offset,
+            twosite_energy_offset,
+        };
+        let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
+        };
+
+        let num_bonds = edges.len() + nvars;
+        let bonds_fn = |b: usize| -> &[usize] {
+            if b < edges.len() {
+                &edges[b].0
+            } else {
+                let b = b - edges.len();
+                &vars[b..b + 1]
+            }
+        };
+
+        // Start by editing the ops list
+        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
+        manager.make_diagonal_update_with_rng_and_state_ref(
+            self.cutoff,
+            beta,
+            &mut state,
+            &ham,
+            rng,
+        );
+        self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
+        self.op_manager = Some(manager);
+        self.state = Some(state);
+    }
+
+
+    /// Take a single offdiagonal step.
+    pub fn single_offdiagonal_step(&mut self) {
+        let mut state = self.state.take().unwrap();
+        let manager = self.op_manager.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
+
+        // Start by editing the ops list
+        let mut manager = manager.into();
+        let state_changes = &mut self.state_updates;
+        state_changes.clear();
+        manager.flip_each_cluster_rng_to_acc(0.5, rng, state_changes);
+        state_changes.iter().cloned().for_each(|(i, v)| {
+            state[i] = v;
+        });
+
+        state.iter_mut().enumerate().for_each(|(var, state)| {
+            if !manager.does_var_have_ops(var) {
+                *state = rng.gen_bool(0.5);
+            }
+        });
+
+        self.op_manager = Some(manager.into());
+        self.state = Some(state);
+    }
+
     /// Calculate the autcorrelation calculations for variables.
     #[cfg(feature = "autocorrelations")]
     pub fn calculate_variable_autocorrelation(
