@@ -35,6 +35,9 @@ pub struct TemperingContainer<
     // Graph and beta
     graphs: Vec<GraphBeta<R2, N, M, L>>,
     rng: Option<R1>,
+
+    // Sort of a debug parameter to see how well swaps are going.
+    total_swaps: u64,
 }
 
 /// Make a new parallel tempering container.
@@ -72,6 +75,7 @@ impl<
             cutoff,
             rng: Some(rng),
             graphs: vec![],
+            total_swaps: 0
         }
     }
 
@@ -120,7 +124,7 @@ impl<
             let n = self.graphs.len();
             &mut self.graphs[0..n - 1]
         };
-        perform_swaps(&mut rng, first_subgraphs);
+        self.total_swaps += perform_swaps(&mut rng, first_subgraphs);
 
         let second_subgraphs = if self.graphs.len() % 2 == 1 {
             &mut self.graphs[1..]
@@ -128,7 +132,7 @@ impl<
             let n = self.graphs.len();
             &mut self.graphs[1..n - 1]
         };
-        perform_swaps(&mut rng, second_subgraphs);
+        self.total_swaps += perform_swaps(&mut rng, second_subgraphs);
 
         self.rng = Some(rng);
     }
@@ -202,6 +206,9 @@ impl<
     pub fn num_graphs(&self) -> usize {
         self.graphs.len()
     }
+    /// Get the total number of successful tempering swaps which have occurred.
+    pub fn get_total_swaps(&self) -> u64 { self.total_swaps }
+
     /// Verify all the graphs' integrity.
     pub fn verify(&self) -> bool {
         self.graphs.iter().map(|(g, _)| g.verify()).all(|b| b)
@@ -225,19 +232,25 @@ fn perform_swaps<
 >(
     mut rng: R1,
     graphs: &mut [GraphBeta<R2, N, M, L>],
-) {
+) -> u64 {
     assert_eq!(graphs.len() % 2, 0);
     if graphs.is_empty() {
-        return;
+        0
+    } else {
+        graphs
+            .iter_mut()
+            .map(|(g, _)| g)
+            .chunks(2)
+            .into_iter()
+            .map(unwrap_chunk)
+            .map(|x| (x, rng.gen_range(0.0, 1.0)))
+            .map(|((ga, gb), p)| if swap_on_chunks(ga, gb, p) {
+                1
+            } else {
+                0
+            })
+            .sum()
     }
-    graphs
-        .iter_mut()
-        .map(|(g, _)| g)
-        .chunks(2)
-        .into_iter()
-        .map(unwrap_chunk)
-        .map(|x| (x, rng.gen_range(0.0, 1.0)))
-        .for_each(|((ga, gb), p)| swap_on_chunks(ga, gb, p));
 }
 
 fn unwrap_chunk<T, It: Iterator<Item = T>>(it: It) -> (T, T) {
@@ -248,6 +261,7 @@ fn unwrap_chunk<T, It: Iterator<Item = T>>(it: It) -> (T, T) {
     (ga, gb)
 }
 
+/// Returns true if a swap occurs.
 fn swap_on_chunks<
     'a,
     R: 'a + Rng,
@@ -258,7 +272,7 @@ fn swap_on_chunks<
     ga: &'a mut QMCGraph<R, N, M, L>,
     gb: &'a mut QMCGraph<R, N, M, L>,
     p: f64,
-) {
+) -> bool {
     let mut a_state = ga.get_state_ref().to_vec();
     let mut b_state = gb.get_state_ref().to_vec();
 
@@ -277,6 +291,9 @@ fn swap_on_chunks<
     if p_swap > p {
         ga.set_state(b_state);
         gb.set_state(a_state);
+        true
+    } else {
+        false
     }
 }
 
@@ -337,7 +354,7 @@ pub mod rayon_tempering {
                 let n = self.graphs.len();
                 &mut self.graphs[0..n - 1]
             };
-            parallel_perform_swaps(&mut rng, first_subgraphs);
+            self.total_swaps += parallel_perform_swaps(&mut rng, first_subgraphs);
 
             let second_subgraphs = if self.graphs.len() % 2 == 1 {
                 &mut self.graphs[1..]
@@ -345,7 +362,7 @@ pub mod rayon_tempering {
                 let n = self.graphs.len();
                 &mut self.graphs[1..n - 1]
             };
-            parallel_perform_swaps(&mut rng, second_subgraphs);
+            self.total_swaps += parallel_perform_swaps(&mut rng, second_subgraphs);
 
             self.rng = Some(rng);
         }
@@ -411,22 +428,24 @@ pub mod rayon_tempering {
     >(
         mut rng: R1,
         graphs: &mut [GraphBeta<R2, N, M, L>],
-    ) {
+    ) -> u64 {
         assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
-            return;
+            0
+        } else {
+            // Generate probs for bools ahead of time, this way we can parallelize.
+            let probs = (0..graphs.len() / 2)
+                .map(|_| rng.gen_range(0.0, 1.0))
+                .collect::<Vec<_>>();
+            graphs
+                .par_iter_mut()
+                .map(|(g, _)| g)
+                .chunks(2)
+                .map(|g| unwrap_chunk(g.into_iter()))
+                .zip(probs.into_par_iter())
+                .map(|((ga, gb), p)| if swap_on_chunks(ga, gb, p) { 1 } else { 0 })
+                .sum()
         }
-        // Generate probs for bools ahead of time, this way we can parallelize.
-        let probs = (0..graphs.len() / 2)
-            .map(|_| rng.gen_range(0.0, 1.0))
-            .collect::<Vec<_>>();
-        graphs
-            .par_iter_mut()
-            .map(|(g, _)| g)
-            .chunks(2)
-            .map(|g| unwrap_chunk(g.into_iter()))
-            .zip(probs.into_par_iter())
-            .for_each(|((ga, gb), p)| swap_on_chunks(ga, gb, p));
     }
 
     /// Autocorrelation calculations for states.
@@ -617,6 +636,7 @@ pub mod serialization {
         edges: Vec<(Edge, f64)>,
         cutoff: usize,
         graphs: Vec<SerializeGraphBeta<N, M, L>>,
+        total_swaps: u64,
     }
 
     impl<
@@ -637,6 +657,7 @@ pub mod serialization {
                     .into_iter()
                     .map(|(g, beta)| (g.into(), beta))
                     .collect(),
+                total_swaps: self.total_swaps
             }
         }
     }
@@ -674,6 +695,7 @@ pub mod serialization {
                     .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
                     .collect(),
                 rng: Some(container_rng),
+                total_swaps: self.total_swaps
             }
         }
     }
