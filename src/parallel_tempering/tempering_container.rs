@@ -75,7 +75,7 @@ impl<
             cutoff,
             rng: Some(rng),
             graphs: vec![],
-            total_swaps: 0
+            total_swaps: 0,
         }
     }
 
@@ -207,7 +207,9 @@ impl<
         self.graphs.len()
     }
     /// Get the total number of successful tempering swaps which have occurred.
-    pub fn get_total_swaps(&self) -> u64 { self.total_swaps }
+    pub fn get_total_swaps(&self) -> u64 {
+        self.total_swaps
+    }
 
     /// Verify all the graphs' integrity.
     pub fn verify(&self) -> bool {
@@ -244,11 +246,7 @@ fn perform_swaps<
             .into_iter()
             .map(unwrap_chunk)
             .map(|x| (x, rng.gen_range(0.0, 1.0)))
-            .map(|((ga, gb), p)| if swap_on_chunks(ga, gb, p) {
-                1
-            } else {
-                0
-            })
+            .map(|((ga, gb), p)| if swap_on_chunks(ga, gb, p) { 1 } else { 0 })
             .sum()
     }
 }
@@ -285,8 +283,9 @@ fn swap_on_chunks<
         QMCGraph::<R, N, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
     };
 
-    let rel_bstate = ga.relative_weight_for_state(ha, &mut b_state);
-    let rel_astate = gb.relative_weight_for_state(hb, &mut a_state);
+    // QMCGraph can only ever have 2 vars since it represents a TFIM.
+    let rel_bstate = ga.relative_weight_for_state_with_max_vars(ha, &mut b_state, 2);
+    let rel_astate = gb.relative_weight_for_state_with_max_vars(hb, &mut a_state, 2);
     let p_swap = rel_bstate * rel_astate;
     if p_swap > p {
         ga.set_state(b_state);
@@ -657,7 +656,7 @@ pub mod serialization {
                     .into_iter()
                     .map(|(g, beta)| (g.into(), beta))
                     .collect(),
-                total_swaps: self.total_swaps
+                total_swaps: self.total_swaps,
             }
         }
     }
@@ -695,7 +694,7 @@ pub mod serialization {
                     .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
                     .collect(),
                 rng: Some(container_rng),
-                total_swaps: self.total_swaps
+                total_swaps: self.total_swaps,
             }
         }
     }

@@ -23,6 +23,15 @@ pub trait OpWeights {
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
+    /// Get the relative weight but skip finding the op with maximum vars.
+    fn relative_weight_for_state_with_max_vars<H>(
+        &self,
+        h: H,
+        state: &mut [bool],
+        max_vars: usize,
+    ) -> f64
+    where
+        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
 }
 
 /// Operator with a hamiltonian.
@@ -50,6 +59,19 @@ impl<
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
         self.get_manager_ref().relative_weight_for_state(h, state)
+    }
+
+    fn relative_weight_for_state_with_max_vars<H>(
+        &self,
+        h: H,
+        state: &mut [bool],
+        max_vars: usize,
+    ) -> f64
+    where
+        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
+        self.get_manager_ref()
+            .relative_weight_for_state_with_max_vars(h, state, max_vars)
     }
 }
 
@@ -152,9 +174,30 @@ impl OpWeights for FastOps {
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
+        let max_vars = self
+            .ops
+            .iter()
+            .filter_map(|op| op.as_ref().map(|op| op.op.vars.len()))
+            .max();
+        if let Some(max_vars) = max_vars {
+            self.relative_weight_for_state_with_max_vars(h, state, max_vars)
+        } else {
+            1.0
+        }
+    }
+
+    fn relative_weight_for_state_with_max_vars<H>(
+        &self,
+        h: H,
+        state: &mut [bool],
+        max_vars: usize,
+    ) -> f64
+    where
+        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
         let mut t = 1.0;
-        let mut inputs: SmallVec<[bool; 2]> = smallvec!(false, false);
-        let mut outputs: SmallVec<[bool; 2]> = smallvec!(false, false);
+        let mut inputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
+        let mut outputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
 
         let mut op_p = self.p_ends.map(|(p, _)| p);
         while let Some(p) = op_p {
@@ -185,8 +228,29 @@ impl OpWeights for SimpleOpDiagonal {
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
-        let mut inputs: SmallVec<[bool; 2]> = smallvec!(false, false);
-        let mut outputs: SmallVec<[bool; 2]> = smallvec!(false, false);
+        let max_vars = self
+            .ops
+            .iter()
+            .filter_map(|op| op.as_ref().map(|op| op.vars.len()))
+            .max();
+        if let Some(max_vars) = max_vars {
+            self.relative_weight_for_state_with_max_vars(h, state, max_vars)
+        } else {
+            1.0
+        }
+    }
+
+    fn relative_weight_for_state_with_max_vars<H>(
+        &self,
+        h: H,
+        state: &mut [bool],
+        max_vars: usize,
+    ) -> f64
+    where
+        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
+        let mut inputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
+        let mut outputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
 
         self.ops
             .iter()
@@ -194,7 +258,7 @@ impl OpWeights for SimpleOpDiagonal {
             .map(|op| op.as_ref().unwrap())
             .try_fold((1.0, state), |(t, state), op| {
                 let equality_iter = op.inputs.iter().zip(op.outputs.iter()).map(|(a, b)| a == b);
-                assert!(op.vars.len() <= 2);
+
                 op.vars
                     .iter()
                     .cloned()

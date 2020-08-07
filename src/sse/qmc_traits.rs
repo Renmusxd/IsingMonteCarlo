@@ -171,9 +171,9 @@ fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
     hamiltonian: &Hamiltonian<'b, H, E>,
     rng: &mut R,
 ) -> Option<Option<Op>>
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> &'b [usize],
+where
+    H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    E: Fn(usize) -> &'b [usize],
 {
     let b = match op {
         None => rng.gen_range(0, hamiltonian.num_edges),
@@ -216,7 +216,6 @@ fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
         _ => None,
     }
 }
-
 
 /// Add loop updates to OpContainer.
 pub trait LoopUpdater<Node: OpNode>: OpContainer {
@@ -368,8 +367,8 @@ fn apply_loop_update<N: OpNode, L: LoopUpdater<N> + ?Sized, H, R: Rng>(
     rng: &mut R,
     mut acc: Vec<Option<bool>>,
 ) -> Vec<Option<bool>>
-    where
-        H: Copy + Fn(&Op, Leg, Leg) -> f64,
+where
+    H: Copy + Fn(&Op, Leg, Leg) -> f64,
 {
     loop {
         let res = loop_body(
@@ -401,8 +400,8 @@ fn loop_body<N: OpNode, L: LoopUpdater<N> + ?Sized, H, R: Rng>(
     rng: &mut R,
     acc: &mut [Option<bool>],
 ) -> LoopResult
-    where
-        H: Fn(&Op, Leg, Leg) -> f64,
+where
+    H: Fn(&Op, Leg, Leg) -> f64,
 {
     let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
     let sel_op = sel_opnode.get_op();

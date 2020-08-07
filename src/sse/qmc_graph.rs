@@ -379,7 +379,6 @@ impl<
         self.state = Some(state);
     }
 
-
     /// Take a single offdiagonal step.
     pub fn single_offdiagonal_step(&mut self) {
         let mut state = self.state.take().unwrap();
