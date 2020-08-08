@@ -44,7 +44,7 @@ mod tests {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
-            QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+            QMCGraph::<SmallRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
                 one_d_periodic(l),
                 1.0,
                 l,
@@ -61,7 +61,7 @@ mod tests {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
-            QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+            QMCGraph::<SmallRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
                 two_d_periodic(l),
                 1.0,
                 l,
@@ -78,7 +78,7 @@ mod tests {
     fn one_d_new(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+        let mut g = QMCGraph::<SmallRng, FastOps, FastOps>::new_with_rng(
             one_d_periodic(l),
             1.0,
             l,
@@ -94,7 +94,7 @@ mod tests {
     fn two_d_new(b: &mut Bencher) {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+        let mut g = QMCGraph::<SmallRng, FastOps, FastOps>::new_with_rng(
             two_d_periodic(l),
             1.0,
             l,
@@ -112,7 +112,7 @@ mod tests {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
-            QMCGraph::<SmallRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+            QMCGraph::<SmallRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
                 two_d_periodic(l),
                 1.0,
                 l,
@@ -129,7 +129,7 @@ mod tests {
     fn two_d_large_new(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g = QMCGraph::<SmallRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+        let mut g = QMCGraph::<SmallRng, FastOps, FastOps>::new_with_rng(
             two_d_periodic(l),
             1.0,
             l,
