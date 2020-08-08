@@ -218,11 +218,14 @@ where
 }
 
 /// Add loop updates to OpContainer.
-pub trait LoopUpdater<Node: OpNode>: OpContainer {
+pub trait LoopUpdater: OpContainer {
+    /// The type used to contain the Op and handle movement around the worldlines.
+    type Node: OpNode;
+
     /// Get a ref to a node at position p
-    fn get_node_ref(&self, p: usize) -> Option<&Node>;
+    fn get_node_ref(&self, p: usize) -> Option<&Self::Node>;
     /// Get a mutable ref to the node at position p
-    fn get_node_mut(&mut self, p: usize) -> Option<&mut Node>;
+    fn get_node_mut(&mut self, p: usize) -> Option<&mut Self::Node>;
 
     /// Get the first occupied p if it exists.
     fn get_first_p(&self) -> Option<usize>;
@@ -234,17 +237,17 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
     fn get_last_p_for_var(&self, var: usize) -> Option<usize>;
 
     /// Get the previous occupied p compared to `node`.
-    fn get_previous_p(&self, node: &Node) -> Option<usize>;
+    fn get_previous_p(&self, node: &Self::Node) -> Option<usize>;
     /// Get the next occupied p compared to `node`.
-    fn get_next_p(&self, node: &Node) -> Option<usize>;
+    fn get_next_p(&self, node: &Self::Node) -> Option<usize>;
 
     /// Get the previous p for a given var, takes the relative var index in node.
-    fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Node) -> Option<usize>;
+    fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<usize>;
     /// Get the next p for a given var, takes the relative var index in node.
-    fn get_next_p_for_rel_var(&self, relvar: usize, node: &Node) -> Option<usize>;
+    fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<usize>;
 
     /// Get the previous p for a given var.
-    fn get_previous_p_for_var(&self, var: usize, node: &Node) -> Result<Option<usize>, ()> {
+    fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<usize>, ()> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_previous_p_for_rel_var(relvar, node))
@@ -253,7 +256,7 @@ pub trait LoopUpdater<Node: OpNode>: OpContainer {
         }
     }
     /// Get the next p for a given var.
-    fn get_next_p_for_var(&self, var: usize, node: &Node) -> Result<Option<usize>, ()> {
+    fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<usize>, ()> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_next_p_for_rel_var(relvar, node))
@@ -358,7 +361,7 @@ enum LoopResult {
 }
 
 /// Apply loop update logic (call `make_loop_update` instead)
-fn apply_loop_update<N: OpNode, L: LoopUpdater<N> + ?Sized, H, R: Rng>(
+fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
     l: &mut L,
     initial_op_and_leg: (usize, Leg),
     mut sel_op_pos: usize,
@@ -391,7 +394,7 @@ where
 }
 
 /// Apply loop update logic (call `make_loop_update` instead)
-fn loop_body<N: OpNode, L: LoopUpdater<N> + ?Sized, H, R: Rng>(
+fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
     l: &mut L,
     initial_op_and_leg: (usize, Leg),
     sel_op_pos: usize,
@@ -482,7 +485,7 @@ where
 }
 
 /// Add cluster updates to LoopUpdater.
-pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
+pub trait ClusterUpdater: LoopUpdater {
     /// Flip each cluster in the graph using an rng instance. Return the p=0 state changes.
     fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R) -> Vec<(usize, bool)> {
         let mut state_changes = vec![];
@@ -518,7 +521,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
                         Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */
                         }
                         Some(_) => {
-                            expand_whole_cluster::<Node, Self>(
+                            expand_whole_cluster::<Self>(
                                 self,
                                 p,
                                 (0, frontier_side),
@@ -642,7 +645,7 @@ pub trait ClusterUpdater<Node: OpNode>: LoopUpdater<Node> {
 }
 
 /// Expand a cluster at a given p and leg.
-fn expand_whole_cluster<N: OpNode, C: ClusterUpdater<N> + ?Sized>(
+fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
     c: &mut C,
     p: usize,
     leg: Leg,

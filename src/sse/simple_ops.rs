@@ -199,7 +199,9 @@ impl OpContainer for SimpleOpLooper {
     }
 }
 
-impl LoopUpdater<SimpleOpNode> for SimpleOpLooper {
+impl LoopUpdater for SimpleOpLooper {
+    type Node = SimpleOpNode;
+
     fn get_node_ref(&self, p: usize) -> Option<&SimpleOpNode> {
         self.ops[p].as_ref()
     }
@@ -245,7 +247,7 @@ impl LoopUpdater<SimpleOpNode> for SimpleOpLooper {
     }
 }
 
-impl ClusterUpdater<SimpleOpNode> for SimpleOpLooper {}
+impl ClusterUpdater for SimpleOpLooper {}
 
 impl Into<SimpleOpDiagonal> for SimpleOpLooper {
     fn into(self) -> SimpleOpDiagonal {

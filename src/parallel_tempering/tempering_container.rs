@@ -1,6 +1,6 @@
 use crate::graph::Edge;
 use crate::parallel_tempering::tempering_traits::*;
-use crate::sse::fast_ops::{FastOpNode, FastOps};
+use crate::sse::fast_ops::FastOps;
 use crate::sse::qmc_graph;
 use crate::sse::qmc_graph::QMCGraph;
 use crate::sse::qmc_traits::*;
@@ -13,10 +13,9 @@ use smallvec::SmallVec;
 use std::cmp::{max, min};
 
 /// A tempering container using FastOps and FastOpNodes.
-pub type DefaultTemperingContainer<R1, R2> =
-    TemperingContainer<R1, R2, FastOpNode, FastOps, FastOps>;
+pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, R2, FastOps, FastOps>;
 
-type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
+type GraphBeta<R, M, L> = (QMCGraph<R, M, L>, f64);
 
 /// A container to perform parallel tempering.
 #[derive(Debug, Clone)]
@@ -24,16 +23,15 @@ type GraphBeta<R, N, M, L> = (QMCGraph<R, N, M, L>, f64);
 pub struct TemperingContainer<
     R1: Rng,
     R2: Rng,
-    N: OpNode,
     M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    L: ClusterUpdater + Into<M>,
 > {
     nvars: usize,
     edges: Vec<(Edge, f64)>,
     cutoff: usize,
 
     // Graph and beta
-    graphs: Vec<GraphBeta<R2, N, M, L>>,
+    graphs: Vec<GraphBeta<R2, M, L>>,
     rng: Option<R1>,
 
     // Sort of a debug parameter to see how well swaps are going.
@@ -60,10 +58,9 @@ pub fn new_thread_rng(
 impl<
         R1: Rng,
         R2: Rng,
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > TemperingContainer<R1, R2, N, M, L>
+        L: ClusterUpdater + Into<M>,
+    > TemperingContainer<R1, R2, M, L>
 {
     /// Make a new tempering container. All graphs will share this set of edgesd
     /// and start with this cutoff.
@@ -81,7 +78,7 @@ impl<
 
     /// Add a graph which uses this rng, transverse field, and beta.
     pub fn add_graph(&mut self, rng: R2, transverse: f64, beta: f64) {
-        let graph = QMCGraph::<R2, N, M, L>::new_with_rng(
+        let graph = QMCGraph::<R2, M, L>::new_with_rng(
             self.edges.clone(),
             transverse,
             self.cutoff,
@@ -94,7 +91,7 @@ impl<
     /// Add a graph which uses this rng, transverse field, and beta. Starts with an initial state.
     pub fn add_graph_with_state(&mut self, rng: R2, transverse: f64, beta: f64, state: Vec<bool>) {
         assert_eq!(state.len(), self.nvars);
-        let graph = QMCGraph::<R2, N, M, L>::new_with_rng(
+        let graph = QMCGraph::<R2, M, L>::new_with_rng(
             self.edges.clone(),
             transverse,
             self.cutoff,
@@ -191,11 +188,11 @@ impl<
     }
 
     /// Return a reference to the list of graphs and their temperatures.
-    pub fn graph_ref(&self) -> &[GraphBeta<R2, N, M, L>] {
+    pub fn graph_ref(&self) -> &[GraphBeta<R2, M, L>] {
         &self.graphs
     }
     /// Return a mutable reference to the list of graphs and their temperatures.
-    pub fn graph_mut(&mut self) -> &mut [GraphBeta<R2, N, M, L>] {
+    pub fn graph_mut(&mut self) -> &mut [GraphBeta<R2, M, L>] {
         &mut self.graphs
     }
     /// The number of variables in the graph.
@@ -228,12 +225,11 @@ impl<
 fn perform_swaps<
     R1: Rng,
     R2: Rng,
-    N: OpNode,
     M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    L: ClusterUpdater + Into<M>,
 >(
     mut rng: R1,
-    graphs: &mut [GraphBeta<R2, N, M, L>],
+    graphs: &mut [GraphBeta<R2, M, L>],
 ) -> u64 {
     assert_eq!(graphs.len() % 2, 0);
     if graphs.is_empty() {
@@ -263,12 +259,11 @@ fn unwrap_chunk<T, It: Iterator<Item = T>>(it: It) -> (T, T) {
 fn swap_on_chunks<
     'a,
     R: 'a + Rng,
-    N: 'a + OpNode,
     M: 'a + OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: 'a + LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    L: 'a + ClusterUpdater + Into<M>,
 >(
-    ga: &'a mut QMCGraph<R, N, M, L>,
-    gb: &'a mut QMCGraph<R, N, M, L>,
+    ga: &'a mut QMCGraph<R, M, L>,
+    gb: &'a mut QMCGraph<R, M, L>,
     p: f64,
 ) -> bool {
     let mut a_state = ga.get_state_ref().to_vec();
@@ -276,11 +271,11 @@ fn swap_on_chunks<
 
     let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
         let haminfo = ga.make_haminfo();
-        QMCGraph::<R, N, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+        QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
     };
     let hb = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
         let haminfo = gb.make_haminfo();
-        QMCGraph::<R, N, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+        QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
     };
 
     // QMCGraph can only ever have 2 vars since it represents a TFIM.
@@ -327,7 +322,6 @@ pub mod rayon_tempering {
     impl<
             R1: Rng,
             R2: Rng + Send + Sync,
-            N: OpNode + Send + Sync,
             M: OpContainerConstructor
                 + DiagonalUpdater
                 + Into<L>
@@ -335,8 +329,8 @@ pub mod rayon_tempering {
                 + OpWeights
                 + Send
                 + Sync,
-            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Send + Sync,
-        > ParallelQMCTimeSteps for TemperingContainer<R1, R2, N, M, L>
+            L: ClusterUpdater + Into<M> + Send + Sync,
+        > ParallelQMCTimeSteps for TemperingContainer<R1, R2, M, L>
     {
         fn parallel_timesteps(&mut self, t: usize) {
             self.graphs.par_iter_mut().for_each(|(g, beta)| {
@@ -421,12 +415,11 @@ pub mod rayon_tempering {
     fn parallel_perform_swaps<
         R1: Rng,
         R2: Rng + Send + Sync,
-        N: OpNode + Send + Sync,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights + Send + Sync,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Send + Sync,
+        L: ClusterUpdater + Into<M> + Send + Sync,
     >(
         mut rng: R1,
-        graphs: &mut [GraphBeta<R2, N, M, L>],
+        graphs: &mut [GraphBeta<R2, M, L>],
     ) -> u64 {
         assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
@@ -486,7 +479,6 @@ pub mod rayon_tempering {
         impl<
                 R1: Rng,
                 R2: Rng + Send + Sync,
-                N: OpNode + Send + Sync,
                 M: OpContainerConstructor
                     + DiagonalUpdater
                     + Into<L>
@@ -494,8 +486,8 @@ pub mod rayon_tempering {
                     + OpWeights
                     + Send
                     + Sync,
-                L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Send + Sync,
-            > ParallelTemperingAutocorrelations for TemperingContainer<R1, R2, N, M, L>
+                L: ClusterUpdater + Into<M> + Send + Sync,
+            > ParallelTemperingAutocorrelations for TemperingContainer<R1, R2, M, L>
         {
             #[cfg(feature = "autocorrelations")]
             fn calculate_variable_autocorrelation(
@@ -620,33 +612,30 @@ pub mod serialization {
     use crate::sse::qmc_graph::serialization::*;
 
     /// Default serializable tempering container.
-    pub type DefaultSerializeTemperingContainer =
-        SerializeTemperingContainer<FastOpNode, FastOps, FastOps>;
-    type SerializeGraphBeta<N, M, L> = (SerializeQMCGraph<N, M, L>, f64);
+    pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps, FastOps>;
+    type SerializeGraphBeta<M, L> = (SerializeQMCGraph<M, L>, f64);
 
     /// A tempering container with no rng. Just for serialization.
     #[derive(Debug, Serialize, Deserialize)]
     pub struct SerializeTemperingContainer<
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        L: ClusterUpdater + Into<M>,
     > {
         nvars: usize,
         edges: Vec<(Edge, f64)>,
         cutoff: usize,
-        graphs: Vec<SerializeGraphBeta<N, M, L>>,
+        graphs: Vec<SerializeGraphBeta<M, L>>,
         total_swaps: u64,
     }
 
     impl<
             R1: Rng,
             R2: Rng,
-            N: OpNode,
             M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-        > Into<SerializeTemperingContainer<N, M, L>> for TemperingContainer<R1, R2, N, M, L>
+            L: ClusterUpdater + Into<M>,
+        > Into<SerializeTemperingContainer<M, L>> for TemperingContainer<R1, R2, M, L>
     {
-        fn into(self) -> SerializeTemperingContainer<N, M, L> {
+        fn into(self) -> SerializeTemperingContainer<M, L> {
             SerializeTemperingContainer {
                 nvars: self.nvars,
                 edges: self.edges,
@@ -662,17 +651,16 @@ pub mod serialization {
     }
 
     impl<
-            N: OpNode,
             M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-        > SerializeTemperingContainer<N, M, L>
+            L: ClusterUpdater + Into<M>,
+        > SerializeTemperingContainer<M, L>
     {
         /// Convert into a tempering container using the set of rngs.
         pub fn into_tempering_container_from_vec<R1: Rng, R2: Rng>(
             self,
             container_rng: R1,
             graph_rngs: Vec<R2>,
-        ) -> TemperingContainer<R1, R2, N, M, L> {
+        ) -> TemperingContainer<R1, R2, M, L> {
             assert_eq!(self.graphs.len(), graph_rngs.len());
             self.into_tempering_container(container_rng, graph_rngs.into_iter())
         }
@@ -682,7 +670,7 @@ pub mod serialization {
             self,
             container_rng: R1,
             graph_rngs: It,
-        ) -> TemperingContainer<R1, R2, N, M, L> {
+        ) -> TemperingContainer<R1, R2, M, L> {
             TemperingContainer {
                 nvars: self.nvars,
                 edges: self.edges,

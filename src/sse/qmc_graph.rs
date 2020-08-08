@@ -1,5 +1,5 @@
 use crate::graph::{Edge, GraphState};
-use crate::sse::fast_ops::{FastOpNode, FastOps};
+use crate::sse::fast_ops::FastOps;
 use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
@@ -9,7 +9,7 @@ use std::cmp::max;
 use std::marker::PhantomData;
 
 /// Default QMC graph implementation.
-pub type DefaultQMCGraph<R> = QMCGraph<R, FastOpNode, FastOps, FastOps>;
+pub type DefaultQMCGraph<R> = QMCGraph<R, FastOps, FastOps>;
 
 type VecEdge = Vec<usize>;
 
@@ -18,9 +18,8 @@ type VecEdge = Vec<usize>;
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct QMCGraph<
     R: Rng,
-    N: OpNode,
     M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-    L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+    L: ClusterUpdater + Into<M>,
 > {
     edges: Vec<(VecEdge, f64)>,
     transverse: f64,
@@ -30,7 +29,7 @@ pub struct QMCGraph<
     twosite_energy_offset: f64,
     singlesite_energy_offset: f64,
     rng: Option<R>,
-    phantom: PhantomData<(L, N)>,
+    phantom: PhantomData<L>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
     // An alloc to reuse in cluster updates
@@ -60,10 +59,9 @@ pub fn new_qmc_from_graph(
 
 impl<
         R: Rng,
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > QMCGraph<R, N, M, L>
+        L: ClusterUpdater + Into<M>,
+    > QMCGraph<R, M, L>
 {
     /// Make a new QMC graph with an rng instance.
     pub fn new_with_rng<Rg: Rng>(
@@ -72,7 +70,7 @@ impl<
         cutoff: usize,
         rng: Rg,
         state: Option<Vec<bool>>,
-    ) -> QMCGraph<Rg, N, M, L> {
+    ) -> QMCGraph<Rg, M, L> {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         let edges = edges
             .into_iter()
@@ -96,7 +94,7 @@ impl<
         };
         let state = Some(state);
 
-        QMCGraph::<Rg, N, M, L> {
+        QMCGraph::<Rg, M, L> {
             edges,
             transverse,
             state,
@@ -117,7 +115,7 @@ impl<
         transverse: f64,
         cutoff: usize,
         rng: Rg,
-    ) -> QMCGraph<Rg, N, M, L> {
+    ) -> QMCGraph<Rg, M, L> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
     }
@@ -586,10 +584,9 @@ pub struct HamInfo<'a> {
 // Implement clone where available.
 impl<
         R: Rng + Clone,
-        N: OpNode + Clone,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + Clone,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M> + Clone,
-    > Clone for QMCGraph<R, N, M, L>
+        L: ClusterUpdater + Into<M> + Clone,
+    > Clone for QMCGraph<R, M, L>
 {
     fn clone(&self) -> Self {
         Self {
@@ -701,14 +698,13 @@ pub mod serialization {
     use super::*;
 
     /// The serializable version of the default QMC graph.
-    pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOpNode, FastOps, FastOps>;
+    pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOps, FastOps>;
 
     /// A QMC graph without rng for easy serialization.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SerializeQMCGraph<
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
+        L: ClusterUpdater + Into<M>,
     > {
         edges: Vec<(VecEdge, f64)>,
         transverse: f64,
@@ -717,20 +713,17 @@ pub mod serialization {
         op_manager: Option<M>,
         twosite_energy_offset: f64,
         singlesite_energy_offset: f64,
-        phantom: PhantomData<(L, N)>,
+        phantom: PhantomData<L>,
         // Can be easily reconstructed
         nvars: usize,
         nstate_updates: usize,
     }
 
-    impl<
-            N: OpNode,
-            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-        > SerializeQMCGraph<N, M, L>
+    impl<M: OpContainerConstructor + DiagonalUpdater + Into<L>, L: ClusterUpdater + Into<M>>
+        SerializeQMCGraph<M, L>
     {
         /// Convert into a proper QMC graph using a new rng instance.
-        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCGraph<R, N, M, L> {
+        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCGraph<R, M, L> {
             QMCGraph {
                 edges: self.edges,
                 transverse: self.transverse,
@@ -749,12 +742,11 @@ pub mod serialization {
 
     impl<
             R: Rng,
-            N: OpNode,
             M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-            L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-        > Into<SerializeQMCGraph<N, M, L>> for QMCGraph<R, N, M, L>
+            L: ClusterUpdater + Into<M>,
+        > Into<SerializeQMCGraph<M, L>> for QMCGraph<R, M, L>
     {
-        fn into(self) -> SerializeQMCGraph<N, M, L> {
+        fn into(self) -> SerializeQMCGraph<M, L> {
             SerializeQMCGraph {
                 edges: self.edges,
                 transverse: self.transverse,

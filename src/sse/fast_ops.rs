@@ -337,7 +337,9 @@ impl OpContainer for FastOps {
     }
 }
 
-impl LoopUpdater<FastOpNode> for FastOps {
+impl LoopUpdater for FastOps {
+    type Node = FastOpNode;
+
     fn get_node_ref(&self, p: usize) -> Option<&FastOpNode> {
         self.ops[p].as_ref()
     }
@@ -385,7 +387,7 @@ impl LoopUpdater<FastOpNode> for FastOps {
     }
 }
 
-impl ClusterUpdater<FastOpNode> for FastOps {
+impl ClusterUpdater for FastOps {
     // No need for logic here, just reuse some allocations.
     fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
         self.frontier.take().unwrap()

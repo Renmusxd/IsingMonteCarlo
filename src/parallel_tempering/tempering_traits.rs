@@ -49,10 +49,9 @@ pub trait OpHam {
 
 impl<
         R: Rng,
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > OpWeights for QMCGraph<R, N, M, L>
+        L: ClusterUpdater + Into<M>,
+    > OpWeights for QMCGraph<R, M, L>
 {
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
@@ -77,10 +76,9 @@ impl<
 
 impl<
         R: Rng,
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > OpHam for QMCGraph<R, N, M, L>
+        L: ClusterUpdater + Into<M>,
+    > OpHam for QMCGraph<R, M, L>
 {
     fn hamiltonian(
         &self,
@@ -96,10 +94,9 @@ impl<
 
 impl<
         R: Rng,
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > StateGetter for QMCGraph<R, N, M, L>
+        L: ClusterUpdater + Into<M>,
+    > StateGetter for QMCGraph<R, M, L>
 {
     fn get_state_ref(&self) -> &[bool] {
         self.state_ref()
@@ -108,10 +105,9 @@ impl<
 
 impl<
         R: Rng,
-        N: OpNode,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter,
-        L: LoopUpdater<N> + ClusterUpdater<N> + Into<M>,
-    > StateSetter for QMCGraph<R, N, M, L>
+        L: ClusterUpdater + Into<M>,
+    > StateSetter for QMCGraph<R, M, L>
 {
     fn set_state(&mut self, state: Vec<bool>) {
         assert_eq!(self.state_ref().len(), state.len());
