@@ -16,7 +16,7 @@ fn single_cluster_test() {
     let l = 8;
 
     let rng: StdRng = SeedableRng::seed_from_u64(1234);
-    let mut g = QMCGraph::<ThreadRng, SimpleOpNode, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+    let mut g = QMCGraph::<ThreadRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
         one_d_periodic(l),
         1.0,
         l,
@@ -28,7 +28,7 @@ fn single_cluster_test() {
     let state_a = g.into_vec();
 
     let rng: StdRng = SeedableRng::seed_from_u64(1234);
-    let mut g = QMCGraph::<ThreadRng, FastOpNode, FastOps, FastOps>::new_with_rng(
+    let mut g = QMCGraph::<ThreadRng, FastOps, FastOps>::new_with_rng(
         one_d_periodic(l),
         1.0,
         l,
