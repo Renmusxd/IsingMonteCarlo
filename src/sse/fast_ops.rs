@@ -21,6 +21,7 @@ pub struct FastOps {
     last_vars_alloc: Option<Vec<Option<usize>>>,
 }
 
+type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
 type LinkVars = SmallVec<[Option<usize>; 2]>;
 
 /// A node which contains ops for FastOps.
@@ -439,104 +440,5 @@ impl ClusterUpdater for FastOps {
     fn return_flip_alloc(&mut self, mut flips: Vec<bool>) {
         flips.clear();
         self.flips = Some(flips)
-    }
-}
-
-/// An op which covers a number of variables and changes the state from input to output.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct FastOp {
-    /// Variables involved in op
-    vars: SmallVec<[usize; 2]>,
-    /// Bond number (index of op)
-    bond: usize,
-    /// Input state into op.
-    inputs: SmallVec<[bool; 2]>,
-    /// Output state out of op.
-    outputs: SmallVec<[bool; 2]>,
-}
-
-impl Op for FastOp {
-    type Vars = SmallVec<[usize; 2]>;
-    type SubState = SmallVec<[bool; 2]>;
-
-    fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
-    where
-        A: Into<Self::Vars>,
-        B: Into<Self::SubState>,
-    {
-        let outputs = state.into();
-        Self {
-            vars: vars.into(),
-            bond,
-            inputs: outputs.clone(),
-            outputs,
-        }
-    }
-
-    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
-    where
-        A: Into<Self::Vars>,
-        B: Into<Self::SubState>,
-        C: Into<Self::SubState>,
-    {
-        Self {
-            vars: vars.into(),
-            bond,
-            inputs: inputs.into(),
-            outputs: outputs.into(),
-        }
-    }
-
-    fn index_of_var(&self, var: usize) -> Option<usize> {
-        let res =
-            self.vars
-                .iter()
-                .enumerate()
-                .try_for_each(|(indx, v)| if *v == var { Err(indx) } else { Ok(()) });
-        match res {
-            Ok(_) => None,
-            Err(v) => Some(v),
-        }
-    }
-
-    fn is_diagonal(&self) -> bool {
-        self.inputs == self.outputs
-    }
-
-    fn get_vars(&self) -> &[usize] {
-        &self.vars
-    }
-
-    fn get_bond(&self) -> usize {
-        self.bond
-    }
-
-    fn get_inputs(&self) -> &[bool] {
-        &self.inputs
-    }
-
-    fn get_outputs(&self) -> &[bool] {
-        &self.outputs
-    }
-
-    fn get_inputs_mut(&mut self) -> &mut [bool] {
-        &mut self.inputs
-    }
-
-    fn get_outputs_mut(&mut self) -> &mut [bool] {
-        &mut self.outputs
-    }
-
-    fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]) {
-        (&mut self.inputs, &mut self.outputs)
-    }
-
-    fn clone_inputs(&self) -> Self::SubState {
-        self.inputs.clone()
-    }
-
-    fn clone_outputs(&self) -> Self::SubState {
-        self.outputs.clone()
     }
 }

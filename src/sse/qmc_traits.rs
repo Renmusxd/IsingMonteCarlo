@@ -1,5 +1,7 @@
 use crate::sse::qmc_types::*;
 use rand::Rng;
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::cmp::min;
 use std::iter::FromIterator;
@@ -480,6 +482,8 @@ where
 
     let inputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Inputs));
     let outputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Outputs));
+
+    // TODO: Adjust this once const generics allow for more vars on stack.
     let legs = inputs_legs
         .chain(outputs_legs)
         .collect::<SmallVec<[(usize, OpSide); 4]>>();
@@ -487,6 +491,7 @@ where
         .iter()
         .map(|leg| h(&sel_op, entrance_leg, *leg))
         .collect::<SmallVec<[f64; 4]>>();
+
     let total_weight: f64 = weights.iter().sum();
     let choice = rng.gen_range(0.0, total_weight);
     let exit_leg = *weights
@@ -846,4 +851,108 @@ pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bo
         println!("\tp={}", p);
         p + 1
     });
+}
+
+/// An standard op which covers a number of variables and changes the state from input to output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+pub struct BasicOp<Vars, SubState>
+where
+    Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Clone,
+    SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Clone,
+{
+    /// Variables involved in op
+    vars: Vars,
+    /// Bond number (index of op)
+    bond: usize,
+    /// Input state into op.
+    inputs: SubState,
+    /// Output state out of op.
+    outputs: SubState,
+}
+
+impl<Vars, SubState> Op for BasicOp<Vars, SubState>
+where
+    Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Clone,
+    SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Clone,
+{
+    type Vars = Vars;
+    type SubState = SubState;
+
+    fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
+    where
+        A: Into<Self::Vars>,
+        B: Into<Self::SubState>,
+    {
+        let outputs = state.into();
+        Self {
+            vars: vars.into(),
+            bond,
+            inputs: outputs.clone(),
+            outputs,
+        }
+    }
+
+    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
+    where
+        A: Into<Self::Vars>,
+        B: Into<Self::SubState>,
+        C: Into<Self::SubState>,
+    {
+        Self {
+            vars: vars.into(),
+            bond,
+            inputs: inputs.into(),
+            outputs: outputs.into(),
+        }
+    }
+
+    fn index_of_var(&self, var: usize) -> Option<usize> {
+        let res = self
+            .vars
+            .as_ref()
+            .iter()
+            .enumerate()
+            .try_for_each(|(indx, v)| if *v == var { Err(indx) } else { Ok(()) });
+        match res {
+            Ok(_) => None,
+            Err(v) => Some(v),
+        }
+    }
+
+    fn get_vars(&self) -> &[usize] {
+        self.vars.as_ref()
+    }
+
+    fn get_bond(&self) -> usize {
+        self.bond
+    }
+
+    fn get_inputs(&self) -> &[bool] {
+        self.inputs.as_ref()
+    }
+
+    fn get_outputs(&self) -> &[bool] {
+        self.outputs.as_ref()
+    }
+
+    fn get_inputs_mut(&mut self) -> &mut [bool] {
+        self.inputs.as_mut()
+    }
+
+    fn get_outputs_mut(&mut self) -> &mut [bool] {
+        self.outputs.as_mut()
+    }
+
+    fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]) {
+        (self.inputs.as_mut(), self.outputs.as_mut())
+    }
+
+    fn clone_inputs(&self) -> Self::SubState {
+        self.inputs.clone()
+    }
+
+    fn clone_outputs(&self) -> Self::SubState {
+        self.outputs.clone()
+    }
 }

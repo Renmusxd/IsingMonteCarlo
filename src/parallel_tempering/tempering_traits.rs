@@ -3,7 +3,6 @@ use crate::sse::qmc_graph::QMCGraph;
 use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::SimpleOpDiagonal;
 use rand::Rng;
-use smallvec::{smallvec, SmallVec};
 
 /// Allows retrieving states.
 pub trait StateGetter {
@@ -24,20 +23,6 @@ pub trait OpWeights {
     where
         H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
-
-    /// Get the relative weight for a state compared to the current one.
-    fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
-    /// Get the relative weight but skip finding the op with maximum vars.
-    fn relative_weight_for_state_with_max_vars<H>(
-        &self,
-        h: H,
-        state: &mut [bool],
-        max_vars: usize,
-    ) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
 }
 
 /// Operator with a hamiltonian.
@@ -66,26 +51,6 @@ impl<
     {
         self.get_manager_ref()
             .relative_weight_for_hamiltonians(h1, h2)
-    }
-
-    fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        self.get_manager_ref().relative_weight_for_state(h, state)
-    }
-
-    fn relative_weight_for_state_with_max_vars<H>(
-        &self,
-        h: H,
-        state: &mut [bool],
-        max_vars: usize,
-    ) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        self.get_manager_ref()
-            .relative_weight_for_state_with_max_vars(h, state, max_vars)
     }
 }
 
@@ -217,63 +182,6 @@ impl OpWeights for FastOps {
         }
         t
     }
-
-    fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let max_vars = self
-            .ops
-            .iter()
-            .filter_map(|op| op.as_ref().map(|op| op.op.get_vars().len()))
-            .max();
-        if let Some(max_vars) = max_vars {
-            self.relative_weight_for_state_with_max_vars(h, state, max_vars)
-        } else {
-            1.0
-        }
-    }
-
-    fn relative_weight_for_state_with_max_vars<H>(
-        &self,
-        h: H,
-        state: &mut [bool],
-        max_vars: usize,
-    ) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let mut t = 1.0;
-        let mut inputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
-        let mut outputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
-
-        let mut op_p = self.p_ends.map(|(p, _)| p);
-        while let Some(p) = op_p {
-            let op = self.get_node_ref(p).unwrap();
-
-            for i in 0..op.op.get_vars().len() {
-                let v = op.op.get_vars()[i];
-                inputs[i] = state[v];
-                if op.op.get_inputs()[i] != op.op.get_outputs()[i] {
-                    state[v] = !state[v];
-                };
-                outputs[i] = state[v];
-            }
-            let new_weight = h(&op.op.get_vars(), op.op.get_bond(), &inputs, &outputs);
-            if new_weight == 0.0 {
-                return 0.0;
-            }
-            let old_weight = h(
-                &op.op.get_vars(),
-                op.op.get_bond(),
-                &op.op.get_inputs(),
-                &op.op.get_outputs(),
-            );
-            t *= new_weight / old_weight;
-            op_p = op.next_p;
-        }
-        t
-    }
 }
 
 impl OpWeights for SimpleOpDiagonal {
@@ -312,75 +220,5 @@ impl OpWeights for SimpleOpDiagonal {
             Ok(f) => f,
             Err(f) => f,
         }
-    }
-
-    fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let max_vars = self
-            .ops
-            .iter()
-            .filter_map(|op| op.as_ref().map(|op| op.get_vars().len()))
-            .max();
-        if let Some(max_vars) = max_vars {
-            self.relative_weight_for_state_with_max_vars(h, state, max_vars)
-        } else {
-            1.0
-        }
-    }
-
-    fn relative_weight_for_state_with_max_vars<H>(
-        &self,
-        h: H,
-        state: &mut [bool],
-        max_vars: usize,
-    ) -> f64
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let mut inputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
-        let mut outputs: SmallVec<[bool; 2]> = smallvec!(false; max_vars);
-
-        self.ops
-            .iter()
-            .filter(|op| op.is_some())
-            .map(|op| op.as_ref().unwrap())
-            .try_fold((1.0, state), |(t, state), op| {
-                let equality_iter = op
-                    .get_inputs()
-                    .iter()
-                    .zip(op.get_outputs().iter())
-                    .map(|(a, b)| a == b);
-
-                op.get_vars()
-                    .iter()
-                    .cloned()
-                    .zip(equality_iter)
-                    .zip(inputs.iter_mut())
-                    .zip(outputs.iter_mut())
-                    .for_each(|(((v, eq), input), output)| {
-                        *input = state[v];
-                        if !eq {
-                            state[v] = !state[v];
-                        };
-                        *output = state[v];
-                    });
-                let new_weight = h(&op.get_vars(), op.get_bond(), &inputs, &outputs);
-                if new_weight == 0.0 {
-                    Err(())
-                } else {
-                    let old_weight = h(
-                        &op.get_vars(),
-                        op.get_bond(),
-                        &op.get_inputs(),
-                        &op.get_outputs(),
-                    );
-                    let t = t * (new_weight / old_weight);
-                    Ok((t, state))
-                }
-            })
-            .map(|(w, _)| w)
-            .unwrap_or(0.0) // 0.0 weight if returned early.
     }
 }
