@@ -298,42 +298,6 @@ fn swap_on_chunks<
     }
 }
 
-/// Returns true if a swap occurs.
-fn swap_internal_state_on_chunks<
-    'a,
-    R: 'a + Rng,
-    M: 'a + OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: 'a + ClusterUpdater + Into<M>,
->(
-    ga: &'a mut QMCGraph<R, M, L>,
-    gb: &'a mut QMCGraph<R, M, L>,
-    p: f64,
-) -> bool {
-    let mut a_state = ga.get_state_ref().to_vec();
-    let mut b_state = gb.get_state_ref().to_vec();
-
-    let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-        let haminfo = ga.make_haminfo();
-        QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
-    };
-    let hb = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-        let haminfo = gb.make_haminfo();
-        QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
-    };
-
-    // QMCGraph can only ever have 2 vars since it represents a TFIM.
-    let rel_bstate = ga.relative_weight_for_state_with_max_vars(ha, &mut b_state, 2);
-    let rel_astate = gb.relative_weight_for_state_with_max_vars(hb, &mut a_state, 2);
-    let p_swap = rel_bstate * rel_astate;
-    if p_swap > p {
-        ga.set_state(b_state);
-        gb.set_state(a_state);
-        true
-    } else {
-        false
-    }
-}
-
 /// Tempering using parallelization and threads.
 #[cfg(feature = "parallel-tempering")]
 pub mod rayon_tempering {

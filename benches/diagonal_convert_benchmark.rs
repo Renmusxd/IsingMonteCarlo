@@ -7,7 +7,6 @@ extern crate test;
 mod tests {
     use super::*;
     use ising_monte_carlo::sse::qmc_traits::*;
-    use ising_monte_carlo::sse::qmc_types::Op;
     use ising_monte_carlo::sse::simple_ops::*;
     use smallvec::smallvec;
     use test::Bencher;
@@ -36,12 +35,12 @@ mod tests {
             let varb = (i + 1) % nvars;
             a.set_pth(
                 i,
-                Some(Op {
-                    vars: smallvec![vara, varb],
-                    bond: 0,
-                    inputs: smallvec![false, false],
-                    outputs: smallvec![false, false],
-                }),
+                Some(SimpleOp::offdiagonal(
+                    smallvec![vara, varb],
+                    0,
+                    smallvec![false, false],
+                    smallvec![false, false],
+                )),
             );
         });
         b.iter(|| {
@@ -59,12 +58,12 @@ mod tests {
             let varb = (i + 1) % nvars;
             a.set_pth(
                 nvars * i,
-                Some(Op {
-                    vars: smallvec![vara, varb],
-                    bond: 0,
-                    inputs: smallvec![false, false],
-                    outputs: smallvec![false, false],
-                }),
+                Some(SimpleOp::offdiagonal(
+                    smallvec![vara, varb],
+                    0,
+                    smallvec![false, false],
+                    smallvec![false, false],
+                )),
             );
         });
         b.iter(|| {

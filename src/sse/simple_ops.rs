@@ -1,14 +1,14 @@
 use crate::sse::arena::*;
 use crate::sse::qmc_traits::*;
-use crate::sse::qmc_types::Op;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 /// A simple implementation of a diagonal op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct SimpleOpDiagonal {
-    pub(crate) ops: Vec<Option<Op>>,
+    pub(crate) ops: Vec<Option<SimpleOp>>,
     n: usize,
     nvars: usize,
     arena: Arena<Option<usize>>,
@@ -70,7 +70,7 @@ impl SimpleOpDiagonal {
     }
 
     /// Set the pth op.
-    pub fn set_pth(&mut self, p: usize, op: Option<Op>) -> Option<Op> {
+    pub fn set_pth(&mut self, p: usize, op: Option<SimpleOp>) -> Option<SimpleOp> {
         self.set_min_size(p + 1);
         let temp = self.ops[p].take();
         self.ops[p] = op;
@@ -90,6 +90,8 @@ impl OpContainerConstructor for SimpleOpDiagonal {
 }
 
 impl OpContainer for SimpleOpDiagonal {
+    type Op = SimpleOp;
+
     fn get_cutoff(&self) -> usize {
         self.ops.len()
     }
@@ -106,7 +108,7 @@ impl OpContainer for SimpleOpDiagonal {
         self.nvars
     }
 
-    fn get_pth(&self, p: usize) -> Option<&Op> {
+    fn get_pth(&self, p: usize) -> Option<&Self::Op> {
         if p >= self.ops.len() {
             None
         } else {
@@ -118,7 +120,7 @@ impl OpContainer for SimpleOpDiagonal {
 impl DiagonalUpdater for SimpleOpDiagonal {
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
-        F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T),
+        F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
     {
         (0..cutoff).fold(t, |t, p| {
             let op = self.get_pth(p);
@@ -134,7 +136,7 @@ impl DiagonalUpdater for SimpleOpDiagonal {
 /// An op node for the simple op container.
 #[derive(Clone, Debug)]
 pub struct SimpleOpNode {
-    pub(crate) op: Op,
+    pub(crate) op: SimpleOp,
     pub(crate) previous_p: Option<usize>,
     pub(crate) next_p: Option<usize>,
     pub(crate) previous_for_vars: ArenaIndex,
@@ -142,7 +144,7 @@ pub struct SimpleOpNode {
 }
 
 impl SimpleOpNode {
-    fn new(op: Op, previous_for_vars: ArenaIndex, next_for_vars: ArenaIndex) -> Self {
+    fn new(op: SimpleOp, previous_for_vars: ArenaIndex, next_for_vars: ArenaIndex) -> Self {
         let nvars = op.get_vars().len();
         assert_eq!(previous_for_vars.size(), nvars);
         assert_eq!(next_for_vars.size(), nvars);
@@ -156,16 +158,16 @@ impl SimpleOpNode {
     }
 }
 
-impl OpNode for SimpleOpNode {
-    fn get_op(&self) -> Op {
+impl OpNode<SimpleOp> for SimpleOpNode {
+    fn get_op(&self) -> SimpleOp {
         self.op.clone()
     }
 
-    fn get_op_ref(&self) -> &Op {
+    fn get_op_ref(&self) -> &SimpleOp {
         &self.op
     }
 
-    fn get_op_mut(&mut self) -> &mut Op {
+    fn get_op_mut(&mut self) -> &mut SimpleOp {
         &mut self.op
     }
 }
@@ -181,6 +183,8 @@ pub struct SimpleOpLooper {
 }
 
 impl OpContainer for SimpleOpLooper {
+    type Op = SimpleOp;
+
     fn get_cutoff(&self) -> usize {
         self.ops.len()
     }
@@ -199,7 +203,7 @@ impl OpContainer for SimpleOpLooper {
         self.var_ends.len()
     }
 
-    fn get_pth(&self, p: usize) -> Option<&Op> {
+    fn get_pth(&self, p: usize) -> Option<&Self::Op> {
         self.ops[p].as_ref().map(|opnode| &opnode.op)
     }
 }
@@ -335,5 +339,104 @@ impl Into<SimpleOpLooper> for SimpleOpDiagonal {
             var_ends,
             arena,
         }
+    }
+}
+
+/// An op which covers a number of variables and changes the state from input to output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+pub struct SimpleOp {
+    /// Variables involved in op
+    vars: SmallVec<[usize; 2]>,
+    /// Bond number (index of op)
+    bond: usize,
+    /// Input state into op.
+    inputs: SmallVec<[bool; 2]>,
+    /// Output state out of op.
+    outputs: SmallVec<[bool; 2]>,
+}
+
+impl Op for SimpleOp {
+    type Vars = SmallVec<[usize; 2]>;
+    type SubState = SmallVec<[bool; 2]>;
+
+    fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
+    where
+        A: Into<Self::Vars>,
+        B: Into<Self::SubState>,
+    {
+        let outputs = state.into();
+        Self {
+            vars: vars.into(),
+            bond,
+            inputs: outputs.clone(),
+            outputs,
+        }
+    }
+
+    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
+    where
+        A: Into<Self::Vars>,
+        B: Into<Self::SubState>,
+        C: Into<Self::SubState>,
+    {
+        Self {
+            vars: vars.into(),
+            bond,
+            inputs: inputs.into(),
+            outputs: outputs.into(),
+        }
+    }
+
+    fn index_of_var(&self, var: usize) -> Option<usize> {
+        let res =
+            self.vars
+                .iter()
+                .enumerate()
+                .try_for_each(|(indx, v)| if *v == var { Err(indx) } else { Ok(()) });
+        match res {
+            Ok(_) => None,
+            Err(v) => Some(v),
+        }
+    }
+
+    fn is_diagonal(&self) -> bool {
+        self.inputs == self.outputs
+    }
+
+    fn get_vars(&self) -> &[usize] {
+        &self.vars
+    }
+
+    fn get_bond(&self) -> usize {
+        self.bond
+    }
+
+    fn get_inputs(&self) -> &[bool] {
+        &self.inputs
+    }
+
+    fn get_outputs(&self) -> &[bool] {
+        &self.outputs
+    }
+
+    fn get_inputs_mut(&mut self) -> &mut [bool] {
+        &mut self.inputs
+    }
+
+    fn get_outputs_mut(&mut self) -> &mut [bool] {
+        &mut self.outputs
+    }
+
+    fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]) {
+        (&mut self.inputs, &mut self.outputs)
+    }
+
+    fn clone_inputs(&self) -> Self::SubState {
+        self.inputs.clone()
+    }
+
+    fn clone_outputs(&self) -> Self::SubState {
+        self.outputs.clone()
     }
 }

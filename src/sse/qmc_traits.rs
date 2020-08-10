@@ -2,15 +2,72 @@ use crate::sse::qmc_types::*;
 use rand::Rng;
 use smallvec::SmallVec;
 use std::cmp::min;
+use std::iter::FromIterator;
+
+/// Ops for holding SSE graph state.
+pub trait Op {
+    /// The list of op variables.
+    type Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]>;
+    /// The list of op input and output states.
+    type SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]>;
+
+    /// Make a diagonal op.
+    fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
+    where
+        A: Into<Self::Vars>,
+        B: Into<Self::SubState>;
+
+    /// Make an offdiagonal op.
+    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
+    where
+        A: Into<Self::Vars>,
+        B: Into<Self::SubState>,
+        C: Into<Self::SubState>;
+
+    /// Get the relative index of a variable.
+    fn index_of_var(&self, var: usize) -> Option<usize>;
+
+    /// Check if the op is diagonal (makes no state changes).
+    fn is_diagonal(&self) -> bool {
+        self.get_inputs() == self.get_outputs()
+    }
+
+    /// Get the set of variables used for this op.
+    fn get_vars(&self) -> &[usize];
+
+    /// Get the associated bond number for the op.
+    fn get_bond(&self) -> usize;
+
+    /// Get the input state for the op.
+    fn get_inputs(&self) -> &[bool];
+
+    /// Get the output state for the op.
+    fn get_outputs(&self) -> &[bool];
+
+    /// Get the input state for the op.
+    fn get_inputs_mut(&mut self) -> &mut [bool];
+
+    /// Get the output state for the op.
+    fn get_outputs_mut(&mut self) -> &mut [bool];
+
+    /// Get both the inputs and outputs for op.
+    fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]);
+
+    /// Get the input state for the op.
+    fn clone_inputs(&self) -> Self::SubState;
+
+    /// Get the output state for the op.
+    fn clone_outputs(&self) -> Self::SubState;
+}
 
 /// A node for a loop updater to contain ops.
-pub trait OpNode {
+pub trait OpNode<O: Op> {
     /// Get the contained up
-    fn get_op(&self) -> Op;
+    fn get_op(&self) -> O;
     /// Get a reference to the contained op
-    fn get_op_ref(&self) -> &Op;
+    fn get_op_ref(&self) -> &O;
     /// Get a mutable reference to the contained op.
-    fn get_op_mut(&mut self) -> &mut Op;
+    fn get_op_mut(&mut self) -> &mut O;
 }
 
 /// The ability to construct a new OpContainer
@@ -21,6 +78,9 @@ pub trait OpContainerConstructor {
 
 /// Contain and manage ops.
 pub trait OpContainer {
+    /// The op object to manage.
+    type Op: Op;
+
     /// Get the cutoff for this container.
     fn get_cutoff(&self) -> usize;
     /// Set the cutoff for this container.
@@ -30,7 +90,7 @@ pub trait OpContainer {
     /// Get the number of managed variables.
     fn get_nvars(&self) -> usize;
     /// Get the pth op, None is identity.
-    fn get_pth(&self, p: usize) -> Option<&Op>;
+    fn get_pth(&self, p: usize) -> Option<&Self::Op>;
     /// Verify the integrity of the OpContainer.
     fn verify(&self, state: &[bool]) -> bool {
         let mut rolling_state = state.to_vec();
@@ -87,12 +147,12 @@ pub trait DiagonalUpdater: OpContainer {
     /// Folds across the p values, passing T down. Mutates op if returned values is Some(...)
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
-        F: Fn(&Self, Option<&Op>, T) -> (Option<Option<Op>>, T);
+        F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T);
 
     /// Iterate through the ops and call f.
     fn iterate_ps<F, T>(&self, t: T, f: F) -> T
     where
-        F: Fn(&Self, Option<&Op>, T) -> T,
+        F: Fn(&Self, Option<&Self::Op>, T) -> T,
     {
         let cutoff = self.get_cutoff();
         (0..cutoff).fold(t, |t, p| {
@@ -165,15 +225,15 @@ pub trait DiagonalUpdater: OpContainer {
 }
 
 /// Perform a single metropolis update.
-fn metropolis_single_diagonal_update<'b, H, E, R: Rng>(
-    op: Option<&Op>,
+fn metropolis_single_diagonal_update<'b, O: Op, H, E, R: Rng>(
+    op: Option<&O>,
     cutoff: usize,
     n: usize,
     beta: f64,
     state: &mut [bool],
     hamiltonian: &Hamiltonian<'b, H, E>,
     rng: &mut R,
-) -> Option<Option<Op>>
+) -> Option<Option<O>>
 where
     H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     E: Fn(usize) -> &'b [usize],
@@ -190,8 +250,8 @@ where
         }
     };
     let vars = (hamiltonian.edge_fn)(b);
-    let substate = vars.iter().map(|v| state[*v]).collect::<SubState>();
-    let mat_element = (hamiltonian.hamiltonian)(vars, b, &substate, &substate);
+    let substate = vars.iter().map(|v| state[*v]).collect::<O::SubState>();
+    let mat_element = (hamiltonian.hamiltonian)(vars, b, substate.as_ref(), substate.as_ref());
 
     // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
     let numerator = beta * (hamiltonian.num_edges as f64) * mat_element;
@@ -200,6 +260,7 @@ where
     match op {
         None => {
             if numerator > denominator || rng.gen_bool(numerator / denominator) {
+                let vars = vars.iter().cloned().collect::<O::Vars>();
                 let op = Op::diagonal(vars, b, substate);
                 Some(Some(op))
             } else {
@@ -221,7 +282,7 @@ where
 /// Add loop updates to OpContainer.
 pub trait LoopUpdater: OpContainer {
     /// The type used to contain the Op and handle movement around the worldlines.
-    type Node: OpNode;
+    type Node: OpNode<Self::Op>;
 
     /// Get a ref to a node at position p
     fn get_node_ref(&self, p: usize) -> Option<&Self::Node>;
@@ -307,13 +368,18 @@ pub trait LoopUpdater: OpContainer {
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
-        let h = |op: &Op, entrance: Leg, exit: Leg| -> f64 {
+        let h = |op: &Self::Op, entrance: Leg, exit: Leg| -> f64 {
             let mut inputs = op.clone_inputs();
             let mut outputs = op.clone_outputs();
-            adjust_states(&mut inputs, &mut outputs, entrance);
-            adjust_states(&mut inputs, &mut outputs, exit);
+            adjust_states(inputs.as_mut(), outputs.as_mut(), entrance);
+            adjust_states(inputs.as_mut(), outputs.as_mut(), exit);
             // Call the supplied hamiltonian.
-            hamiltonian(&op.get_vars(), op.get_bond(), &inputs, &outputs)
+            hamiltonian(
+                &op.get_vars(),
+                op.get_bond(),
+                inputs.as_ref(),
+                outputs.as_ref(),
+            )
         };
 
         if self.get_n() > 0 {
@@ -374,7 +440,7 @@ fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
     mut acc: Vec<Option<bool>>,
 ) -> Vec<Option<bool>>
 where
-    H: Copy + Fn(&Op, Leg, Leg) -> f64,
+    H: Copy + Fn(&L::Op, Leg, Leg) -> f64,
 {
     loop {
         let res = loop_body(
@@ -407,7 +473,7 @@ fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
     acc: &mut [Option<bool>],
 ) -> LoopResult
 where
-    H: Fn(&Op, Leg, Leg) -> f64,
+    H: Fn(&L::Op, Leg, Leg) -> f64,
 {
     let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
     let sel_op = sel_opnode.get_op();
@@ -436,7 +502,7 @@ where
         .unwrap_err();
     let mut inputs = sel_opnode.get_op_ref().clone_inputs();
     let mut outputs = sel_opnode.get_op_ref().clone_outputs();
-    adjust_states(&mut inputs, &mut outputs, entrance_leg);
+    adjust_states(inputs.as_mut(), outputs.as_mut(), entrance_leg);
 
     // Change the op now that we passed through.
     let (inputs, outputs) = sel_opnode.get_op_mut().get_mut_inputs_and_outputs();
@@ -740,7 +806,7 @@ fn set_boundaries(p: usize, cluster_num: usize, boundaries: &mut [(Option<usize>
     set_boundary(p, OpSide::Outputs, cluster_num, boundaries);
 }
 
-fn flip_state_for_op(op: &mut Op, side: OpSide) {
+fn flip_state_for_op<O: Op>(op: &mut O, side: OpSide) {
     match side {
         OpSide::Inputs => op.get_inputs_mut().iter_mut().for_each(|b| *b = !*b),
         OpSide::Outputs => op.get_outputs_mut().iter_mut().for_each(|b| *b = !*b),

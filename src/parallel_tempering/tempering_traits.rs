@@ -145,16 +145,17 @@ impl StateSetter for FastOps {
         while let Some(p) = op_p {
             let op = self.get_node_mut(p).unwrap();
 
-            for i in 0..op.op.get_vars().len() {
-                let v = op.op.get_vars()[i];
-                let neq = op.op.get_inputs()[i] != op.op.get_outputs()[i];
+            for i in 0..op.get_op_ref().get_vars().len() {
+                let opref = op.get_op_mut();
+                let v = opref.get_vars()[i];
+                let neq = opref.get_inputs()[i] != opref.get_outputs()[i];
 
-                let inputs = op.op.get_inputs_mut();
+                let inputs = opref.get_inputs_mut();
                 inputs[i] = state[v];
                 if neq {
                     state[v] = !state[v];
                 };
-                let outputs = op.op.get_outputs_mut();
+                let outputs = opref.get_outputs_mut();
                 outputs[i] = state[v];
             }
             op_p = op.next_p;

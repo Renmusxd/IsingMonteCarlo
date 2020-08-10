@@ -3,7 +3,6 @@ extern crate rand;
 use ising_monte_carlo::graph::Edge;
 use ising_monte_carlo::sse::fast_ops::*;
 use ising_monte_carlo::sse::qmc_graph::QMCGraph;
-use ising_monte_carlo::sse::qmc_traits::*;
 use ising_monte_carlo::sse::simple_ops::*;
 use rand::prelude::*;
 

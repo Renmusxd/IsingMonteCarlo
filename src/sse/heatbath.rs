@@ -1,5 +1,4 @@
-use crate::sse::qmc_traits::{DiagonalUpdater, Hamiltonian};
-use crate::sse::qmc_types::Op;
+use crate::sse::qmc_traits::{DiagonalUpdater, Hamiltonian, Op};
 use rand::Rng;
 use smallvec::SmallVec;
 
@@ -153,15 +152,15 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
     }
 
     /// Logic for a heat bath diagonal update.
-    fn heat_bath_single_diagonal_update<'b, H, E, R: Rng>(
-        op: Option<&Op>,
+    fn heat_bath_single_diagonal_update<'b, O: Op, H, E, R: Rng>(
+        op: Option<&O>,
         cutoff: usize,
         n: usize,
         beta: f64,
         state: &mut [bool],
         hamiltonian_and_weights: (&Hamiltonian<'b, H, E>, BondWeights),
         rng: &mut R,
-    ) -> (Option<Option<Op>>, BondWeights)
+    ) -> (Option<Option<O>>, BondWeights)
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
@@ -176,11 +175,9 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                     let val = rng.gen_range(0.0, bond_weights.total);
                     let b = bond_weights.index_for_cumulative(val);
                     let vars = (hamiltonian.edge_fn)(b);
-                    let substate = vars
-                        .iter()
-                        .map(|v| state[*v])
-                        .collect::<SmallVec<[bool; 2]>>();
-                    let op = Op::diagonal(vars, b, substate);
+                    let substate = vars.iter().map(|v| state[*v]).collect::<O::SubState>();
+                    let vars = vars.iter().cloned().collect::<O::Vars>();
+                    let op = O::diagonal(vars, b, substate);
                     Some(Some(op))
                 } else {
                     None
