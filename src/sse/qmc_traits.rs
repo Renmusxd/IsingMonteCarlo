@@ -256,6 +256,7 @@ where
     let mat_element = (hamiltonian.hamiltonian)(vars, b, substate.as_ref(), substate.as_ref());
 
     // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
+    // or A. W. Sandvik, Phys. Rev. B 59, 14157 (1999)
     let numerator = beta * (hamiltonian.num_edges as f64) * mat_element;
     let denominator = (cutoff - n) as f64;
 
