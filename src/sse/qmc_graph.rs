@@ -528,6 +528,11 @@ impl<
         self.cutoff
     }
 
+    /// Get the number of ops in graph.
+    pub fn get_n(&self) -> usize {
+        self.op_manager.as_ref().unwrap().get_n()
+    }
+
     /// Get a reference to the op manager.
     pub fn get_manager_ref(&self) -> &M {
         self.op_manager.as_ref().unwrap()
@@ -579,6 +584,13 @@ pub struct HamInfo<'a> {
     transverse: f64,
     singlesite_energy_offset: f64,
     twosite_energy_offset: f64,
+}
+
+impl<'a> HamInfo<'a> {
+    /// Check if the hamiltonians (Assumed to be on the same graph) are equal.
+    pub fn equal_assuming_graph(&self, other: &HamInfo) -> bool {
+        (self.transverse - other.transverse).abs() < f64::EPSILON
+    }
 }
 
 // Implement clone where available.

@@ -37,14 +37,17 @@ pub trait OpContainer {
         for p in 0..self.get_cutoff() {
             let op = self.get_pth(p);
             if let Some(op) = op {
-                for (v, inp) in op.vars.iter().zip(op.inputs.iter()) {
+                for (v, inp) in op.get_vars().iter().zip(op.get_inputs().iter()) {
                     if rolling_state[*v] != *inp {
                         return false;
                     }
                 }
-                op.vars.iter().zip(op.outputs.iter()).for_each(|(v, out)| {
-                    rolling_state[*v] = *out;
-                })
+                op.get_vars()
+                    .iter()
+                    .zip(op.get_outputs().iter())
+                    .for_each(|(v, out)| {
+                        rolling_state[*v] = *out;
+                    })
             }
         }
         rolling_state
@@ -177,19 +180,17 @@ where
 {
     let b = match op {
         None => rng.gen_range(0, hamiltonian.num_edges),
-        Some(op) if op.is_diagonal() => op.bond,
-        Some(Op { vars, outputs, .. }) => {
-            vars.iter()
-                .zip(outputs.iter())
+        Some(op) if op.is_diagonal() => op.get_bond(),
+        Some(op) => {
+            op.get_vars()
+                .iter()
+                .zip(op.get_outputs().iter())
                 .for_each(|(v, b)| state[*v] = *b);
             return None;
         }
     };
     let vars = (hamiltonian.edge_fn)(b);
-    let substate = vars
-        .iter()
-        .map(|v| state[*v])
-        .collect::<SmallVec<[bool; 2]>>();
+    let substate = vars.iter().map(|v| state[*v]).collect::<SubState>();
     let mat_element = (hamiltonian.hamiltonian)(vars, b, &substate, &substate);
 
     // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
@@ -307,10 +308,12 @@ pub trait LoopUpdater: OpContainer {
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
         let h = |op: &Op, entrance: Leg, exit: Leg| -> f64 {
-            let (inputs, outputs) = adjust_states(op.inputs.clone(), op.outputs.clone(), entrance);
-            let (inputs, outputs) = adjust_states(inputs, outputs, exit);
+            let mut inputs = op.clone_inputs();
+            let mut outputs = op.clone_outputs();
+            adjust_states(&mut inputs, &mut outputs, entrance);
+            adjust_states(&mut inputs, &mut outputs, exit);
             // Call the supplied hamiltonian.
-            hamiltonian(&op.vars, op.bond, &inputs, &outputs)
+            hamiltonian(&op.get_vars(), op.get_bond(), &inputs, &outputs)
         };
 
         if self.get_n() > 0 {
@@ -320,7 +323,7 @@ pub trait LoopUpdater: OpContainer {
             let nth_p = self.get_nth_p(initial_n);
             // Get starting leg for pth op.
             let op = self.get_node_ref(nth_p).unwrap();
-            let n_vars = op.get_op_ref().vars.len();
+            let n_vars = op.get_op_ref().get_vars().len();
             let initial_var = rng.gen_range(0, n_vars);
             let initial_direction = if rng.gen() {
                 OpSide::Inputs
@@ -409,8 +412,8 @@ where
     let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
     let sel_op = sel_opnode.get_op();
 
-    let inputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Inputs));
-    let outputs_legs = (0..sel_op.vars.len()).map(|v| (v, OpSide::Outputs));
+    let inputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Inputs));
+    let outputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Outputs));
     let legs = inputs_legs
         .chain(outputs_legs)
         .collect::<SmallVec<[(usize, OpSide); 4]>>();
@@ -431,17 +434,13 @@ where
             }
         })
         .unwrap_err();
-    let (inputs, outputs) = adjust_states(
-        sel_opnode.get_op_ref().inputs.clone(),
-        sel_opnode.get_op_ref().outputs.clone(),
-        entrance_leg,
-    );
-    let (inputs, outputs) = adjust_states(inputs, outputs, exit_leg);
+    let mut inputs = sel_opnode.get_op_ref().clone_inputs();
+    let mut outputs = sel_opnode.get_op_ref().clone_outputs();
+    adjust_states(&mut inputs, &mut outputs, entrance_leg);
 
     // Change the op now that we passed through.
-    let sel_op_mut = sel_opnode.get_op_mut();
-    sel_op_mut.inputs = inputs;
-    sel_op_mut.outputs = outputs;
+    let (inputs, outputs) = sel_opnode.get_op_mut().get_mut_inputs_and_outputs();
+    adjust_states(inputs, outputs, exit_leg);
 
     // No longer need mutability.
     let sel_opnode = l.get_node_ref(sel_op_pos).unwrap();
@@ -456,18 +455,18 @@ where
             (var, OpSide::Outputs) => {
                 let next_var_op = l.get_next_p_for_rel_var(var, sel_opnode);
                 let next = next_var_op.unwrap_or_else(|| {
-                    acc[sel_op.vars[var]] = Some(sel_op.outputs[var]);
-                    l.get_first_p_for_var(sel_op.vars[var]).unwrap()
+                    acc[sel_op.get_vars()[var]] = Some(sel_op.get_outputs()[var]);
+                    l.get_first_p_for_var(sel_op.get_vars()[var]).unwrap()
                 });
-                (next, sel_op.vars[var])
+                (next, sel_op.get_vars()[var])
             }
             (var, OpSide::Inputs) => {
                 let prev_var_op = l.get_previous_p_for_rel_var(var, sel_opnode);
                 let next = prev_var_op.unwrap_or_else(|| {
-                    acc[sel_op.vars[var]] = Some(sel_op.inputs[var]);
-                    l.get_last_p_for_var(sel_op.vars[var]).unwrap()
+                    acc[sel_op.get_vars()[var]] = Some(sel_op.get_inputs()[var]);
+                    l.get_last_p_for_var(sel_op.get_vars()[var]).unwrap()
                 });
-                (next, sel_op.vars[var])
+                (next, sel_op.get_vars()[var])
             }
         };
 
@@ -579,10 +578,10 @@ pub trait ClusterUpdater: LoopUpdater {
                     // Mark state changes if needed.
                     let node = self.get_node_ref(p).unwrap();
                     let op = node.get_op_ref();
-                    (0..op.vars.len()).for_each(|relvar| {
+                    (0..op.get_vars().len()).for_each(|relvar| {
                         let prev_p = self.get_previous_p_for_rel_var(relvar, node);
                         if prev_p.is_none() {
-                            state_changes.push((op.vars[relvar], op.inputs[relvar]));
+                            state_changes.push((op.get_vars()[relvar], op.get_inputs()[relvar]));
                         }
                     });
                 }
@@ -601,7 +600,7 @@ pub trait ClusterUpdater: LoopUpdater {
         let mut p = self.get_first_p();
         while let Some(node_p) = p {
             let node = self.get_node_ref(node_p).unwrap();
-            if node.get_op_ref().vars.len() == 1 {
+            if node.get_op_ref().get_vars().len() == 1 {
                 return Some(node_p);
             } else {
                 p = self.get_next_p(node);
@@ -655,12 +654,12 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
 ) {
     let mut interior_frontier = c.get_interior_frontier_alloc();
     let node = c.get_node_ref(p).unwrap();
-    if node.get_op().vars.len() > 1 {
+    if node.get_op().get_vars().len() > 1 {
         // Add all legs
         assert_eq!(boundaries[p], (None, None));
         let op = node.get_op_ref();
-        let inputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Inputs));
-        let outputs_legs = (0..op.vars.len()).map(|v| (v, OpSide::Outputs));
+        let inputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Inputs));
+        let outputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Outputs));
         let all_legs = inputs_legs.chain(outputs_legs);
         interior_frontier.extend(all_legs.map(|l| (p, l)));
     } else {
@@ -672,7 +671,7 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
         let node = c.get_node_ref(p).unwrap();
         let op = node.get_op_ref();
         let relvar = leg.0;
-        let var = op.vars[relvar];
+        let var = op.get_vars()[relvar];
         let ((next_p, next_node), next_leg) = match leg.1 {
             OpSide::Inputs => {
                 let prev_p = c.get_previous_p_for_rel_var(relvar, node);
@@ -691,7 +690,7 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
         };
 
         // If we hit a 1-site, add to frontier and mark in boundary.
-        if next_node.get_op_ref().vars.len() == 1 {
+        if next_node.get_op_ref().get_vars().len() == 1 {
             if !set_boundary(next_p, next_leg.1, cluster_num, boundaries) {
                 frontier.push((next_p, next_leg.1.reverse()))
             }
@@ -705,8 +704,8 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
                     set_boundaries(next_p, cluster_num, boundaries);
 
                     let next_op = next_node.get_op_ref();
-                    let inputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Inputs));
-                    let outputs_legs = (0..next_op.vars.len()).map(|v| (v, OpSide::Outputs));
+                    let inputs_legs = (0..next_op.get_vars().len()).map(|v| (v, OpSide::Inputs));
+                    let outputs_legs = (0..next_op.get_vars().len()).map(|v| (v, OpSide::Outputs));
                     let new_legs = inputs_legs.chain(outputs_legs).filter(|l| *l != next_leg);
 
                     interior_frontier.extend(new_legs.map(|leg| (next_p, leg)));
@@ -743,8 +742,8 @@ fn set_boundaries(p: usize, cluster_num: usize, boundaries: &mut [(Option<usize>
 
 fn flip_state_for_op(op: &mut Op, side: OpSide) {
     match side {
-        OpSide::Inputs => op.inputs.iter_mut().for_each(|b| *b = !*b),
-        OpSide::Outputs => op.outputs.iter_mut().for_each(|b| *b = !*b),
+        OpSide::Inputs => op.get_inputs_mut().iter_mut().for_each(|b| *b = !*b),
+        OpSide::Outputs => op.get_outputs_mut().iter_mut().for_each(|b| *b = !*b),
     }
 }
 
@@ -762,7 +761,7 @@ pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bo
     diagonal.iterate_ps(0, |_, op, p| {
         if let Some(op) = op {
             let mut last_var = 0;
-            for (var, outp) in op.vars.iter().zip(op.outputs.iter()) {
+            for (var, outp) in op.get_vars().iter().zip(op.get_outputs().iter()) {
                 for _ in last_var..*var {
                     print!("|");
                 }

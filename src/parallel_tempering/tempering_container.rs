@@ -237,7 +237,6 @@ fn perform_swaps<
     } else {
         graphs
             .iter_mut()
-            .map(|(g, _)| g)
             .chunks(2)
             .into_iter()
             .map(unwrap_chunk)
@@ -257,6 +256,50 @@ fn unwrap_chunk<T, It: Iterator<Item = T>>(it: It) -> (T, T) {
 
 /// Returns true if a swap occurs.
 fn swap_on_chunks<
+    'a,
+    R: 'a + Rng,
+    M: 'a + OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+    L: 'a + ClusterUpdater + Into<M>,
+>(
+    graph_beta_a: &'a mut GraphBeta<R, M, L>,
+    graph_beta_b: &'a mut GraphBeta<R, M, L>,
+    p: f64,
+) -> bool {
+    let (ga, ba) = graph_beta_a;
+    let (gb, bb) = graph_beta_b;
+
+    let ha = ga.make_haminfo();
+    let hb = gb.make_haminfo();
+    let rel_h_weight = if ha.equal_assuming_graph(&hb) {
+        1.0
+    } else {
+        let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            let haminfo = ga.make_haminfo();
+            QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+        };
+        let hb = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            let haminfo = gb.make_haminfo();
+            QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+        };
+
+        // QMCGraph can only ever have 2 vars since it represents a TFIM.
+        let rel_bstate = ga.relative_weight_for_hamiltonians(hb, ha);
+        let rel_astate = gb.relative_weight_for_hamiltonians(ha, hb);
+        rel_bstate * rel_astate
+    };
+
+    let temp_swap = (*ba / *bb).powi(gb.get_n() as i32 - ga.get_n() as i32);
+    let p_swap = temp_swap * rel_h_weight;
+    if p_swap > p {
+        std::mem::swap(ga, gb);
+        true
+    } else {
+        false
+    }
+}
+
+/// Returns true if a swap occurs.
+fn swap_internal_state_on_chunks<
     'a,
     R: 'a + Rng,
     M: 'a + OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
@@ -431,7 +474,6 @@ pub mod rayon_tempering {
                 .collect::<Vec<_>>();
             graphs
                 .par_iter_mut()
-                .map(|(g, _)| g)
                 .chunks(2)
                 .map(|g| unwrap_chunk(g.into_iter()))
                 .zip(probs.into_par_iter())

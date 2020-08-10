@@ -1,23 +1,24 @@
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::ops::IndexMut;
 
-type Vars = SmallVec<[usize; 2]>;
-type SubState = SmallVec<[bool; 2]>;
+/// The list of op variables.
+pub type Vars = SmallVec<[usize; 2]>;
+/// The list of op input and output states.
+pub type SubState = SmallVec<[bool; 2]>;
 
 /// An op which covers a number of variables and changes the state from input to output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct Op {
     /// Variables involved in op
-    pub vars: Vars,
+    vars: Vars,
     /// Bond number (index of op)
-    pub bond: usize,
+    bond: usize,
     /// Input state into op.
-    pub inputs: SubState,
+    inputs: SubState,
     /// Output state out of op.
-    pub outputs: SubState,
+    outputs: SubState,
 }
 
 impl Op {
@@ -68,6 +69,51 @@ impl Op {
     pub fn is_diagonal(&self) -> bool {
         self.inputs == self.outputs
     }
+
+    /// Get the set of variables used for this op.
+    pub fn get_vars(&self) -> &[usize] {
+        &self.vars
+    }
+
+    /// Get the associated bond number for the op.
+    pub fn get_bond(&self) -> usize {
+        self.bond
+    }
+
+    /// Get the input state for the op.
+    pub fn get_inputs(&self) -> &[bool] {
+        &self.inputs
+    }
+
+    /// Get the output state for the op.
+    pub fn get_outputs(&self) -> &[bool] {
+        &self.outputs
+    }
+
+    /// Get the input state for the op.
+    pub fn get_inputs_mut(&mut self) -> &mut [bool] {
+        &mut self.inputs
+    }
+
+    /// Get the output state for the op.
+    pub fn get_outputs_mut(&mut self) -> &mut [bool] {
+        &mut self.outputs
+    }
+
+    /// Get both the inputs and outputs for op.
+    pub fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]) {
+        (&mut self.inputs, &mut self.outputs)
+    }
+
+    /// Get the input state for the op.
+    pub fn clone_inputs(&self) -> SubState {
+        self.inputs.clone()
+    }
+
+    /// Get the output state for the op.
+    pub fn clone_outputs(&self) -> SubState {
+        self.outputs.clone()
+    }
 }
 
 /// Enum detailing which side of the op, input or output.
@@ -94,10 +140,7 @@ impl OpSide {
 pub(crate) type Leg = (usize, OpSide);
 
 /// Toggle input or output states at the location given by `leg`.
-pub(crate) fn adjust_states<V>(mut before: V, mut after: V, leg: Leg) -> (V, V)
-where
-    V: IndexMut<usize, Output = bool>,
-{
+pub(crate) fn adjust_states(before: &mut [bool], after: &mut [bool], leg: Leg) {
     match leg {
         (var, OpSide::Inputs) => {
             before[var] = !before[var];
@@ -106,5 +149,4 @@ where
             after[var] = !after[var];
         }
     };
-    (before, after)
 }

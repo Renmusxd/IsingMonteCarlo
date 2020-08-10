@@ -19,6 +19,12 @@ pub trait StateSetter {
 
 /// Allow getting the relative weight for a state compared to default.
 pub trait OpWeights {
+    /// Returns the relative total graph weight of evaluating H1 versus H2: W(H1)/W(H2)
+    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
+    where
+        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
+
     /// Get the relative weight for a state compared to the current one.
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
@@ -53,6 +59,15 @@ impl<
         L: ClusterUpdater + Into<M>,
     > OpWeights for QMCGraph<R, M, L>
 {
+    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
+    where
+        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
+        self.get_manager_ref()
+            .relative_weight_for_hamiltonians(h1, h2)
+    }
+
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
@@ -130,14 +145,17 @@ impl StateSetter for FastOps {
         while let Some(p) = op_p {
             let op = self.get_node_mut(p).unwrap();
 
-            for i in 0..op.op.vars.len() {
-                let v = op.op.vars[i];
-                let neq = op.op.inputs[i] != op.op.outputs[i];
-                op.op.inputs[i] = state[v];
+            for i in 0..op.op.get_vars().len() {
+                let v = op.op.get_vars()[i];
+                let neq = op.op.get_inputs()[i] != op.op.get_outputs()[i];
+
+                let inputs = op.op.get_inputs_mut();
+                inputs[i] = state[v];
                 if neq {
                     state[v] = !state[v];
                 };
-                op.op.outputs[i] = state[v];
+                let outputs = op.op.get_outputs_mut();
+                outputs[i] = state[v];
             }
             op_p = op.next_p;
         }
@@ -151,14 +169,14 @@ impl StateSetter for SimpleOpDiagonal {
             .filter(|op| op.is_some())
             .map(|op| op.as_mut().unwrap())
             .fold(state, |mut state, op| {
-                for i in 0..op.vars.len() {
-                    let v = op.vars[i];
-                    let neq = op.inputs[i] != op.outputs[i];
-                    op.inputs[i] = state[v];
+                for i in 0..op.get_vars().len() {
+                    let v = op.get_vars()[i];
+                    let neq = op.get_inputs()[i] != op.get_outputs()[i];
+                    op.get_inputs_mut()[i] = state[v];
                     if neq {
                         state[v] = !state[v];
                     };
-                    op.outputs[i] = state[v];
+                    op.get_outputs_mut()[i] = state[v];
                 }
                 state
             });
@@ -166,6 +184,39 @@ impl StateSetter for SimpleOpDiagonal {
 }
 
 impl OpWeights for FastOps {
+    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
+    where
+        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
+        let mut t = 1.0;
+        let mut op_p = self.p_ends.map(|(p, _)| p);
+        while let Some(p) = op_p {
+            let op = self.get_node_ref(p).unwrap();
+            let w1 = h1(
+                &op.op.get_vars(),
+                op.op.get_bond(),
+                &op.op.get_inputs(),
+                &op.op.get_outputs(),
+            );
+            let w2 = h2(
+                &op.op.get_vars(),
+                op.op.get_bond(),
+                &op.op.get_inputs(),
+                &op.op.get_outputs(),
+            );
+            if w1 == 0.0 {
+                return 0.0;
+            }
+            if w2 == 0.0 {
+                return std::f64::INFINITY;
+            }
+            t *= w1 / w2;
+            op_p = op.next_p;
+        }
+        t
+    }
+
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
@@ -173,7 +224,7 @@ impl OpWeights for FastOps {
         let max_vars = self
             .ops
             .iter()
-            .filter_map(|op| op.as_ref().map(|op| op.op.vars.len()))
+            .filter_map(|op| op.as_ref().map(|op| op.op.get_vars().len()))
             .max();
         if let Some(max_vars) = max_vars {
             self.relative_weight_for_state_with_max_vars(h, state, max_vars)
@@ -199,19 +250,24 @@ impl OpWeights for FastOps {
         while let Some(p) = op_p {
             let op = self.get_node_ref(p).unwrap();
 
-            for i in 0..op.op.vars.len() {
-                let v = op.op.vars[i];
+            for i in 0..op.op.get_vars().len() {
+                let v = op.op.get_vars()[i];
                 inputs[i] = state[v];
-                if op.op.inputs[i] != op.op.outputs[i] {
+                if op.op.get_inputs()[i] != op.op.get_outputs()[i] {
                     state[v] = !state[v];
                 };
                 outputs[i] = state[v];
             }
-            let new_weight = h(&op.op.vars, op.op.bond, &inputs, &outputs);
+            let new_weight = h(&op.op.get_vars(), op.op.get_bond(), &inputs, &outputs);
             if new_weight == 0.0 {
                 return 0.0;
             }
-            let old_weight = h(&op.op.vars, op.op.bond, &op.op.inputs, &op.op.outputs);
+            let old_weight = h(
+                &op.op.get_vars(),
+                op.op.get_bond(),
+                &op.op.get_inputs(),
+                &op.op.get_outputs(),
+            );
             t *= new_weight / old_weight;
             op_p = op.next_p;
         }
@@ -220,6 +276,43 @@ impl OpWeights for FastOps {
 }
 
 impl OpWeights for SimpleOpDiagonal {
+    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
+    where
+        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
+        let res = self
+            .ops
+            .iter()
+            .filter(|op| op.is_some())
+            .map(|op| op.as_ref().unwrap())
+            .try_fold(1.0, |t, op| -> Result<f64, f64> {
+                let w1 = h1(
+                    &op.get_vars(),
+                    op.get_bond(),
+                    &op.get_inputs(),
+                    &op.get_outputs(),
+                );
+                let w2 = h2(
+                    &op.get_vars(),
+                    op.get_bond(),
+                    &op.get_inputs(),
+                    &op.get_outputs(),
+                );
+                if w1 != 0.0 && w2 != 0.0 {
+                    Ok(t * w1 / w2)
+                } else if w1 == 0.0 {
+                    Err(0.0)
+                } else {
+                    Err(std::f64::INFINITY)
+                }
+            });
+        match res {
+            Ok(f) => f,
+            Err(f) => f,
+        }
+    }
+
     fn relative_weight_for_state<H>(&self, h: H, state: &mut [bool]) -> f64
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
@@ -227,7 +320,7 @@ impl OpWeights for SimpleOpDiagonal {
         let max_vars = self
             .ops
             .iter()
-            .filter_map(|op| op.as_ref().map(|op| op.vars.len()))
+            .filter_map(|op| op.as_ref().map(|op| op.get_vars().len()))
             .max();
         if let Some(max_vars) = max_vars {
             self.relative_weight_for_state_with_max_vars(h, state, max_vars)
@@ -253,9 +346,13 @@ impl OpWeights for SimpleOpDiagonal {
             .filter(|op| op.is_some())
             .map(|op| op.as_ref().unwrap())
             .try_fold((1.0, state), |(t, state), op| {
-                let equality_iter = op.inputs.iter().zip(op.outputs.iter()).map(|(a, b)| a == b);
+                let equality_iter = op
+                    .get_inputs()
+                    .iter()
+                    .zip(op.get_outputs().iter())
+                    .map(|(a, b)| a == b);
 
-                op.vars
+                op.get_vars()
                     .iter()
                     .cloned()
                     .zip(equality_iter)
@@ -268,11 +365,16 @@ impl OpWeights for SimpleOpDiagonal {
                         };
                         *output = state[v];
                     });
-                let new_weight = h(&op.vars, op.bond, &inputs, &outputs);
+                let new_weight = h(&op.get_vars(), op.get_bond(), &inputs, &outputs);
                 if new_weight == 0.0 {
                     Err(())
                 } else {
-                    let old_weight = h(&op.vars, op.bond, &op.inputs, &op.outputs);
+                    let old_weight = h(
+                        &op.get_vars(),
+                        op.get_bond(),
+                        &op.get_inputs(),
+                        &op.get_outputs(),
+                    );
                     let t = t * (new_weight / old_weight);
                     Ok((t, state))
                 }

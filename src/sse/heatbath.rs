@@ -195,18 +195,18 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                     None
                 }
             }
-            Some(Op {
-                vars,
-                inputs,
-                outputs,
-                bond,
-                ..
-            }) => {
+            Some(op) => {
+                let vars = op.get_vars();
                 vars.iter()
-                    .zip(outputs.iter())
+                    .zip(op.get_outputs().iter())
                     .for_each(|(v, b)| state[*v] = *b);
-                let weight = (hamiltonian.hamiltonian)(vars, *bond, inputs, outputs);
-                bond_weights.update_weight(*bond, weight);
+                let weight = (hamiltonian.hamiltonian)(
+                    vars,
+                    op.get_bond(),
+                    op.get_inputs(),
+                    op.get_outputs(),
+                );
+                bond_weights.update_weight(op.get_bond(), weight);
                 None
             }
         };

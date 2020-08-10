@@ -36,7 +36,7 @@ pub struct FastOpNode {
 
 impl FastOpNode {
     fn new(op: Op, previous_for_vars: LinkVars, next_for_vars: LinkVars) -> Self {
-        let nvars = op.vars.len();
+        let nvars = op.get_vars().len();
         assert_eq!(previous_for_vars.len(), nvars);
         assert_eq!(next_for_vars.len(), nvars);
         Self {
@@ -126,7 +126,7 @@ impl DiagonalUpdater for FastOps {
                         }
 
                         // Now do the same for variables.
-                        let vars = &node_ref.op.vars;
+                        let vars = &node_ref.op.get_vars();
                         vars.iter().cloned().enumerate().for_each(|(i, v)| {
                             // Check the previous node using this variable.
                             if let Some(prev_p_for_v) = last_vars[v] {
@@ -179,7 +179,7 @@ impl DiagonalUpdater for FastOps {
                     if let Some(new_op) = new_op {
                         // Install the new one
                         let (prevs, nexts): (LinkVars, LinkVars) = new_op
-                            .vars
+                            .get_vars()
                             .iter()
                             .cloned()
                             .map(|v| -> (Option<usize>, Option<usize>) {
@@ -210,35 +210,43 @@ impl DiagonalUpdater for FastOps {
                             .unzip();
 
                         // Now adjust other nodes and ends
-                        prevs.iter().zip(new_op.vars.iter()).for_each(|(prev, v)| {
-                            if let Some(prev) = prev {
-                                let prev_node = self.ops[*prev].as_mut().unwrap();
-                                let indx = prev_node.op.index_of_var(*v).unwrap();
-                                prev_node.next_for_vars[indx] = Some(p);
-                            } else {
-                                self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
-                                    assert!(head >= p);
-                                    Some((p, tail))
+                        prevs
+                            .iter()
+                            .zip(new_op.get_vars().iter())
+                            .for_each(|(prev, v)| {
+                                if let Some(prev) = prev {
+                                    let prev_node = self.ops[*prev].as_mut().unwrap();
+                                    let indx = prev_node.op.index_of_var(*v).unwrap();
+                                    prev_node.next_for_vars[indx] = Some(p);
                                 } else {
-                                    Some((p, p))
+                                    self.var_ends[*v] =
+                                        if let Some((head, tail)) = self.var_ends[*v] {
+                                            assert!(head >= p);
+                                            Some((p, tail))
+                                        } else {
+                                            Some((p, p))
+                                        }
                                 }
-                            }
-                        });
+                            });
 
-                        nexts.iter().zip(new_op.vars.iter()).for_each(|(next, v)| {
-                            if let Some(next) = next {
-                                let next_node = self.ops[*next].as_mut().unwrap();
-                                let indx = next_node.op.index_of_var(*v).unwrap();
-                                next_node.previous_for_vars[indx] = Some(p);
-                            } else {
-                                self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
-                                    assert!(tail <= p);
-                                    Some((head, p))
+                        nexts
+                            .iter()
+                            .zip(new_op.get_vars().iter())
+                            .for_each(|(next, v)| {
+                                if let Some(next) = next {
+                                    let next_node = self.ops[*next].as_mut().unwrap();
+                                    let indx = next_node.op.index_of_var(*v).unwrap();
+                                    next_node.previous_for_vars[indx] = Some(p);
                                 } else {
-                                    Some((p, p))
+                                    self.var_ends[*v] =
+                                        if let Some((head, tail)) = self.var_ends[*v] {
+                                            assert!(tail <= p);
+                                            Some((head, p))
+                                        } else {
+                                            Some((p, p))
+                                        }
                                 }
-                            }
-                        });
+                            });
 
                         let mut node_ref = FastOpNode::new(new_op, prevs, nexts);
                         node_ref.previous_p = last_p;
@@ -281,7 +289,10 @@ impl DiagonalUpdater for FastOps {
                 }
 
                 if let Some(op) = self.ops[p].as_ref().map(|r| &r.op) {
-                    op.vars.iter().cloned().for_each(|v| last_vars[v] = Some(p));
+                    op.get_vars()
+                        .iter()
+                        .cloned()
+                        .for_each(|v| last_vars[v] = Some(p));
                     last_p = Some(p)
                 }
 
