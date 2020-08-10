@@ -7,6 +7,8 @@ edition = "2018"
 [features]
 default = []
 autocorrelations = ["rayon", "rustfft"]
+const_generics = ["smallvec/const_generics"]
+nightly = ["smallvec/specialization", "smallvec/union", "const_generics"]
 tempering = ["itertools"]
 parallel-tempering = ["rayon", "tempering"]
 serialize = ["serde", "rand/serde1", "smallvec/serde"]

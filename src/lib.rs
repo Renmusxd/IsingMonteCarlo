@@ -6,13 +6,15 @@
     trivial_casts,
     trivial_numeric_casts,
     unsafe_code,
-    unstable_features,
     unused_import_braces,
     unused_qualifications
 )]
 
 //! `ising_monte_carlo` is a library for simulating classical and quantum ising systems on a lattice
 //! using monte carlo methods.
+
+#![cfg_attr(feature = "const_generics", allow(incomplete_features))]
+#![cfg_attr(feature = "const_generics", feature(const_generics))]
 
 /// Classical monte carlo.
 pub mod graph;

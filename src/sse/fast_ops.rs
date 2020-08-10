@@ -4,14 +4,18 @@ use crate::sse::qmc_types::{Leg, OpSide};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-/// Underlying op for storing graph data.
+/// Underlying op for storing graph data, good for 2-variable ops.
 pub type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
+/// A default implementation of the FastOps container, good for 2-variable ops.
+pub type FastOps = FastOpsTemplate<FastOp>;
+/// A default implementation of the FastOpNode container, good for 2-variable ops.
+pub type FastOpNode = FastOpNodeTemplate<FastOp>;
 
 /// A fast op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct FastOps {
-    pub(crate) ops: Vec<Option<FastOpNode>>,
+pub struct FastOpsTemplate<O: Op> {
+    pub(crate) ops: Vec<Option<FastOpNodeTemplate<O>>>,
     pub(crate) n: usize,
     pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(usize, usize)>>,
@@ -29,16 +33,16 @@ type LinkVars = SmallVec<[Option<usize>; 2]>;
 /// A node which contains ops for FastOps.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct FastOpNode {
-    pub(crate) op: FastOp,
+pub struct FastOpNodeTemplate<O: Op> {
+    pub(crate) op: O,
     pub(crate) previous_p: Option<usize>,
     pub(crate) next_p: Option<usize>,
     pub(crate) previous_for_vars: LinkVars,
     pub(crate) next_for_vars: LinkVars,
 }
 
-impl FastOpNode {
-    fn new(op: FastOp, previous_for_vars: LinkVars, next_for_vars: LinkVars) -> Self {
+impl<O: Op> FastOpNodeTemplate<O> {
+    fn new(op: O, previous_for_vars: LinkVars, next_for_vars: LinkVars) -> Self {
         let nvars = op.get_vars().len();
         assert_eq!(previous_for_vars.len(), nvars);
         assert_eq!(next_for_vars.len(), nvars);
@@ -52,21 +56,21 @@ impl FastOpNode {
     }
 }
 
-impl OpNode<FastOp> for FastOpNode {
-    fn get_op(&self) -> FastOp {
+impl<O: Op + Clone> OpNode<O> for FastOpNodeTemplate<O> {
+    fn get_op(&self) -> O {
         self.op.clone()
     }
 
-    fn get_op_ref(&self) -> &FastOp {
+    fn get_op_ref(&self) -> &O {
         &self.op
     }
 
-    fn get_op_mut(&mut self) -> &mut FastOp {
+    fn get_op_mut(&mut self) -> &mut O {
         &mut self.op
     }
 }
 
-impl DiagonalUpdater for FastOps {
+impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
     fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
@@ -251,7 +255,7 @@ impl DiagonalUpdater for FastOps {
                                 }
                             });
 
-                        let mut node_ref = FastOpNode::new(new_op, prevs, nexts);
+                        let mut node_ref = FastOpNodeTemplate::<O>::new(new_op, prevs, nexts);
                         node_ref.previous_p = last_p;
                         node_ref.next_p = if let Some(last_p) = last_p {
                             let last_p_node = self.ops[last_p].as_ref().unwrap();
@@ -307,7 +311,7 @@ impl DiagonalUpdater for FastOps {
     }
 }
 
-impl OpContainerConstructor for FastOps {
+impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
     fn new(nvars: usize) -> Self {
         Self {
             ops: vec![],
@@ -323,8 +327,8 @@ impl OpContainerConstructor for FastOps {
     }
 }
 
-impl OpContainer for FastOps {
-    type Op = FastOp;
+impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
+    type Op = O;
 
     fn get_cutoff(&self) -> usize {
         self.ops.len()
@@ -353,14 +357,14 @@ impl OpContainer for FastOps {
     }
 }
 
-impl LoopUpdater for FastOps {
-    type Node = FastOpNode;
+impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {
+    type Node = FastOpNodeTemplate<O>;
 
-    fn get_node_ref(&self, p: usize) -> Option<&FastOpNode> {
+    fn get_node_ref(&self, p: usize) -> Option<&Self::Node> {
         self.ops[p].as_ref()
     }
 
-    fn get_node_mut(&mut self, p: usize) -> Option<&mut FastOpNode> {
+    fn get_node_mut(&mut self, p: usize) -> Option<&mut Self::Node> {
         self.ops[p].as_mut()
     }
 
@@ -380,19 +384,19 @@ impl LoopUpdater for FastOps {
         self.var_ends[var].map(|(_, p)| p)
     }
 
-    fn get_previous_p(&self, node: &FastOpNode) -> Option<usize> {
+    fn get_previous_p(&self, node: &Self::Node) -> Option<usize> {
         node.previous_p
     }
 
-    fn get_next_p(&self, node: &FastOpNode) -> Option<usize> {
+    fn get_next_p(&self, node: &Self::Node) -> Option<usize> {
         node.next_p
     }
 
-    fn get_previous_p_for_rel_var(&self, revar: usize, node: &FastOpNode) -> Option<usize> {
+    fn get_previous_p_for_rel_var(&self, revar: usize, node: &Self::Node) -> Option<usize> {
         node.previous_for_vars[revar]
     }
 
-    fn get_next_p_for_rel_var(&self, revar: usize, node: &FastOpNode) -> Option<usize> {
+    fn get_next_p_for_rel_var(&self, revar: usize, node: &Self::Node) -> Option<usize> {
         node.next_for_vars[revar]
     }
 
@@ -403,7 +407,7 @@ impl LoopUpdater for FastOps {
     }
 }
 
-impl ClusterUpdater for FastOps {
+impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
     // No need for logic here, just reuse some allocations.
     fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
         self.frontier.take().unwrap()
@@ -443,4 +447,17 @@ impl ClusterUpdater for FastOps {
         flips.clear();
         self.flips = Some(flips)
     }
+}
+
+/// Helper classes for fast ops with a const generic number of vars on the stack.
+#[cfg(feature = "const_generics")]
+pub mod const_generics {
+    use super::*;
+
+    /// Underlying op for storing graph data, good for 2-variable ops.
+    pub type FastOpN<const N: usize> = BasicOp<SmallVec<[usize; N]>, SmallVec<[bool; N]>>;
+    /// A default implementation of the FastOps container, good for 2-variable ops.
+    pub type FastOpsN<const N: usize> = FastOpsTemplate<FastOpN<N>>;
+    /// A default implementation of the FastOpNode container, good for 2-variable ops.
+    pub type FastOpNode<const N: usize> = FastOpNodeTemplate<FastOpN<N>>;
 }
