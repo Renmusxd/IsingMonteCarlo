@@ -4,7 +4,8 @@ use crate::sse::qmc_traits::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-type SimpleOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
+/// Underlying op for storing graph data.
+pub type SimpleOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
 
 /// A simple implementation of a diagonal op container.
 #[derive(Clone, Debug)]

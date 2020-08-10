@@ -4,6 +4,9 @@ use crate::sse::qmc_types::{Leg, OpSide};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
+/// Underlying op for storing graph data.
+pub type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
+
 /// A fast op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
@@ -21,7 +24,6 @@ pub struct FastOps {
     last_vars_alloc: Option<Vec<Option<usize>>>,
 }
 
-type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
 type LinkVars = SmallVec<[Option<usize>; 2]>;
 
 /// A node which contains ops for FastOps.
