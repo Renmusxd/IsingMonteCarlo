@@ -1,6 +1,6 @@
 [package]
 name = "ising_monte_carlo"
-version = "1.7.0"
+version = "1.7.1"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 
@@ -9,7 +9,6 @@ default = []
 autocorrelations = ["rayon", "rustfft"]
 tempering = ["itertools"]
 parallel-tempering = ["rayon", "tempering"]
-heatbath = []
 serialize = ["serde", "rand/serde1", "smallvec/serde"]
 
 [dev-dependencies]

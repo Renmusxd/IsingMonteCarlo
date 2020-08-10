@@ -9,10 +9,6 @@ pub(crate) mod arena;
 /// Clever operator management
 pub mod fast_ops;
 
-/// A broken version of the qmc algorithms
-#[cfg(feature = "heatbath")]
-pub mod heatbath;
-
 /// A wrapper for QMC data.
 pub mod qmc_graph;
 
