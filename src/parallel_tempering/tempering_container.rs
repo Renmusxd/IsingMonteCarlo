@@ -1,8 +1,8 @@
 use crate::graph::Edge;
 use crate::parallel_tempering::tempering_traits::*;
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_graph;
-use crate::sse::qmc_graph::QMCGraph;
+use crate::sse::qmc_ising;
+use crate::sse::qmc_ising::QMCIsingGraph;
 use crate::sse::qmc_traits::*;
 use itertools::Itertools;
 use rand::prelude::ThreadRng;
@@ -15,7 +15,7 @@ use std::cmp::{max, min};
 /// A tempering container using FastOps and FastOpNodes.
 pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, R2, FastOps, FastOps>;
 
-type GraphBeta<R, M, L> = (QMCGraph<R, M, L>, f64);
+type GraphBeta<R, M, L> = (QMCIsingGraph<R, M, L>, f64);
 
 /// A container to perform parallel tempering.
 #[derive(Debug, Clone)]
@@ -78,7 +78,7 @@ impl<
 
     /// Add a graph which uses this rng, transverse field, and beta.
     pub fn add_graph(&mut self, rng: R2, transverse: f64, beta: f64) {
-        let graph = QMCGraph::<R2, M, L>::new_with_rng(
+        let graph = QMCIsingGraph::<R2, M, L>::new_with_rng(
             self.edges.clone(),
             transverse,
             self.cutoff,
@@ -91,7 +91,7 @@ impl<
     /// Add a graph which uses this rng, transverse field, and beta. Starts with an initial state.
     pub fn add_graph_with_state(&mut self, rng: R2, transverse: f64, beta: f64, state: Vec<bool>) {
         assert_eq!(state.len(), self.nvars);
-        let graph = QMCGraph::<R2, M, L>::new_with_rng(
+        let graph = QMCIsingGraph::<R2, M, L>::new_with_rng(
             self.edges.clone(),
             transverse,
             self.cutoff,
@@ -275,11 +275,11 @@ fn swap_on_chunks<
     } else {
         let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             let haminfo = ga.make_haminfo();
-            QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+            QMCIsingGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
         };
         let hb = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             let haminfo = gb.make_haminfo();
-            QMCGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+            QMCIsingGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
         };
 
         // QMCGraph can only ever have 2 vars since it represents a TFIM.
@@ -571,9 +571,9 @@ pub mod rayon_tempering {
                         let samples = samples.into_iter().map(sample_mapper).collect::<Vec<_>>();
 
                         if use_fft.unwrap_or(true) {
-                            qmc_graph::autocorrelations::fft_autocorrelation(&samples)
+                            qmc_ising::autocorrelations::fft_autocorrelation(&samples)
                         } else {
-                            qmc_graph::autocorrelations::naive_autocorrelation(&samples)
+                            qmc_ising::autocorrelations::naive_autocorrelation(&samples)
                         }
                     })
                     .collect::<Vec<_>>()
@@ -615,7 +615,7 @@ pub mod rayon_tempering {
 #[cfg(feature = "serialize")]
 pub mod serialization {
     use super::*;
-    use crate::sse::qmc_graph::serialization::*;
+    use crate::sse::qmc_ising::serialization::*;
 
     /// Default serializable tempering container.
     pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps, FastOps>;

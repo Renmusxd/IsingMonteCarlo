@@ -1,6 +1,6 @@
 //! A module with various QMC algorithms and traits.
 
-pub use qmc_graph::DefaultQMCGraph;
+pub use qmc_ising::DefaultQMCIsingGraph;
 pub use qmc_traits::*;
 
 /// An arena for managing memory efficiently
@@ -10,7 +10,7 @@ pub(crate) mod arena;
 pub mod fast_ops;
 
 /// A wrapper for QMC data.
-pub mod qmc_graph;
+pub mod qmc_ising;
 
 /// Traits which, when implemented, run SSE.
 pub mod qmc_traits;

@@ -19,8 +19,9 @@ fn single_cluster_test() {
     let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
-    let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
-    println!("{:?}", state_updates);
+    let mut state = vec![false; manager.get_nvars()];
+    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    println!("{:?}", state);
 }
 
 #[test]
@@ -47,8 +48,9 @@ fn simple_cluster_test() {
     let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
-    let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
-    println!("{:?}", state_updates);
+    let mut state = vec![false; manager.get_nvars()];
+    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    println!("{:?}", state);
 }
 
 #[test]
@@ -95,8 +97,9 @@ fn multi_cluster_test() {
     let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
-    let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
-    println!("{:?}", state_updates);
+    let mut state = vec![false; manager.get_nvars()];
+    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    println!("{:?}", state);
 }
 
 #[test]
@@ -143,8 +146,9 @@ fn multi_twosite_cluster_test() {
     let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
-    let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
-    println!("{:?}", state_updates);
+    let mut state = vec![false; manager.get_nvars()];
+    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    println!("{:?}", state);
 }
 
 #[test]
@@ -181,6 +185,7 @@ fn multi_multisite_cluster_test() {
     let mut manager: SimpleOpLooper = manager.into();
 
     let mut rng = rand::thread_rng();
-    let state_updates = manager.flip_each_cluster_rng(0.5, &mut rng);
-    println!("{:?}", state_updates);
+    let mut state = vec![false; manager.get_nvars()];
+    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    println!("{:?}", state);
 }

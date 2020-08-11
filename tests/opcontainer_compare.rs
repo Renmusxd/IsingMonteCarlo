@@ -2,7 +2,7 @@ extern crate ising_monte_carlo;
 extern crate rand;
 use ising_monte_carlo::graph::Edge;
 use ising_monte_carlo::sse::fast_ops::*;
-use ising_monte_carlo::sse::qmc_graph::QMCGraph;
+use ising_monte_carlo::sse::qmc_ising::QMCIsingGraph;
 use ising_monte_carlo::sse::simple_ops::*;
 use rand::prelude::*;
 
@@ -15,7 +15,7 @@ fn single_cluster_test() {
     let l = 8;
 
     let rng: StdRng = SeedableRng::seed_from_u64(1234);
-    let mut g = QMCGraph::<ThreadRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
+    let mut g = QMCIsingGraph::<ThreadRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
         one_d_periodic(l),
         1.0,
         l,
@@ -27,7 +27,7 @@ fn single_cluster_test() {
     let state_a = g.into_vec();
 
     let rng: StdRng = SeedableRng::seed_from_u64(1234);
-    let mut g = QMCGraph::<ThreadRng, FastOps, FastOps>::new_with_rng(
+    let mut g = QMCIsingGraph::<ThreadRng, FastOps, FastOps>::new_with_rng(
         one_d_periodic(l),
         1.0,
         l,

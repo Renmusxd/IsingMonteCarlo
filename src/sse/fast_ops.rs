@@ -11,6 +11,16 @@ pub type FastOps = FastOpsTemplate<FastOp>;
 /// A default implementation of the FastOpNode container, good for 2-variable ops.
 pub type FastOpNode = FastOpNodeTemplate<FastOp>;
 
+/// Underlying op for storing graph data, good for 2-variable ops.
+#[cfg(feature = "const_generics")]
+pub type FastOpN<const N: usize> = BasicOp<SmallVec<[usize; N]>, SmallVec<[bool; N]>>;
+/// A default implementation of the FastOps container, good for 2-variable ops.
+#[cfg(feature = "const_generics")]
+pub type FastOpsN<const N: usize> = FastOpsTemplate<FastOpN<N>>;
+/// A default implementation of the FastOpNode container, good for 2-variable ops.
+#[cfg(feature = "const_generics")]
+pub type FastOpNodeN<const N: usize> = FastOpNodeTemplate<FastOpN<N>>;
+
 /// A fast op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
@@ -447,17 +457,4 @@ impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
         flips.clear();
         self.flips = Some(flips)
     }
-}
-
-/// Helper classes for fast ops with a const generic number of vars on the stack.
-#[cfg(feature = "const_generics")]
-pub mod const_generics {
-    use super::*;
-
-    /// Underlying op for storing graph data, good for 2-variable ops.
-    pub type FastOpN<const N: usize> = BasicOp<SmallVec<[usize; N]>, SmallVec<[bool; N]>>;
-    /// A default implementation of the FastOps container, good for 2-variable ops.
-    pub type FastOpsN<const N: usize> = FastOpsTemplate<FastOpN<N>>;
-    /// A default implementation of the FastOpNode container, good for 2-variable ops.
-    pub type FastOpNode<const N: usize> = FastOpNodeTemplate<FastOpN<N>>;
 }

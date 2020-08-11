@@ -1,5 +1,5 @@
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_graph::QMCGraph;
+use crate::sse::qmc_ising::QMCIsingGraph;
 use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::SimpleOpDiagonal;
 use rand::Rng;
@@ -42,7 +42,7 @@ impl<
         R: Rng,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
         L: ClusterUpdater + Into<M>,
-    > OpWeights for QMCGraph<R, M, L>
+    > OpWeights for QMCIsingGraph<R, M, L>
 {
     fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
     where
@@ -58,7 +58,7 @@ impl<
         R: Rng,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
-    > OpHam for QMCGraph<R, M, L>
+    > OpHam for QMCIsingGraph<R, M, L>
 {
     fn hamiltonian(
         &self,
@@ -76,7 +76,7 @@ impl<
         R: Rng,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
-    > StateGetter for QMCGraph<R, M, L>
+    > StateGetter for QMCIsingGraph<R, M, L>
 {
     fn get_state_ref(&self) -> &[bool] {
         self.state_ref()
@@ -87,7 +87,7 @@ impl<
         R: Rng,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter,
         L: ClusterUpdater + Into<M>,
-    > StateSetter for QMCGraph<R, M, L>
+    > StateSetter for QMCIsingGraph<R, M, L>
 {
     fn set_state(&mut self, state: Vec<bool>) {
         assert_eq!(self.state_ref().len(), state.len());

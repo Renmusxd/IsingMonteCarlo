@@ -1,6 +1,6 @@
 [package]
 name = "ising_monte_carlo"
-version = "1.7.1"
+version = "1.8.0"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 

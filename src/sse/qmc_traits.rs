@@ -350,15 +350,11 @@ pub trait LoopUpdater: OpContainer {
     }
 
     /// Make a loop update to the graph with thread rng.
-    fn make_loop_update<H>(
-        &mut self,
-        initial_n: Option<usize>,
-        hamiltonian: H,
-    ) -> Vec<(usize, bool)>
+    fn make_loop_update<H>(&mut self, initial_n: Option<usize>, hamiltonian: H, state: &mut [bool])
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
-        self.make_loop_update_with_rng(initial_n, hamiltonian, &mut rand::thread_rng())
+        self.make_loop_update_with_rng(initial_n, hamiltonian, state, &mut rand::thread_rng())
     }
 
     /// Make a loop update to the graph.
@@ -366,9 +362,9 @@ pub trait LoopUpdater: OpContainer {
         &mut self,
         initial_n: Option<usize>,
         hamiltonian: H,
+        state: &mut [bool],
         rng: &mut R,
-    ) -> Vec<(usize, bool)>
-    where
+    ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
         let h = |op: &Self::Op, entrance: Leg, exit: Leg| -> f64 {
@@ -401,26 +397,15 @@ pub trait LoopUpdater: OpContainer {
             };
             let initial_leg = (initial_var, initial_direction);
 
-            let updates = apply_loop_update(
+            apply_loop_update(
                 self,
                 (nth_p, initial_leg),
                 nth_p,
                 initial_leg,
                 h,
+                state,
                 rng,
-                vec![None; self.get_nvars()],
             );
-            updates
-                .into_iter()
-                .enumerate()
-                .fold(vec![], |mut acc, (i, v)| {
-                    if let Some(v) = v {
-                        acc.push((i, v))
-                    };
-                    acc
-                })
-        } else {
-            vec![]
         }
     }
 }
@@ -439,10 +424,9 @@ fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
     mut sel_op_pos: usize,
     mut entrance_leg: Leg,
     h: H,
+    state: &mut [bool],
     rng: &mut R,
-    mut acc: Vec<Option<bool>>,
-) -> Vec<Option<bool>>
-where
+) where
     H: Copy + Fn(&L::Op, Leg, Leg) -> f64,
 {
     loop {
@@ -452,11 +436,11 @@ where
             sel_op_pos,
             entrance_leg,
             h,
+            state,
             rng,
-            &mut acc,
         );
         match res {
-            LoopResult::Return => break acc,
+            LoopResult::Return => break,
             LoopResult::Iterate(new_sel_op_pos, new_entrance_leg) => {
                 sel_op_pos = new_sel_op_pos;
                 entrance_leg = new_entrance_leg;
@@ -472,8 +456,8 @@ fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
     sel_op_pos: usize,
     entrance_leg: Leg,
     h: H,
+    state: &mut [bool],
     rng: &mut R,
-    acc: &mut [Option<bool>],
 ) -> LoopResult
 where
     H: Fn(&L::Op, Leg, Leg) -> f64,
@@ -527,7 +511,8 @@ where
             (var, OpSide::Outputs) => {
                 let next_var_op = l.get_next_p_for_rel_var(var, sel_opnode);
                 let next = next_var_op.unwrap_or_else(|| {
-                    acc[sel_op.get_vars()[var]] = Some(sel_op.get_outputs()[var]);
+                    // Adjust the state to reflect new output.
+                    state[sel_op.get_vars()[var]] = sel_op.get_outputs()[var];
                     l.get_first_p_for_var(sel_op.get_vars()[var]).unwrap()
                 });
                 (next, sel_op.get_vars()[var])
@@ -535,7 +520,8 @@ where
             (var, OpSide::Inputs) => {
                 let prev_var_op = l.get_previous_p_for_rel_var(var, sel_opnode);
                 let next = prev_var_op.unwrap_or_else(|| {
-                    acc[sel_op.get_vars()[var]] = Some(sel_op.get_inputs()[var]);
+                    // Adjust the state to reflect new input.
+                    state[sel_op.get_vars()[var]] = sel_op.get_inputs()[var];
                     l.get_last_p_for_var(sel_op.get_vars()[var]).unwrap()
                 });
                 (next, sel_op.get_vars()[var])
@@ -557,20 +543,8 @@ where
 
 /// Add cluster updates to LoopUpdater.
 pub trait ClusterUpdater: LoopUpdater {
-    /// Flip each cluster in the graph using an rng instance. Return the p=0 state changes.
-    fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R) -> Vec<(usize, bool)> {
-        let mut state_changes = vec![];
-        self.flip_each_cluster_rng_to_acc(prob, rng, &mut state_changes);
-        state_changes
-    }
-
     /// Flip each cluster in the graph using an rng instance, add to state changes in acc.
-    fn flip_each_cluster_rng_to_acc<R: Rng>(
-        &mut self,
-        prob: f64,
-        rng: &mut R,
-        state_changes: &mut Vec<(usize, bool)>,
-    ) {
+    fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R, state: &mut [bool]) {
         if self.get_n() == 0 {
             return;
         }
@@ -653,7 +627,7 @@ pub trait ClusterUpdater: LoopUpdater {
                     (0..op.get_vars().len()).for_each(|relvar| {
                         let prev_p = self.get_previous_p_for_rel_var(relvar, node);
                         if prev_p.is_none() {
-                            state_changes.push((op.get_vars()[relvar], op.get_inputs()[relvar]));
+                            state[op.get_vars()[relvar]] = op.get_inputs()[relvar];
                         }
                     });
                 }

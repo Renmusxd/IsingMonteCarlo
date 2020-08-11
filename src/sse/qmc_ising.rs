@@ -9,14 +9,14 @@ use std::cmp::max;
 use std::marker::PhantomData;
 
 /// Default QMC graph implementation.
-pub type DefaultQMCGraph<R> = QMCGraph<R, FastOps, FastOps>;
+pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps, FastOps>;
 
 type VecEdge = Vec<usize>;
 
 /// A container to run QMC simulations.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct QMCGraph<
+pub struct QMCIsingGraph<
     R: Rng,
     M: OpContainerConstructor + DiagonalUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
@@ -42,9 +42,9 @@ pub fn new_qmc(
     transverse: f64,
     cutoff: usize,
     state: Option<Vec<bool>>,
-) -> DefaultQMCGraph<ThreadRng> {
+) -> DefaultQMCIsingGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCGraph::<ThreadRng>::new_with_rng(edges, transverse, cutoff, rng, state)
+    DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, cutoff, rng, state)
 }
 
 /// Build a new qmc graph with thread rng from a classical graph.
@@ -52,16 +52,16 @@ pub fn new_qmc_from_graph(
     graph: GraphState,
     transverse: f64,
     cutoff: usize,
-) -> DefaultQMCGraph<ThreadRng> {
+) -> DefaultQMCIsingGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCGraph::<ThreadRng>::new_from_graph(graph, transverse, cutoff, rng)
+    DefaultQMCIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, cutoff, rng)
 }
 
 impl<
         R: Rng,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
-    > QMCGraph<R, M, L>
+    > QMCIsingGraph<R, M, L>
 {
     /// Make a new QMC graph with an rng instance.
     pub fn new_with_rng<Rg: Rng>(
@@ -70,7 +70,7 @@ impl<
         cutoff: usize,
         rng: Rg,
         state: Option<Vec<bool>>,
-    ) -> QMCGraph<Rg, M, L> {
+    ) -> QMCIsingGraph<Rg, M, L> {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         let edges = edges
             .into_iter()
@@ -94,7 +94,7 @@ impl<
         };
         let state = Some(state);
 
-        QMCGraph::<Rg, M, L> {
+        QMCIsingGraph::<Rg, M, L> {
             edges,
             transverse,
             state,
@@ -115,7 +115,7 @@ impl<
         transverse: f64,
         cutoff: usize,
         rng: Rg,
-    ) -> QMCGraph<Rg, M, L> {
+    ) -> QMCIsingGraph<Rg, M, L> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
     }
@@ -314,12 +314,7 @@ impl<
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         let mut manager = manager.into();
-        let state_changes = &mut self.state_updates;
-        state_changes.clear();
-        manager.flip_each_cluster_rng_to_acc(0.5, rng, state_changes);
-        state_changes.iter().cloned().for_each(|(i, v)| {
-            state[i] = v;
-        });
+        manager.flip_each_cluster_rng(0.5, rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
@@ -385,12 +380,7 @@ impl<
 
         // Start by editing the ops list
         let mut manager = manager.into();
-        let state_changes = &mut self.state_updates;
-        state_changes.clear();
-        manager.flip_each_cluster_rng_to_acc(0.5, rng, state_changes);
-        state_changes.iter().cloned().for_each(|(i, v)| {
-            state[i] = v;
-        });
+        manager.flip_each_cluster_rng(0.5, rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
@@ -598,7 +588,7 @@ impl<
         R: Rng + Clone,
         M: OpContainerConstructor + DiagonalUpdater + Into<L> + Clone,
         L: ClusterUpdater + Into<M> + Clone,
-    > Clone for QMCGraph<R, M, L>
+    > Clone for QMCIsingGraph<R, M, L>
 {
     fn clone(&self) -> Self {
         Self {
@@ -735,8 +725,8 @@ pub mod serialization {
         SerializeQMCGraph<M, L>
     {
         /// Convert into a proper QMC graph using a new rng instance.
-        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCGraph<R, M, L> {
-            QMCGraph {
+        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCIsingGraph<R, M, L> {
+            QMCIsingGraph {
                 edges: self.edges,
                 transverse: self.transverse,
                 state: self.state,
@@ -756,7 +746,7 @@ pub mod serialization {
             R: Rng,
             M: OpContainerConstructor + DiagonalUpdater + Into<L>,
             L: ClusterUpdater + Into<M>,
-        > Into<SerializeQMCGraph<M, L>> for QMCGraph<R, M, L>
+        > Into<SerializeQMCGraph<M, L>> for QMCIsingGraph<R, M, L>
     {
         fn into(self) -> SerializeQMCGraph<M, L> {
             SerializeQMCGraph {
@@ -784,19 +774,29 @@ pub mod serialization {
         #[test]
         fn test_serialize() {
             let rng = IsaacRng::seed_from_u64(1234);
-            let mut g =
-                DefaultQMCGraph::<IsaacRng>::new_with_rng(vec![((0, 1), 1.0)], 1.0, 1, rng, None);
+            let mut g = DefaultQMCIsingGraph::<IsaacRng>::new_with_rng(
+                vec![((0, 1), 1.0)],
+                1.0,
+                1,
+                rng,
+                None,
+            );
             g.timesteps(100, 1.0);
             let mut v: Vec<u8> = Vec::default();
             serde_json::to_writer_pretty(&mut v, &g).unwrap();
-            let _: DefaultQMCGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
+            let _: DefaultQMCIsingGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
         }
 
         #[test]
         fn test_serialize_no_rng() {
             let rng = SmallRng::seed_from_u64(1234);
-            let mut g =
-                DefaultQMCGraph::<SmallRng>::new_with_rng(vec![((0, 1), 1.0)], 1.0, 1, rng, None);
+            let mut g = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+                vec![((0, 1), 1.0)],
+                1.0,
+                1,
+                rng,
+                None,
+            );
             g.timesteps(100, 1.0);
             let mut v: Vec<u8> = Vec::default();
             let sg: DefaultSerializeQMCGraph = g.into();
@@ -804,7 +804,7 @@ pub mod serialization {
 
             let rng = SmallRng::seed_from_u64(1234);
             let sg: DefaultSerializeQMCGraph = serde_json::from_slice(&v).unwrap();
-            let _g: DefaultQMCGraph<SmallRng> = sg.into_qmc(rng);
+            let _g: DefaultQMCIsingGraph<SmallRng> = sg.into_qmc(rng);
         }
     }
 }
