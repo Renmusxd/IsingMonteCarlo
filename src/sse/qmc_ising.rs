@@ -1,6 +1,8 @@
 use crate::graph::{Edge, GraphState};
+#[cfg(feature = "autocorrelations")]
+pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_traits::*;
+pub use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 #[cfg(feature = "serialize")]
@@ -32,8 +34,6 @@ pub struct QMCIsingGraph<
     phantom: PhantomData<L>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
-    // An alloc to reuse in cluster updates
-    state_updates: Vec<(usize, bool)>,
 }
 
 /// Build a new qmc graph with thread rng.
@@ -105,7 +105,6 @@ impl<
             rng: Some(rng),
             phantom: PhantomData,
             vars: (0..nvars).collect(),
-            state_updates: vec![],
         }
     }
 
@@ -118,121 +117,6 @@ impl<
     ) -> QMCIsingGraph<Rg, M, L> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
-    }
-
-    /// Take t qmc timesteps at beta.
-    pub fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
-        let (_, average_energy) = self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
-        average_energy
-    }
-
-    /// Take t qmc timesteps at beta and sample states.
-    pub fn timesteps_sample(
-        &mut self,
-        t: usize,
-        beta: f64,
-        sampling_freq: Option<usize>,
-    ) -> (Vec<Vec<bool>>, f64) {
-        let acc = Vec::with_capacity(t / sampling_freq.unwrap_or(1) + 1);
-        self.timesteps_measure(
-            t,
-            beta,
-            acc,
-            |mut acc, state| {
-                acc.push(state.to_vec());
-                acc
-            },
-            sampling_freq,
-        )
-    }
-
-    /// Take t qmc timesteps at beta and sample states, apply f to each.
-    pub fn timesteps_sample_iter<F>(
-        &mut self,
-        t: usize,
-        beta: f64,
-        sampling_freq: Option<usize>,
-        iter_fn: F,
-    ) -> f64
-    where
-        F: Fn(&[bool]),
-    {
-        let (_, e) = self.timesteps_measure(t, beta, (), |_, state| iter_fn(state), sampling_freq);
-        e
-    }
-
-    /// Take t qmc timesteps at beta and sample states, apply f to each and the zipped iterator.
-    pub fn timesteps_sample_iter_zip<F, I, T>(
-        &mut self,
-        t: usize,
-        beta: f64,
-        sampling_freq: Option<usize>,
-        zip_with: I,
-        iter_fn: F,
-    ) -> f64
-    where
-        F: Fn(T, &[bool]),
-        I: Iterator<Item = T>,
-    {
-        let (_, e) = self.timesteps_measure(
-            t,
-            beta,
-            Some(zip_with),
-            |zip_iter, state| {
-                if let Some(mut zip_iter) = zip_iter {
-                    let next = zip_iter.next();
-                    if let Some(next) = next {
-                        iter_fn(next, state);
-                        Some(zip_iter)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            },
-            sampling_freq,
-        );
-        e
-    }
-
-    /// Take t qmc timesteps at beta and sample states, fold across states and output results.
-    pub fn timesteps_measure<F, T>(
-        &mut self,
-        timesteps: usize,
-        beta: f64,
-        init_t: T,
-        state_fold: F,
-        sampling_freq: Option<usize>,
-    ) -> (T, f64)
-    where
-        F: Fn(T, &[bool]) -> T,
-    {
-        let mut acc = init_t;
-        let mut steps_measured = 0;
-        let mut total_n = 0;
-        let sampling_freq = sampling_freq.unwrap_or(1);
-
-        for t in 0..timesteps {
-            self.timestep(beta);
-
-            // Sample every `sampling_freq`
-            // Ignore first one.
-            if (t + 1) % sampling_freq == 0 {
-                acc = state_fold(acc, self.state.as_ref().unwrap());
-                steps_measured += 1;
-                total_n += self.op_manager.as_ref().unwrap().get_n();
-            }
-        }
-        let average_energy = -(total_n as f64 / (steps_measured as f64 * beta));
-        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let nvars = self.state.as_ref().unwrap().len();
-
-        let offset = twosite_energy_offset * self.edges.len() as f64
-            + singlesite_energy_offset * nvars as f64;
-        (acc, average_energy + offset)
     }
 
     /// Make the hamiltonian struct.
@@ -270,62 +154,6 @@ impl<
         }
     }
 
-    /// Perform a single step of qmc.
-    pub fn timestep(&mut self, beta: f64) {
-        let mut state = self.state.take().unwrap();
-        let mut manager = self.op_manager.take().unwrap();
-        let rng = self.rng.as_mut().unwrap();
-
-        let nvars = state.len();
-        let edges = &self.edges;
-        let vars = &self.vars;
-        let transverse = self.transverse;
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let hinfo = HamInfo {
-            edges,
-            transverse,
-            singlesite_energy_offset,
-            twosite_energy_offset,
-        };
-        let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
-        };
-
-        let num_bonds = edges.len() + nvars;
-        let bonds_fn = |b: usize| -> &[usize] {
-            if b < edges.len() {
-                &edges[b].0
-            } else {
-                let b = b - edges.len();
-                &vars[b..b + 1]
-            }
-        };
-
-        // Start by editing the ops list
-        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
-        manager.make_diagonal_update_with_rng_and_state_ref(
-            self.cutoff,
-            beta,
-            &mut state,
-            &ham,
-            rng,
-        );
-        self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
-
-        let mut manager = manager.into();
-        manager.flip_each_cluster_rng(0.5, rng, &mut state);
-
-        state.iter_mut().enumerate().for_each(|(var, state)| {
-            if !manager.does_var_have_ops(var) {
-                *state = rng.gen_bool(0.5);
-            }
-        });
-
-        self.op_manager = Some(manager.into());
-        self.state = Some(state);
-    }
-
     /// Take a single diagonal step.
     pub fn single_diagonal_step(&mut self, beta: f64) {
         let mut state = self.state.take().unwrap();
@@ -349,12 +177,12 @@ impl<
         };
 
         let num_bonds = edges.len() + nvars;
-        let bonds_fn = |b: usize| -> &[usize] {
+        let bonds_fn = |b: usize| -> (&[usize], bool) {
             if b < edges.len() {
-                &edges[b].0
+                (&edges[b].0, false)
             } else {
                 let b = b - edges.len();
-                &vars[b..b + 1]
+                (&vars[b..b + 1], true)
             }
         };
 
@@ -390,85 +218,6 @@ impl<
 
         self.op_manager = Some(manager.into());
         self.state = Some(state);
-    }
-
-    /// Calculate the autcorrelation calculations for variables.
-    #[cfg(feature = "autocorrelations")]
-    pub fn calculate_variable_autocorrelation(
-        &mut self,
-        timesteps: usize,
-        beta: f64,
-        sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
-    ) -> Vec<f64> {
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |sample| {
-            sample
-                .into_iter()
-                .map(|b| if b { 1.0 } else { -1.0 })
-                .collect()
-        })
-    }
-
-    /// Calculate the autcorrelation calculations for bonds.
-    #[cfg(feature = "autocorrelations")]
-    pub fn calculate_bond_autocorrelation(
-        &mut self,
-        timesteps: usize,
-        beta: f64,
-        sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
-    ) -> Vec<f64> {
-        let edges = self.edges.clone();
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |sample| {
-            edges
-                .iter()
-                .map(|(edge, j)| -> f64 {
-                    let even = edge.iter().cloned().filter(|i| sample[*i]).count() % 2 == 0;
-                    let b = if *j < 0.0 { even } else { !even };
-                    if b {
-                        1.0
-                    } else {
-                        -1.0
-                    }
-                })
-                .collect()
-        })
-    }
-
-    /// Calculate the autcorrelation calculations for the results of f(state).
-    #[cfg(feature = "autocorrelations")]
-    pub fn calculate_autocorrelation<F>(
-        &mut self,
-        timesteps: usize,
-        beta: f64,
-        sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
-        sample_mapper: F,
-    ) -> Vec<f64>
-    where
-        F: Fn(Vec<bool>) -> Vec<f64>,
-    {
-        let acc = Vec::with_capacity(timesteps / sampling_freq.unwrap_or(1) + 1);
-        let (samples, _) = self.timesteps_measure(
-            timesteps,
-            beta,
-            acc,
-            |mut acc, state| {
-                acc.push(state.to_vec());
-                acc
-            },
-            sampling_freq,
-        );
-        let samples = samples
-            .into_iter()
-            .map(sample_mapper)
-            .collect::<Vec<Vec<f64>>>();
-
-        if use_fft.unwrap_or(true) {
-            autocorrelations::fft_autocorrelation(&samples)
-        } else {
-            autocorrelations::naive_autocorrelation(&samples)
-        }
     }
 
     /// Prinbt debug output.
@@ -531,6 +280,85 @@ impl<
     /// Get a mutable reference to the op manager.
     pub fn get_manager_mut(&mut self) -> &mut M {
         self.op_manager.as_mut().unwrap()
+    }
+}
+
+impl<R, M, L> QMCStepper for QMCIsingGraph<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    L: ClusterUpdater + Into<M>,
+{
+    /// Perform a single step of qmc.
+    fn timestep(&mut self, beta: f64) -> &[bool] {
+        let mut state = self.state.take().unwrap();
+        let mut manager = self.op_manager.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
+
+        let nvars = state.len();
+        let edges = &self.edges;
+        let vars = &self.vars;
+        let transverse = self.transverse;
+        let twosite_energy_offset = self.twosite_energy_offset;
+        let singlesite_energy_offset = self.singlesite_energy_offset;
+        let hinfo = HamInfo {
+            edges,
+            transverse,
+            singlesite_energy_offset,
+            twosite_energy_offset,
+        };
+        let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
+        };
+
+        let num_bonds = edges.len() + nvars;
+        let bonds_fn = |b: usize| -> (&[usize], bool) {
+            if b < edges.len() {
+                (&edges[b].0, false)
+            } else {
+                let b = b - edges.len();
+                (&vars[b..b + 1], true)
+            }
+        };
+
+        // Start by editing the ops list
+        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
+        manager.make_diagonal_update_with_rng_and_state_ref(
+            self.cutoff,
+            beta,
+            &mut state,
+            &ham,
+            rng,
+        );
+        self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
+
+        let mut manager = manager.into();
+        manager.flip_each_cluster_rng(0.5, rng, &mut state);
+
+        state.iter_mut().enumerate().for_each(|(var, state)| {
+            if !manager.does_var_have_ops(var) {
+                *state = rng.gen_bool(0.5);
+            }
+        });
+
+        self.op_manager = Some(manager.into());
+        self.state = Some(state);
+        self.state.as_ref().unwrap()
+    }
+
+    fn get_n(&self) -> usize {
+        self.op_manager.as_ref().unwrap().get_n()
+    }
+
+    fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64 {
+        let average_energy = -(average_n / beta);
+        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
+        let twosite_energy_offset = self.twosite_energy_offset;
+        let singlesite_energy_offset = self.singlesite_energy_offset;
+        let nvars = self.vars.len();
+        let offset = twosite_energy_offset * self.edges.len() as f64
+            + singlesite_energy_offset * nvars as f64;
+        average_energy + offset
     }
 }
 
@@ -602,95 +430,19 @@ impl<
             rng: self.rng.clone(),
             phantom: self.phantom,
             vars: self.vars.clone(),
-            state_updates: self.state_updates.clone(),
         }
     }
 }
 
 #[cfg(feature = "autocorrelations")]
-pub(crate) mod autocorrelations {
-    use rayon::prelude::*;
-    use rustfft::num_complex::Complex;
-    use rustfft::num_traits::Zero;
-    use rustfft::FFTplanner;
-    use std::ops::DivAssign;
-
-    pub(crate) fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
-        let tmax = samples.len();
-        let n = samples[0].len();
-
-        let means = (0..n)
-            .map(|i| (0..tmax).map(|t| samples[t][i]).sum::<f64>() / tmax as f64)
-            .collect::<Vec<_>>();
-
-        let mut input = (0..n)
-            .map(|i| {
-                let mut v = (0..tmax)
-                    .map(|t| Complex::<f64>::new(samples[t][i] - means[i], 0.0))
-                    .collect::<Vec<Complex<f64>>>();
-                let norm = v.iter().map(|v| v.powi(2).re).sum::<f64>().sqrt();
-                v.iter_mut().for_each(|c| c.div_assign(norm));
-                v
-            })
-            .collect::<Vec<_>>();
-        let mut planner = FFTplanner::new(false);
-        let fft = planner.plan_fft(tmax);
-        let mut iplanner = FFTplanner::new(true);
-        let ifft = iplanner.plan_fft(tmax);
-
-        let mut output = vec![Complex::zero(); tmax];
-        input.iter_mut().for_each(|input| {
-            fft.process(input, &mut output);
-            output
-                .iter_mut()
-                .for_each(|c| *c = Complex::new(c.norm_sqr(), 0.0));
-            ifft.process(&mut output, input);
-        });
-
-        (0..tmax)
-            .map(|t| (0..n).map(|i| input[i][t].re).sum::<f64>() / ((n * tmax) as f64))
-            .collect()
-    }
-
-    pub(crate) fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
-        let tmax = samples.len();
-        let n: usize = samples[0].len();
-        let mu = (0..n)
-            .map(|i| -> f64 {
-                let total = samples.iter().map(|sample| sample[i]).sum::<f64>();
-                total / samples.len() as f64
-            })
-            .collect::<Vec<_>>();
-
-        (0..tmax)
-            .into_par_iter()
-            .map(|tau| {
-                (0..tmax)
-                    .map(|t| (t, (t + tau) % tmax))
-                    .map(|(ta, tb)| {
-                        let sample_a = &samples[ta];
-                        let sample_b = &samples[tb];
-                        let (d, ma, mb) = sample_a
-                            .iter()
-                            .enumerate()
-                            .zip(sample_b.iter().enumerate())
-                            .fold(
-                                (0.0, 0.0, 0.0),
-                                |(mut dot_acc, mut a_acc, mut b_acc), ((i, a), (j, b))| {
-                                    let da = a - mu[i];
-                                    let db = b - mu[j];
-                                    dot_acc += da * db;
-                                    a_acc += da.powi(2);
-                                    b_acc += db.powi(2);
-                                    (dot_acc, a_acc, b_acc)
-                                },
-                            );
-                        d / (ma * mb).sqrt()
-                    })
-                    .sum::<f64>()
-                    / (tmax as f64)
-            })
-            .collect::<Vec<_>>()
+impl<R, M, L> QMCBondAutoCorrelations for QMCIsingGraph<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    L: ClusterUpdater + Into<M>,
+{
+    fn get_edges(&self) -> &[(Vec<usize>, f64)] {
+        &self.edges
     }
 }
 
@@ -718,7 +470,6 @@ pub mod serialization {
         phantom: PhantomData<L>,
         // Can be easily reconstructed
         nvars: usize,
-        nstate_updates: usize,
     }
 
     impl<M: OpContainerConstructor + DiagonalUpdater + Into<L>, L: ClusterUpdater + Into<M>>
@@ -737,7 +488,6 @@ pub mod serialization {
                 rng: Some(rng),
                 phantom: self.phantom,
                 vars: (0..self.nvars).collect(),
-                state_updates: Vec::with_capacity(self.nstate_updates),
             }
         }
     }
@@ -759,7 +509,6 @@ pub mod serialization {
                 singlesite_energy_offset: self.singlesite_energy_offset,
                 phantom: self.phantom,
                 nvars: self.vars.len(),
-                nstate_updates: self.state_updates.len(),
             }
         }
     }

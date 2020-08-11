@@ -14,6 +14,7 @@ fn single_cluster_test() {
             0,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     let mut manager: SimpleOpLooper = manager.into();
@@ -34,6 +35,7 @@ fn simple_cluster_test() {
             0,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     manager.set_pth(
@@ -43,6 +45,7 @@ fn simple_cluster_test() {
             1,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     let mut manager: SimpleOpLooper = manager.into();
@@ -63,6 +66,7 @@ fn multi_cluster_test() {
             0,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     manager.set_pth(
@@ -72,6 +76,7 @@ fn multi_cluster_test() {
             1,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
 
@@ -82,6 +87,7 @@ fn multi_cluster_test() {
             2,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     manager.set_pth(
@@ -91,6 +97,7 @@ fn multi_cluster_test() {
             3,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
 
@@ -112,6 +119,7 @@ fn multi_twosite_cluster_test() {
             0,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     manager.set_pth(
@@ -121,6 +129,7 @@ fn multi_twosite_cluster_test() {
             1,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
 
@@ -131,6 +140,7 @@ fn multi_twosite_cluster_test() {
             2,
             smallvec![false, false],
             smallvec![false, false],
+            false,
         )),
     );
     manager.set_pth(
@@ -140,6 +150,7 @@ fn multi_twosite_cluster_test() {
             3,
             smallvec![false, false],
             smallvec![false, false],
+            false,
         )),
     );
 
@@ -161,6 +172,7 @@ fn multi_multisite_cluster_test() {
             0,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
     manager.set_pth(
@@ -170,6 +182,7 @@ fn multi_multisite_cluster_test() {
             1,
             smallvec![false, false],
             smallvec![false, false],
+            false,
         )),
     );
     manager.set_pth(
@@ -179,6 +192,7 @@ fn multi_multisite_cluster_test() {
             2,
             smallvec![false],
             smallvec![false],
+            true,
         )),
     );
 

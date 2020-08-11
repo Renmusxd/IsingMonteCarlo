@@ -6,6 +6,124 @@ use smallvec::SmallVec;
 use std::cmp::min;
 use std::iter::FromIterator;
 
+/// Provides helpers to structs which take QMC timesteps.
+pub trait QMCStepper {
+    /// Take a single QMC step and return a reference to the state
+    fn timestep(&mut self, beta: f64) -> &[bool];
+    /// Get the current number of operators in the graph
+    fn get_n(&self) -> usize;
+    /// Get the average energy given the average number of ops and beta.
+    fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64;
+
+    /// Take t qmc timesteps at beta.
+    fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
+        let (_, average_energy) = self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
+        average_energy
+    }
+
+    /// Take t qmc timesteps at beta and sample states.
+    fn timesteps_sample(
+        &mut self,
+        t: usize,
+        beta: f64,
+        sampling_freq: Option<usize>,
+    ) -> (Vec<Vec<bool>>, f64) {
+        let acc = Vec::with_capacity(t / sampling_freq.unwrap_or(1) + 1);
+        self.timesteps_measure(
+            t,
+            beta,
+            acc,
+            |mut acc, state| {
+                acc.push(state.to_vec());
+                acc
+            },
+            sampling_freq,
+        )
+    }
+
+    /// Take t qmc timesteps at beta and sample states, apply f to each.
+    fn timesteps_sample_iter<F>(
+        &mut self,
+        t: usize,
+        beta: f64,
+        sampling_freq: Option<usize>,
+        iter_fn: F,
+    ) -> f64
+    where
+        F: Fn(&[bool]),
+    {
+        let (_, e) = self.timesteps_measure(t, beta, (), |_, state| iter_fn(state), sampling_freq);
+        e
+    }
+
+    /// Take t qmc timesteps at beta and sample states, apply f to each and the zipped iterator.
+    fn timesteps_sample_iter_zip<F, I, T>(
+        &mut self,
+        t: usize,
+        beta: f64,
+        sampling_freq: Option<usize>,
+        zip_with: I,
+        iter_fn: F,
+    ) -> f64
+    where
+        F: Fn(T, &[bool]),
+        I: Iterator<Item = T>,
+    {
+        let (_, e) = self.timesteps_measure(
+            t,
+            beta,
+            Some(zip_with),
+            |zip_iter, state| {
+                if let Some(mut zip_iter) = zip_iter {
+                    let next = zip_iter.next();
+                    if let Some(next) = next {
+                        iter_fn(next, state);
+                        Some(zip_iter)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            },
+            sampling_freq,
+        );
+        e
+    }
+
+    /// Take t qmc timesteps at beta and sample states, fold across states and output results.
+    fn timesteps_measure<F, T>(
+        &mut self,
+        timesteps: usize,
+        beta: f64,
+        init_t: T,
+        state_fold: F,
+        sampling_freq: Option<usize>,
+    ) -> (T, f64)
+    where
+        F: Fn(T, &[bool]) -> T,
+    {
+        let mut acc = init_t;
+        let mut steps_measured = 0;
+        let mut total_n = 0;
+        let sampling_freq = sampling_freq.unwrap_or(1);
+
+        for t in 0..timesteps {
+            let state_ref = self.timestep(beta);
+
+            // Sample every `sampling_freq`
+            // Ignore first one.
+            if (t + 1) % sampling_freq == 0 {
+                acc = state_fold(acc, state_ref);
+                steps_measured += 1;
+                total_n += self.get_n();
+            }
+        }
+        let average_n = total_n as f64 / steps_measured as f64;
+        (acc, self.get_energy_for_average_n(average_n, beta))
+    }
+}
+
 /// Ops for holding SSE graph state.
 pub trait Op {
     /// The list of op variables.
@@ -14,13 +132,13 @@ pub trait Op {
     type SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]>;
 
     /// Make a diagonal op.
-    fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
+    fn diagonal<A, B>(vars: A, bond: usize, state: B, constant: bool) -> Self
     where
         A: Into<Self::Vars>,
         B: Into<Self::SubState>;
 
     /// Make an offdiagonal op.
-    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
+    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C, constant: bool) -> Self
     where
         A: Into<Self::Vars>,
         B: Into<Self::SubState>,
@@ -60,6 +178,10 @@ pub trait Op {
 
     /// Get the output state for the op.
     fn clone_outputs(&self) -> Self::SubState;
+
+    /// If the op is always a constant under any bit flip in input or output, then it can be used
+    /// to mark the edges of clusters.
+    fn is_constant(&self) -> bool;
 }
 
 /// A node for a loop updater to contain ops.
@@ -121,18 +243,23 @@ pub trait OpContainer {
 
 /// A hamiltonian for the graph.
 #[derive(Debug)]
-pub struct Hamiltonian<
-    'a,
+pub struct Hamiltonian<'a, H, E>
+where
     H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    E: Fn(usize) -> &'a [usize],
-> {
+    E: Fn(usize) -> (&'a [usize], bool),
+{
+    /// Maps (vars, bond, inputs, outputs) to a float matrix element.
     pub(crate) hamiltonian: H,
+    /// The number of bonds which exist.
     pub(crate) num_edges: usize,
+    /// Give edges for a bond, and if the bond is a constant.
     pub(crate) edge_fn: E,
 }
 
-impl<'a, H: Fn(&[usize], usize, &[bool], &[bool]) -> f64, E: Fn(usize) -> &'a [usize]>
-    Hamiltonian<'a, H, E>
+impl<'a, H, E> Hamiltonian<'a, H, E>
+where
+    H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    E: Fn(usize) -> (&'a [usize], bool),
 {
     /// Construct a new hamiltonian with a function, edge lookup function, and the number of bonds.
     pub fn new(hamiltonian: H, edge_fn: E, num_edges: usize) -> Self {
@@ -172,7 +299,7 @@ pub trait DiagonalUpdater: OpContainer {
         hamiltonian: &Hamiltonian<'b, H, E>,
     ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> &'b [usize],
+        E: Fn(usize) -> (&'b [usize], bool),
     {
         self.make_diagonal_update_with_rng(
             cutoff,
@@ -193,7 +320,7 @@ pub trait DiagonalUpdater: OpContainer {
         rng: &mut R,
     ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> &'b [usize],
+        E: Fn(usize) -> (&'b [usize], bool),
     {
         let mut state = state.to_vec();
         self.make_diagonal_update_with_rng_and_state_ref(cutoff, beta, &mut state, hamiltonian, rng)
@@ -209,7 +336,7 @@ pub trait DiagonalUpdater: OpContainer {
         rng: &mut R,
     ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> &'b [usize],
+        E: Fn(usize) -> (&'b [usize], bool),
     {
         self.mutate_ps(cutoff, (state, rng), |s, op, (state, rng)| {
             let op = metropolis_single_diagonal_update(
@@ -238,7 +365,7 @@ fn metropolis_single_diagonal_update<'b, O: Op, H, E, R: Rng>(
 ) -> Option<Option<O>>
 where
     H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    E: Fn(usize) -> &'b [usize],
+    E: Fn(usize) -> (&'b [usize], bool),
 {
     let b = match op {
         None => rng.gen_range(0, hamiltonian.num_edges),
@@ -251,7 +378,7 @@ where
             return None;
         }
     };
-    let vars = (hamiltonian.edge_fn)(b);
+    let (vars, constant) = (hamiltonian.edge_fn)(b);
     let substate = vars.iter().map(|v| state[*v]).collect::<O::SubState>();
     let mat_element = (hamiltonian.hamiltonian)(vars, b, substate.as_ref(), substate.as_ref());
 
@@ -264,7 +391,7 @@ where
         None => {
             if numerator > denominator || rng.gen_bool(numerator / denominator) {
                 let vars = vars.iter().cloned().collect::<O::Vars>();
-                let op = Op::diagonal(vars, b, substate);
+                let op = Op::diagonal(vars, b, substate, constant);
                 Some(Some(op))
             } else {
                 None
@@ -552,12 +679,12 @@ pub trait ClusterUpdater: LoopUpdater {
         let last_p = self.get_last_p().unwrap();
         let mut boundaries = self.get_boundaries_alloc(last_p + 1);
 
-        let single_site_p = self.find_single_site();
-        let n_clusters = if let Some(single_site_p) = single_site_p {
+        let constant_op_p = self.find_constant_op();
+        let n_clusters = if let Some(constant_op_p) = constant_op_p {
             // Expand to edges of cluster
             let mut frontier = self.get_frontier_alloc();
-            frontier.push((single_site_p, OpSide::Outputs));
-            frontier.push((single_site_p, OpSide::Inputs));
+            frontier.push((constant_op_p, OpSide::Outputs));
+            frontier.push((constant_op_p, OpSide::Inputs));
 
             let mut cluster_num = 1;
             loop {
@@ -641,12 +768,12 @@ pub trait ClusterUpdater: LoopUpdater {
         self.return_flip_alloc(flips);
     }
 
-    /// Find a site with a single var op.
-    fn find_single_site(&self) -> Option<usize> {
+    /// Find a site with a constant op.
+    fn find_constant_op(&self) -> Option<usize> {
         let mut p = self.get_first_p();
         while let Some(node_p) = p {
             let node = self.get_node_ref(node_p).unwrap();
-            if node.get_op_ref().get_vars().len() == 1 {
+            if is_valid_cluster_edge_op(node.get_op_ref()) {
                 return Some(node_p);
             } else {
                 p = self.get_next_p(node);
@@ -735,8 +862,8 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
             }
         };
 
-        // If we hit a 1-site, add to frontier and mark in boundary.
-        if next_node.get_op_ref().get_vars().len() == 1 {
+        // If we hit a cluster edge, add to frontier and mark in boundary.
+        if is_valid_cluster_edge_op(next_node.get_op_ref()) {
             if !set_boundary(next_p, next_leg.1, cluster_num, boundaries) {
                 frontier.push((next_p, next_leg.1.reverse()))
             }
@@ -763,6 +890,21 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
     c.return_interior_frontier_alloc(interior_frontier);
 }
 
+/// Valid cluster edges are constant and have a single variable, in the future we can rewrite
+/// the cluster logic to handle multi-spin cluster edges but that requires some fancy boundary
+/// logic.
+fn is_valid_cluster_edge_op<O: Op>(op: &O) -> bool {
+    is_valid_cluster_edge(op.is_constant(), op.get_vars().len())
+}
+
+/// Valid cluster edges are constant and have a single variable, in the future we can rewrite
+/// the cluster logic to handle multi-spin cluster edges but that requires some fancy boundary
+/// logic.
+#[inline]
+pub fn is_valid_cluster_edge(is_constant: bool, nvars: usize) -> bool {
+    is_constant && nvars == 1
+}
+
 // Returns true if both sides have clusters attached.
 fn set_boundary(
     p: usize,
@@ -781,6 +923,7 @@ fn set_boundary(
     };
     matches!(boundaries[p], (Some(_), Some(_)))
 }
+
 fn set_boundaries(p: usize, cluster_num: usize, boundaries: &mut [(Option<usize>, Option<usize>)]) {
     set_boundary(p, OpSide::Inputs, cluster_num, boundaries);
     set_boundary(p, OpSide::Outputs, cluster_num, boundaries);
@@ -844,6 +987,8 @@ where
     inputs: SubState,
     /// Output state out of op.
     outputs: SubState,
+    /// Is this op constant under bit flips?
+    constant: bool,
 }
 
 impl<Vars, SubState> Op for BasicOp<Vars, SubState>
@@ -854,7 +999,7 @@ where
     type Vars = Vars;
     type SubState = SubState;
 
-    fn diagonal<A, B>(vars: A, bond: usize, state: B) -> Self
+    fn diagonal<A, B>(vars: A, bond: usize, state: B, constant: bool) -> Self
     where
         A: Into<Self::Vars>,
         B: Into<Self::SubState>,
@@ -865,10 +1010,11 @@ where
             bond,
             inputs: outputs.clone(),
             outputs,
+            constant,
         }
     }
 
-    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C) -> Self
+    fn offdiagonal<A, B, C>(vars: A, bond: usize, inputs: B, outputs: C, constant: bool) -> Self
     where
         A: Into<Self::Vars>,
         B: Into<Self::SubState>,
@@ -879,6 +1025,7 @@ where
             bond,
             inputs: inputs.into(),
             outputs: outputs.into(),
+            constant,
         }
     }
 
@@ -929,5 +1076,9 @@ where
 
     fn clone_outputs(&self) -> Self::SubState {
         self.outputs.clone()
+    }
+
+    fn is_constant(&self) -> bool {
+        self.constant
     }
 }

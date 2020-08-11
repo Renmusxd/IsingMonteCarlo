@@ -1,6 +1,5 @@
 extern crate ising_monte_carlo;
-use ising_monte_carlo::sse::fast_ops::*;
-use ising_monte_carlo::sse::qmc_graph::QMCGraph;
+use ising_monte_carlo::sse::*;
 use rand::prelude::ThreadRng;
 
 fn main() {
@@ -8,7 +7,6 @@ fn main() {
     let transverse = 1.0;
 
     let rng = rand::thread_rng();
-    let mut g =
-        QMCGraph::<ThreadRng, FastOps, FastOps>::new_with_rng(edges, transverse, 3, rng, None);
+    let mut g = DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, 3, rng, None);
     let _a = g.timesteps(1000, 1.0);
 }

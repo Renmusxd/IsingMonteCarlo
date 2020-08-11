@@ -1,7 +1,6 @@
 use crate::graph::Edge;
 use crate::parallel_tempering::tempering_traits::*;
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_ising;
 use crate::sse::qmc_ising::QMCIsingGraph;
 use crate::sse::qmc_traits::*;
 use itertools::Itertools;
@@ -450,6 +449,7 @@ pub mod rayon_tempering {
     #[cfg(feature = "autocorrelations")]
     pub mod autocorrelations {
         use super::*;
+        use crate::sse::autocorrelations::{fft_autocorrelation, naive_autocorrelation};
 
         /// A collection of functions to calculate autocorrelations.
         pub trait ParallelTemperingAutocorrelations {
@@ -495,7 +495,6 @@ pub mod rayon_tempering {
                 L: ClusterUpdater + Into<M> + Send + Sync,
             > ParallelTemperingAutocorrelations for TemperingContainer<R1, R2, M, L>
         {
-            #[cfg(feature = "autocorrelations")]
             fn calculate_variable_autocorrelation(
                 &mut self,
                 timesteps: usize,
@@ -571,9 +570,9 @@ pub mod rayon_tempering {
                         let samples = samples.into_iter().map(sample_mapper).collect::<Vec<_>>();
 
                         if use_fft.unwrap_or(true) {
-                            qmc_ising::autocorrelations::fft_autocorrelation(&samples)
+                            fft_autocorrelation(&samples)
                         } else {
-                            qmc_ising::autocorrelations::naive_autocorrelation(&samples)
+                            naive_autocorrelation(&samples)
                         }
                     })
                     .collect::<Vec<_>>()

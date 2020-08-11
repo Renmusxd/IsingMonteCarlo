@@ -4,6 +4,7 @@ use ising_monte_carlo::graph::Edge;
 use ising_monte_carlo::sse::fast_ops::*;
 use ising_monte_carlo::sse::qmc_ising::QMCIsingGraph;
 use ising_monte_carlo::sse::simple_ops::*;
+use ising_monte_carlo::sse::*;
 use rand::prelude::*;
 
 fn one_d_periodic(l: usize) -> Vec<(Edge, f64)> {
