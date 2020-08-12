@@ -15,6 +15,9 @@ pub trait QMCStepper {
     /// Get the average energy given the average number of ops and beta.
     fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64;
 
+    /// Get a reference to the state.
+    fn state_ref(&self) -> &[bool];
+
     /// Take t qmc timesteps at beta.
     fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
         let (_, average_energy) = self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
@@ -1081,4 +1084,10 @@ where
     fn is_constant(&self) -> bool {
         self.constant
     }
+}
+
+/// Check integrity of a struct.
+pub trait Verify {
+    /// Check integrity.
+    fn verify(&self) -> bool;
 }

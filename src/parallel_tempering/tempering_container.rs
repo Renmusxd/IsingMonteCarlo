@@ -1,4 +1,3 @@
-use crate::graph::Edge;
 use crate::parallel_tempering::tempering_traits::*;
 use crate::sse::fast_ops::FastOps;
 use crate::sse::qmc_ising::QMCIsingGraph;
@@ -9,95 +8,70 @@ use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::cmp::{max, min};
+use std::cmp::min;
 
 /// A tempering container using FastOps and FastOpNodes.
-pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, R2, FastOps, FastOps>;
-
-type GraphBeta<R, M, L> = (QMCIsingGraph<R, M, L>, f64);
+pub type DefaultTemperingContainer<R1, R2> =
+    TemperingContainer<R1, QMCIsingGraph<R2, FastOps, FastOps>>;
 
 /// A container to perform parallel tempering.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct TemperingContainer<
-    R1: Rng,
-    R2: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: ClusterUpdater + Into<M>,
-> {
-    nvars: usize,
-    edges: Vec<(Edge, f64)>,
-    cutoff: usize,
-
+pub struct TemperingContainer<R, Q>
+where
+    R: Rng,
+    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+{
     // Graph and beta
-    graphs: Vec<GraphBeta<R2, M, L>>,
-    rng: Option<R1>,
+    graphs: Vec<(Q, f64)>,
+    rng: Option<R>,
+
+    // Pairwise equality comparisons
+    graph_ham_eq_a: Option<Vec<bool>>,
+    graph_ham_eq_b: Option<Vec<bool>>,
 
     // Sort of a debug parameter to see how well swaps are going.
     total_swaps: u64,
 }
 
 /// Make a new parallel tempering container.
-pub fn new_with_rng<R2: Rng, R: Rng>(
-    rng: R,
-    edges: Vec<(Edge, f64)>,
-    cutoff: usize,
-) -> DefaultTemperingContainer<R, R2> {
-    TemperingContainer::new(rng, edges, cutoff)
+pub fn new_with_rng<R2: Rng, R: Rng>(rng: R) -> DefaultTemperingContainer<R, R2> {
+    TemperingContainer::new(rng)
 }
 
 /// Make a new parallel tempering container.
-pub fn new_thread_rng(
-    edges: Vec<(Edge, f64)>,
-    cutoff: usize,
-) -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
-    TemperingContainer::new(rand::thread_rng(), edges, cutoff)
+pub fn new_thread_rng() -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
+    new_with_rng(rand::thread_rng())
 }
 
-impl<
-        R1: Rng,
-        R2: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-        L: ClusterUpdater + Into<M>,
-    > TemperingContainer<R1, R2, M, L>
+impl<R, Q> TemperingContainer<R, Q>
+where
+    R: Rng,
+    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
 {
-    /// Make a new tempering container. All graphs will share this set of edgesd
+    /// Make a new tempering container. All graphs will share this set of edges
     /// and start with this cutoff.
-    pub fn new(rng: R1, edges: Vec<(Edge, f64)>, cutoff: usize) -> Self {
-        let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
+    pub fn new(rng: R) -> Self {
         Self {
-            nvars,
-            edges,
-            cutoff,
             rng: Some(rng),
+            graph_ham_eq_a: None,
+            graph_ham_eq_b: None,
             graphs: vec![],
             total_swaps: 0,
         }
     }
 
-    /// Add a graph which uses this rng, transverse field, and beta.
-    pub fn add_graph(&mut self, rng: R2, transverse: f64, beta: f64) {
-        let graph = QMCIsingGraph::<R2, M, L>::new_with_rng(
-            self.edges.clone(),
-            transverse,
-            self.cutoff,
-            rng,
-            None,
-        );
-        self.graphs.push((graph, beta))
-    }
-
-    /// Add a graph which uses this rng, transverse field, and beta. Starts with an initial state.
-    pub fn add_graph_with_state(&mut self, rng: R2, transverse: f64, beta: f64, state: Vec<bool>) {
-        assert_eq!(state.len(), self.nvars);
-        let graph = QMCIsingGraph::<R2, M, L>::new_with_rng(
-            self.edges.clone(),
-            transverse,
-            self.cutoff,
-            rng,
-            Some(state),
-        );
-        self.graphs.push((graph, beta))
+    /// Add a QMC instance to the tempering container. Returns an Err if the added QMCStepper
+    /// cannot be swapped with the existing steppers.
+    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), ()> {
+        if !self.graphs.is_empty() && !self.graphs[0].0.can_swap_graphs(&q) {
+            Err(())
+        } else {
+            self.graph_ham_eq_a = None;
+            self.graph_ham_eq_b = None;
+            self.graphs.push((q, beta));
+            Ok(())
+        }
     }
 
     /// Perform a series of qmc timesteps on each graph.
@@ -107,28 +81,63 @@ impl<
         })
     }
 
+    fn make_first_subgraphs(&mut self) -> &mut [(Q, f64)] {
+        if self.graphs.len() % 2 == 0 {
+            self.graphs.as_mut_slice()
+        } else {
+            let n = self.graphs.len();
+            &mut self.graphs[0..n - 1]
+        }
+    }
+
+    fn make_second_subgraphs(&mut self) -> &mut [(Q, f64)] {
+        if self.graphs.len() % 2 == 1 {
+            &mut self.graphs[1..]
+        } else {
+            let n = self.graphs.len();
+            &mut self.graphs[1..n - 1]
+        }
+    }
+
+    fn make_ham_equalities(&mut self) {
+        let graphs = self.make_first_subgraphs();
+        self.graph_ham_eq_a = Some(Self::make_eqs_from_graphs(graphs));
+
+        let graphs = self.make_second_subgraphs();
+        self.graph_ham_eq_b = Some(Self::make_eqs_from_graphs(graphs));
+    }
+
+    fn make_eqs_from_graphs(graphs: &[(Q, f64)]) -> Vec<bool> {
+        graphs
+            .iter()
+            .map(|(g, _)| g)
+            .chunks(2)
+            .into_iter()
+            .map(unwrap_chunk)
+            .map(|(ga, gb)| ga.ham_eq(gb))
+            .collect()
+    }
+
     /// Perform a tempering step.
     pub fn tempering_step(&mut self) {
+        if self.graph_ham_eq_a.is_none() || self.graph_ham_eq_b.is_none() {
+            self.make_ham_equalities()
+        }
+
         if self.graphs.len() <= 1 {
             return;
         }
         let mut rng = self.rng.take().unwrap();
 
-        let first_subgraphs = if self.graphs.len() % 2 == 0 {
-            self.graphs.as_mut_slice()
-        } else {
-            let n = self.graphs.len();
-            &mut self.graphs[0..n - 1]
-        };
-        self.total_swaps += perform_swaps(&mut rng, first_subgraphs);
+        let hameqs = self.graph_ham_eq_a.take().unwrap();
+        let graphs = self.make_first_subgraphs();
+        self.total_swaps += perform_swaps(&mut rng, graphs, &hameqs);
+        self.graph_ham_eq_a = Some(hameqs);
 
-        let second_subgraphs = if self.graphs.len() % 2 == 1 {
-            &mut self.graphs[1..]
-        } else {
-            let n = self.graphs.len();
-            &mut self.graphs[1..n - 1]
-        };
-        self.total_swaps += perform_swaps(&mut rng, second_subgraphs);
+        let hameqs = self.graph_ham_eq_b.take().unwrap();
+        let graphs = self.make_second_subgraphs();
+        self.total_swaps += perform_swaps(&mut rng, graphs, &hameqs);
+        self.graph_ham_eq_b = Some(hameqs);
 
         self.rng = Some(rng);
     }
@@ -187,16 +196,12 @@ impl<
     }
 
     /// Return a reference to the list of graphs and their temperatures.
-    pub fn graph_ref(&self) -> &[GraphBeta<R2, M, L>] {
+    pub fn graph_ref(&self) -> &[(Q, f64)] {
         &self.graphs
     }
     /// Return a mutable reference to the list of graphs and their temperatures.
-    pub fn graph_mut(&mut self) -> &mut [GraphBeta<R2, M, L>] {
+    pub fn graph_mut(&mut self) -> &mut [(Q, f64)] {
         &mut self.graphs
-    }
-    /// The number of variables in the graph.
-    pub fn nvars(&self) -> usize {
-        self.nvars
     }
     /// Get the number of graphs in the container.
     pub fn num_graphs(&self) -> usize {
@@ -206,30 +211,13 @@ impl<
     pub fn get_total_swaps(&self) -> u64 {
         self.total_swaps
     }
-
-    /// Verify all the graphs' integrity.
-    pub fn verify(&self) -> bool {
-        self.graphs.iter().map(|(g, _)| g.verify()).all(|b| b)
-    }
-    /// Print each graph.
-    pub fn debug_print_each(&self) {
-        println!("*********");
-        for (g, _) in &self.graphs {
-            g.print_debug();
-        }
-        println!("*********");
-    }
 }
 
-fn perform_swaps<
-    R1: Rng,
-    R2: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: ClusterUpdater + Into<M>,
->(
-    mut rng: R1,
-    graphs: &mut [GraphBeta<R2, M, L>],
-) -> u64 {
+fn perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64
+where
+    R: Rng,
+    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+{
     assert_eq!(graphs.len() % 2, 0);
     if graphs.is_empty() {
         0
@@ -240,7 +228,8 @@ fn perform_swaps<
             .into_iter()
             .map(unwrap_chunk)
             .map(|x| (x, rng.gen_range(0.0, 1.0)))
-            .map(|((ga, gb), p)| if swap_on_chunks(ga, gb, p) { 1 } else { 0 })
+            .zip(hameqs.iter())
+            .map(|(((ga, gb), p), eq)| if swap_on_chunks(ga, gb, p, !eq) { 1 } else { 0 })
             .sum()
     }
 }
@@ -254,31 +243,26 @@ fn unwrap_chunk<T, It: Iterator<Item = T>>(it: It) -> (T, T) {
 }
 
 /// Returns true if a swap occurs.
-fn swap_on_chunks<
-    'a,
-    R: 'a + Rng,
-    M: 'a + OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
-    L: 'a + ClusterUpdater + Into<M>,
->(
-    graph_beta_a: &'a mut GraphBeta<R, M, L>,
-    graph_beta_b: &'a mut GraphBeta<R, M, L>,
+fn swap_on_chunks<'a, Q>(
+    graph_beta_a: &'a mut (Q, f64),
+    graph_beta_b: &'a mut (Q, f64),
     p: f64,
-) -> bool {
+    evaluate_hamiltonians: bool,
+) -> bool
+where
+    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+{
     let (ga, ba) = graph_beta_a;
     let (gb, bb) = graph_beta_b;
 
-    let ha = ga.make_haminfo();
-    let hb = gb.make_haminfo();
-    let rel_h_weight = if ha.equal_assuming_graph(&hb) {
+    let rel_h_weight = if evaluate_hamiltonians {
         1.0
     } else {
         let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            let haminfo = ga.make_haminfo();
-            QMCIsingGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+            ga.hamiltonian(vars, bond, input_state, output_state)
         };
         let hb = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            let haminfo = gb.make_haminfo();
-            QMCIsingGraph::<R, M, L>::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+            gb.hamiltonian(vars, bond, input_state, output_state)
         };
 
         // QMCGraph can only ever have 2 vars since it represents a TFIM.
@@ -290,10 +274,20 @@ fn swap_on_chunks<
     let temp_swap = (*ba / *bb).powi(gb.get_n() as i32 - ga.get_n() as i32);
     let p_swap = temp_swap * rel_h_weight;
     if p_swap > p {
-        std::mem::swap(ga, gb);
+        ga.swap_graphs(gb);
         true
     } else {
         false
+    }
+}
+
+impl<R, Q> Verify for TemperingContainer<R, Q>
+where
+    R: Rng,
+    Q: QMCStepper + OpHam + OpWeights + SwapManagers + Verify,
+{
+    fn verify(&self) -> bool {
+        self.graphs.iter().all(|(q, _)| q.verify())
     }
 }
 
@@ -325,18 +319,10 @@ pub mod rayon_tempering {
         ) -> Vec<(Vec<Vec<bool>>, f64)>;
     }
 
-    impl<
-            R1: Rng,
-            R2: Rng + Send + Sync,
-            M: OpContainerConstructor
-                + DiagonalUpdater
-                + Into<L>
-                + StateSetter
-                + OpWeights
-                + Send
-                + Sync,
-            L: ClusterUpdater + Into<M> + Send + Sync,
-        > ParallelQMCTimeSteps for TemperingContainer<R1, R2, M, L>
+    impl<R, Q> ParallelQMCTimeSteps for TemperingContainer<R, Q>
+    where
+        R: Rng,
+        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
     {
         fn parallel_timesteps(&mut self, t: usize) {
             self.graphs.par_iter_mut().for_each(|(g, beta)| {
@@ -345,23 +331,21 @@ pub mod rayon_tempering {
         }
 
         fn parallel_tempering_step(&mut self) {
+            if self.graph_ham_eq_a.is_none() || self.graph_ham_eq_b.is_none() {
+                self.make_ham_equalities()
+            }
+
             let mut rng = self.rng.take().unwrap();
 
-            let first_subgraphs = if self.graphs.len() % 2 == 0 {
-                &mut self.graphs
-            } else {
-                let n = self.graphs.len();
-                &mut self.graphs[0..n - 1]
-            };
-            self.total_swaps += parallel_perform_swaps(&mut rng, first_subgraphs);
+            let hameqs = self.graph_ham_eq_a.take().unwrap();
+            let graphs = self.make_first_subgraphs();
+            self.total_swaps += parallel_perform_swaps(&mut rng, graphs, &hameqs);
+            self.graph_ham_eq_a = Some(hameqs);
 
-            let second_subgraphs = if self.graphs.len() % 2 == 1 {
-                &mut self.graphs[1..]
-            } else {
-                let n = self.graphs.len();
-                &mut self.graphs[1..n - 1]
-            };
-            self.total_swaps += parallel_perform_swaps(&mut rng, second_subgraphs);
+            let hameqs = self.graph_ham_eq_b.take().unwrap();
+            let graphs = self.make_second_subgraphs();
+            self.total_swaps += parallel_perform_swaps(&mut rng, graphs, &hameqs);
+            self.graph_ham_eq_b = Some(hameqs);
 
             self.rng = Some(rng);
         }
@@ -418,15 +402,11 @@ pub mod rayon_tempering {
         }
     }
 
-    fn parallel_perform_swaps<
-        R1: Rng,
-        R2: Rng + Send + Sync,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights + Send + Sync,
-        L: ClusterUpdater + Into<M> + Send + Sync,
-    >(
-        mut rng: R1,
-        graphs: &mut [GraphBeta<R2, M, L>],
-    ) -> u64 {
+    fn parallel_perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64
+    where
+        R: Rng,
+        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+    {
         assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
             0
@@ -440,7 +420,8 @@ pub mod rayon_tempering {
                 .chunks(2)
                 .map(|g| unwrap_chunk(g.into_iter()))
                 .zip(probs.into_par_iter())
-                .map(|((ga, gb), p)| if swap_on_chunks(ga, gb, p) { 1 } else { 0 })
+                .zip(hameqs.into_par_iter())
+                .map(|(((ga, gb), p), eq)| if swap_on_chunks(ga, gb, p, !eq) { 1 } else { 0 })
                 .sum()
         }
     }
@@ -450,9 +431,10 @@ pub mod rayon_tempering {
     pub mod autocorrelations {
         use super::*;
         use crate::sse::autocorrelations::{fft_autocorrelation, naive_autocorrelation};
+        use crate::sse::QMCBondAutoCorrelations;
 
         /// A collection of functions to calculate autocorrelations.
-        pub trait ParallelTemperingAutocorrelations {
+        pub trait ParallelTemperingAutocorrelations<Q> {
             /// Calculate autocorrelations on spin variables.
             fn calculate_variable_autocorrelation(
                 &mut self,
@@ -461,14 +443,7 @@ pub mod rayon_tempering {
                 sampling_freq: Option<usize>,
                 use_fft: Option<bool>,
             ) -> Vec<Vec<f64>>;
-            /// Calculate autocorrelations on bonds.
-            fn calculate_bond_autocorrelation(
-                &mut self,
-                timesteps: usize,
-                replica_swap_freq: Option<usize>,
-                sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
-            ) -> Vec<Vec<f64>>;
+
             /// Calculate autocorrelations on the output of f applied to states.
             fn calculate_autocorrelation<F>(
                 &mut self,
@@ -479,21 +454,27 @@ pub mod rayon_tempering {
                 sample_mapper: F,
             ) -> Vec<Vec<f64>>
             where
-                F: Fn(Vec<bool>) -> Vec<f64> + Copy + Send + Sync;
+                F: Fn(&[bool], &Q) -> Vec<f64> + Copy + Send + Sync;
         }
 
-        impl<
-                R1: Rng,
-                R2: Rng + Send + Sync,
-                M: OpContainerConstructor
-                    + DiagonalUpdater
-                    + Into<L>
-                    + StateSetter
-                    + OpWeights
-                    + Send
-                    + Sync,
-                L: ClusterUpdater + Into<M> + Send + Sync,
-            > ParallelTemperingAutocorrelations for TemperingContainer<R1, R2, M, L>
+        /// Allows parallel computation of bond variables.
+        pub trait ParallelTemperingBondAutoCorrelations<Q>:
+            ParallelTemperingAutocorrelations<Q>
+        {
+            /// Calculate autocorrelations on bonds.
+            fn calculate_bond_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>>;
+        }
+
+        impl<R, Q> ParallelTemperingAutocorrelations<Q> for TemperingContainer<R, Q>
+        where
+            R: Rng,
+            Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
         {
             fn calculate_variable_autocorrelation(
                 &mut self,
@@ -507,42 +488,11 @@ pub mod rayon_tempering {
                     replica_swap_freq,
                     sampling_freq,
                     use_fft,
-                    |sample| {
+                    |sample, _| {
                         sample
-                            .into_iter()
-                            .map(|b| if b { 1.0 } else { -1.0 })
-                            .collect()
-                    },
-                )
-            }
-
-            fn calculate_bond_autocorrelation(
-                &mut self,
-                timesteps: usize,
-                replica_swap_freq: Option<usize>,
-                sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
-            ) -> Vec<Vec<f64>> {
-                let edges = self.edges.clone();
-                self.calculate_autocorrelation(
-                    timesteps,
-                    replica_swap_freq,
-                    sampling_freq,
-                    use_fft,
-                    |sample| {
-                        let even = |(a, b): &(usize, usize)| -> bool {
-                            matches!((sample[*a], sample[*b]), (true, true) | (false, false))
-                        };
-                        edges
                             .iter()
-                            .map(|(edge, j)| -> f64 {
-                                let b = if *j < 0.0 { even(edge) } else { !even(edge) };
-                                if b {
-                                    1.0
-                                } else {
-                                    -1.0
-                                }
-                            })
+                            .cloned()
+                            .map(|b| if b { 1.0 } else { -1.0 })
                             .collect()
                     },
                 )
@@ -557,7 +507,7 @@ pub mod rayon_tempering {
                 sample_mapper: F,
             ) -> Vec<Vec<f64>>
             where
-                F: Fn(Vec<bool>) -> Vec<f64> + Copy + Send + Sync,
+                F: Fn(&[bool], &Q) -> Vec<f64> + Copy + Send + Sync,
             {
                 let replica_swap_freq = replica_swap_freq.unwrap_or(1);
                 let sampling_freq = sampling_freq.unwrap_or(1);
@@ -565,9 +515,13 @@ pub mod rayon_tempering {
                     self.parallel_timesteps_sample(timesteps, replica_swap_freq, sampling_freq);
 
                 states_and_energies
-                    .into_iter()
-                    .map(|(samples, _)| {
-                        let samples = samples.into_iter().map(sample_mapper).collect::<Vec<_>>();
+                    .iter()
+                    .zip(self.graphs.iter())
+                    .map(|((samples, _), (q, _))| {
+                        let samples = samples
+                            .iter()
+                            .map(|s| sample_mapper(s, q))
+                            .collect::<Vec<_>>();
 
                         if use_fft.unwrap_or(true) {
                             fft_autocorrelation(&samples)
@@ -578,34 +532,77 @@ pub mod rayon_tempering {
                     .collect::<Vec<_>>()
             }
         }
+
+        impl<R, Q> ParallelTemperingBondAutoCorrelations<Q> for TemperingContainer<R, Q>
+        where
+            R: Rng,
+            Q: QMCStepper
+                + OpHam
+                + OpWeights
+                + QMCBondAutoCorrelations
+                + SwapManagers
+                + Send
+                + Sync,
+        {
+            fn calculate_bond_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>> {
+                self.calculate_autocorrelation(
+                    timesteps,
+                    replica_swap_freq,
+                    sampling_freq,
+                    use_fft,
+                    |sample, q| {
+                        let nbonds = q.n_bonds();
+                        (0..nbonds)
+                            .map(|bond| {
+                                if q.value_for_bond(bond, &sample) {
+                                    1.0
+                                } else {
+                                    -1.0
+                                }
+                            })
+                            .collect()
+                    },
+                )
+            }
+        }
     }
 
     #[cfg(test)]
     mod parallel_swap_test {
         use super::*;
+        use crate::sse::*;
         use rand::prelude::SmallRng;
         use rand::SeedableRng;
 
         #[test]
-        fn test_basic() {
+        fn test_basic() -> Result<(), ()> {
             let rng1 = SmallRng::seed_from_u64(0u64);
 
             let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
-            let n = 5;
-
-            let mut temper = new_with_rng::<SmallRng, _>(rng1, edges, 2 * n);
+            let mut temper = new_with_rng::<SmallRng, _>(rng1);
             for _ in 0..2 {
                 let rng = SmallRng::seed_from_u64(0u64);
-                temper.add_graph(rng, 0.1, 10.0);
+                let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+                    edges.clone(),
+                    0.1,
+                    10,
+                    rng,
+                    None,
+                );
+                temper.add_qmc_stepper(qmc, 10.0)?;
             }
             temper.timesteps(100);
-            temper.debug_print_each();
             assert!(temper.verify());
 
             temper.parallel_tempering_step();
-            temper.debug_print_each();
-
             assert!(temper.verify());
+            Ok(())
         }
     }
 }
@@ -626,9 +623,6 @@ pub mod serialization {
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > {
-        nvars: usize,
-        edges: Vec<(Edge, f64)>,
-        cutoff: usize,
         graphs: Vec<SerializeGraphBeta<M, L>>,
         total_swaps: u64,
     }
@@ -636,15 +630,13 @@ pub mod serialization {
     impl<
             R1: Rng,
             R2: Rng,
-            M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
             L: ClusterUpdater + Into<M>,
-        > Into<SerializeTemperingContainer<M, L>> for TemperingContainer<R1, R2, M, L>
+        > Into<SerializeTemperingContainer<M, L>>
+        for TemperingContainer<R1, QMCIsingGraph<R2, M, L>>
     {
         fn into(self) -> SerializeTemperingContainer<M, L> {
             SerializeTemperingContainer {
-                nvars: self.nvars,
-                edges: self.edges,
-                cutoff: self.cutoff,
                 graphs: self
                     .graphs
                     .into_iter()
@@ -656,7 +648,7 @@ pub mod serialization {
     }
 
     impl<
-            M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter + OpWeights,
+            M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
             L: ClusterUpdater + Into<M>,
         > SerializeTemperingContainer<M, L>
     {
@@ -665,7 +657,7 @@ pub mod serialization {
             self,
             container_rng: R1,
             graph_rngs: Vec<R2>,
-        ) -> TemperingContainer<R1, R2, M, L> {
+        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M, L>> {
             assert_eq!(self.graphs.len(), graph_rngs.len());
             self.into_tempering_container(container_rng, graph_rngs.into_iter())
         }
@@ -675,11 +667,8 @@ pub mod serialization {
             self,
             container_rng: R1,
             graph_rngs: It,
-        ) -> TemperingContainer<R1, R2, M, L> {
+        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M, L>> {
             TemperingContainer {
-                nvars: self.nvars,
-                edges: self.edges,
-                cutoff: self.cutoff,
                 graphs: self
                     .graphs
                     .into_iter()
@@ -687,6 +676,8 @@ pub mod serialization {
                     .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
                     .collect(),
                 rng: Some(container_rng),
+                graph_ham_eq_a: None,
+                graph_ham_eq_b: None,
                 total_swaps: self.total_swaps,
             }
         }
@@ -696,28 +687,28 @@ pub mod serialization {
 #[cfg(test)]
 mod swap_test {
     use super::*;
+    use crate::sse::*;
     use rand::prelude::SmallRng;
     use rand::SeedableRng;
 
     #[test]
-    fn test_basic() {
+    fn test_basic() -> Result<(), ()> {
         let rng1 = SmallRng::seed_from_u64(0u64);
 
         let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
-        let n = 5;
 
-        let mut temper = new_with_rng::<SmallRng, _>(rng1, edges, 2 * n);
+        let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
         for _ in 0..2 {
             let rng = SmallRng::seed_from_u64(0u64);
-            temper.add_graph(rng, 0.1, 10.0);
+            let qmc =
+                DefaultQMCIsingGraph::<SmallRng>::new_with_rng(edges.clone(), 0.1, 10, rng, None);
+            temper.add_qmc_stepper(qmc, 10.0)?;
         }
         temper.timesteps(1);
-        temper.debug_print_each();
         assert!(temper.verify());
 
         temper.tempering_step();
-        temper.debug_print_each();
-
         assert!(temper.verify());
+        Ok(())
     }
 }

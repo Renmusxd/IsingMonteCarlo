@@ -2,6 +2,7 @@ use crate::graph::{Edge, GraphState};
 #[cfg(feature = "autocorrelations")]
 pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
+use crate::sse::qmc::QMC;
 pub use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
@@ -228,20 +229,6 @@ impl<
         )
     }
 
-    /// Verify the integrity of the graph.
-    pub fn verify(&self) -> bool {
-        self.op_manager
-            .as_ref()
-            .and_then(|op| self.state.as_ref().map(|state| (op, state)))
-            .map(|(op, state)| op.verify(state))
-            .unwrap_or(false)
-    }
-
-    /// Get a reference to the state at p=0.
-    pub fn state_ref(&self) -> &Vec<bool> {
-        self.state.as_ref().unwrap()
-    }
-
     /// Get a mutable reference to the state at p=0 (can break integrity)
     pub fn state_mut(&mut self) -> &mut Vec<bool> {
         self.state.as_mut().unwrap()
@@ -280,6 +267,21 @@ impl<
     /// Get a mutable reference to the op manager.
     pub fn get_manager_mut(&mut self) -> &mut M {
         self.op_manager.as_mut().unwrap()
+    }
+
+    pub(crate) fn can_swap_managers(&self, other: &Self) -> bool {
+        self.edges == other.edges
+    }
+
+    pub(crate) fn swap_manager_and_state(&mut self, other: &mut Self) {
+        let m = self.op_manager.take().unwrap();
+        let s = self.state.take().unwrap();
+        let om = other.op_manager.take().unwrap();
+        let os = other.state.take().unwrap();
+        self.op_manager = Some(om);
+        self.state = Some(os);
+        other.op_manager = Some(m);
+        other.state = Some(s);
     }
 }
 
@@ -346,6 +348,10 @@ where
         self.state.as_ref().unwrap()
     }
 
+    fn state_ref(&self) -> &[bool] {
+        self.state.as_ref().unwrap()
+    }
+
     fn get_n(&self) -> usize {
         self.op_manager.as_ref().unwrap().get_n()
     }
@@ -359,6 +365,21 @@ where
         let offset = twosite_energy_offset * self.edges.len() as f64
             + singlesite_energy_offset * nvars as f64;
         average_energy + offset
+    }
+}
+
+impl<R, M, L> Verify for QMCIsingGraph<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    L: ClusterUpdater + Into<M>,
+{
+    fn verify(&self) -> bool {
+        self.op_manager
+            .as_ref()
+            .and_then(|op| self.state.as_ref().map(|state| (op, state)))
+            .map(|(op, state)| op.verify(state))
+            .unwrap_or(false)
     }
 }
 
@@ -404,19 +425,23 @@ pub struct HamInfo<'a> {
     twosite_energy_offset: f64,
 }
 
-impl<'a> HamInfo<'a> {
-    /// Check if the hamiltonians (Assumed to be on the same graph) are equal.
-    pub fn equal_assuming_graph(&self, other: &HamInfo) -> bool {
-        (self.transverse - other.transverse).abs() < f64::EPSILON
+impl<'a> PartialEq for HamInfo<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.edges == other.edges
+            && self.transverse == other.transverse
+            && self.singlesite_energy_offset == other.singlesite_energy_offset
+            && self.twosite_energy_offset == other.twosite_energy_offset
     }
 }
 
+impl<'a> Eq for HamInfo<'a> {}
+
 // Implement clone where available.
-impl<
-        R: Rng + Clone,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L> + Clone,
-        L: ClusterUpdater + Into<M> + Clone,
-    > Clone for QMCIsingGraph<R, M, L>
+impl<R, M, L> Clone for QMCIsingGraph<R, M, L>
+where
+    R: Rng + Clone,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + Clone,
+    L: ClusterUpdater + Into<M> + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -434,6 +459,38 @@ impl<
     }
 }
 
+// Allow for conversion to generic QMC type. Clears the internal state, converts edges and field
+// into interactions.
+impl<R, M, L> Into<QMC<R, M, L>> for QMCIsingGraph<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    L: ClusterUpdater + Into<M>,
+{
+    fn into(self) -> QMC<R, M, L> {
+        let nvars = self.get_nvars();
+        let rng = self.rng.unwrap();
+        let state = self.state.as_ref().unwrap().to_vec();
+        let mut qmc = QMC::<R, M, L>::new_with_state(nvars, rng, state, false);
+        let transverse = self.transverse;
+        self.edges.into_iter().for_each(|(vars, j)| {
+            qmc.make_interaction_and_offset(
+                vec![-j, 0., 0., 0., 0., j, 0., 0., 0., 0., j, 0., 0., 0., 0., -j],
+                vars,
+            )
+            .unwrap()
+        });
+        (0..nvars).for_each(|var| {
+            qmc.make_interaction(
+                vec![transverse, transverse, transverse, transverse],
+                vec![var],
+            )
+            .unwrap()
+        });
+        qmc
+    }
+}
+
 #[cfg(feature = "autocorrelations")]
 impl<R, M, L> QMCBondAutoCorrelations for QMCIsingGraph<R, M, L>
 where
@@ -441,8 +498,18 @@ where
     M: OpContainerConstructor + DiagonalUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
-    fn get_edges(&self) -> &[(Vec<usize>, f64)] {
-        &self.edges
+    fn n_bonds(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> bool {
+        let (edge, j) = &self.edges[bond];
+        let even = edge.iter().cloned().filter(|i| sample[*i]).count() % 2 == 0;
+        if *j < 0.0 {
+            even
+        } else {
+            !even
+        }
     }
 }
 

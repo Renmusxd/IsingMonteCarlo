@@ -17,7 +17,7 @@ pub trait QMCAutoCorrelations: QMCStepper {
         sample_mapper: F,
     ) -> Vec<f64>
     where
-        F: Fn(Vec<bool>) -> Vec<f64>,
+        F: Fn(&Self, Vec<bool>) -> Vec<f64>,
     {
         let acc = Vec::with_capacity(timesteps / sampling_freq.unwrap_or(1) + 1);
         let (samples, _) = self.timesteps_measure(
@@ -32,7 +32,7 @@ pub trait QMCAutoCorrelations: QMCStepper {
         );
         let samples = samples
             .into_iter()
-            .map(sample_mapper)
+            .map(|s| sample_mapper(self, s))
             .collect::<Vec<Vec<f64>>>();
 
         if use_fft.unwrap_or(true) {
@@ -50,7 +50,7 @@ pub trait QMCAutoCorrelations: QMCStepper {
         sampling_freq: Option<usize>,
         use_fft: Option<bool>,
     ) -> Vec<f64> {
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |sample| {
+        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |_, sample| {
             sample
                 .into_iter()
                 .map(|b| if b { 1.0 } else { -1.0 })
@@ -63,8 +63,11 @@ impl<Q: QMCStepper> QMCAutoCorrelations for Q {}
 
 /// Calculate bond autocorrelations for a QMCAutoCorrelations
 pub trait QMCBondAutoCorrelations: QMCAutoCorrelations {
-    /// Get the edges which will be used for autocorrelation calculations.
-    fn get_edges(&self) -> &[(Vec<usize>, f64)];
+    /// Number of bonds
+    fn n_bonds(&self) -> usize;
+
+    /// Whether bond is satisfied.
+    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> bool;
 
     /// Calculate the autcorrelation calculations for bonds.
     fn calculate_bond_autocorrelation(
@@ -74,14 +77,11 @@ pub trait QMCBondAutoCorrelations: QMCAutoCorrelations {
         sampling_freq: Option<usize>,
         use_fft: Option<bool>,
     ) -> Vec<f64> {
-        let edges = self.get_edges().to_vec();
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |sample| {
-            edges
-                .iter()
-                .map(|(edge, j)| -> f64 {
-                    let even = edge.iter().cloned().filter(|i| sample[*i]).count() % 2 == 0;
-                    let b = if *j < 0.0 { even } else { !even };
-                    if b {
+        let nbonds = self.n_bonds();
+        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |s, sample| {
+            (0..nbonds)
+                .map(|bond| {
+                    if s.value_for_bond(bond, &sample) {
                         1.0
                     } else {
                         -1.0

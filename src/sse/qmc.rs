@@ -1,7 +1,6 @@
 use crate::graph::GraphState;
 use crate::sse::fast_ops::*;
 use crate::sse::qmc_traits::*;
-use itertools::Itertools;
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
@@ -30,6 +29,8 @@ where
     rng: Option<R>,
     has_cluster_edges: bool,
     breaks_ising_symmetry: bool,
+    do_loop_updates: bool,
+    offset: f64,
 }
 
 impl<
@@ -39,26 +40,38 @@ impl<
     > QMC<R, M, L>
 {
     /// Make a new QMC instance with nvars.
-    pub fn new(nvars: usize, rng: R) -> Self {
+    pub fn new(nvars: usize, rng: R, do_loop_updates: bool) -> Self {
+        Self::new_with_state(
+            nvars,
+            rng,
+            GraphState::make_random_spin_state(nvars),
+            do_loop_updates,
+        )
+    }
+
+    /// Make a new QMC instance with nvars.
+    pub fn new_with_state<I: Into<Vec<bool>>>(
+        nvars: usize,
+        rng: R,
+        state: I,
+        do_loop_updates: bool,
+    ) -> Self {
         Self {
             bonds: Vec::default(),
             diagonal_updater: Some(M::new(nvars)),
             loop_updater: None,
             cutoff: nvars,
-            state: Some(GraphState::make_random_spin_state(nvars)),
+            state: Some(state.into()),
             rng: Some(rng),
             has_cluster_edges: false,
             breaks_ising_symmetry: false,
+            do_loop_updates,
+            offset: 0.0,
         }
     }
 
     /// Add an interaction to the QMC instance.
-    pub fn add_interaction<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
-        &mut self,
-        mat: MAT,
-        vars: VAR,
-    ) -> Result<(), ()> {
-        let interaction = Interaction::new(mat, vars)?;
+    fn add_interaction(&mut self, interaction: Interaction) {
         // Check if this interaction can be used as a
         if is_valid_cluster_edge(interaction.is_constant(), interaction.vars.len()) {
             self.has_cluster_edges = true;
@@ -68,6 +81,28 @@ impl<
         }
 
         self.bonds.push(interaction);
+    }
+
+    /// Add an interaction to the QMC instance.
+    pub fn make_interaction<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        &mut self,
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<(), ()> {
+        let interaction = Interaction::new(mat, vars)?;
+        self.add_interaction(interaction);
+        Ok(())
+    }
+
+    /// Add an interaction to the QMC instance, adjust with a diagonal offset.
+    pub fn make_interaction_and_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        &mut self,
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<(), ()> {
+        let (interaction, offset) = Interaction::new_offset(mat, vars)?;
+        self.add_interaction(interaction);
+        self.offset += offset;
         Ok(())
     }
 
@@ -168,6 +203,21 @@ impl<
         self.state = Some(state);
         self.rng = Some(rng);
     }
+
+    /// Should the model do loop updates.
+    pub fn should_do_loop_update(&self) -> bool {
+        self.do_loop_updates
+    }
+
+    /// Should the model do cluster updates.
+    pub fn should_do_cluster_update(&self) -> bool {
+        !self.breaks_ising_symmetry && self.has_cluster_edges
+    }
+
+    /// Convert the state to a vector.
+    pub fn into_vec(self) -> Vec<bool> {
+        self.state.unwrap()
+    }
 }
 
 impl<R, M, L> QMCStepper for QMC<R, M, L>
@@ -177,7 +227,23 @@ where
     L: ClusterUpdater + Into<M>,
 {
     fn timestep(&mut self, beta: f64) -> &[bool] {
-        unimplemented!()
+        self.diagonal_update(beta);
+
+        if self.should_do_loop_update() {
+            self.loop_update();
+        }
+
+        if self.should_do_cluster_update() {
+            self.cluster_update().unwrap();
+        }
+
+        self.flip_free_bits();
+
+        self.state.as_ref().unwrap()
+    }
+
+    fn state_ref(&self) -> &[bool] {
+        self.state.as_ref().unwrap()
     }
 
     fn get_n(&self) -> usize {
@@ -189,7 +255,8 @@ where
     }
 
     fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64 {
-        unimplemented!()
+        let average_energy = -(average_n / beta);
+        average_energy + self.offset
     }
 }
 
@@ -203,21 +270,49 @@ struct Interaction {
 }
 
 impl Interaction {
+    fn new_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<(Self, f64), ()> {
+        let mut mat = mat.into();
+        let n = get_mat_var_size(mat.len())?;
+        let tn = 1 << n;
+        let min_diag = (0..tn)
+            .map(|indx| mat[(1 + tn) * indx])
+            .fold(f64::MAX, |acc, item| if acc < item { acc } else { item });
+        (0..tn).for_each(|indx| mat[(1 + tn) * indx] -= min_diag);
+        Self::new(mat, vars).map(|int| (int, min_diag))
+    }
+
     /// Make a new interaction
     fn new<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(mat: MAT, vars: VAR) -> Result<Self, ()> {
         let mat = mat.into();
-        let n = get_mat_var_size(mat.len())?;
-        let vars = vars.into();
-        if n != vars.len() {
+        if mat.iter().any(|m| *m < 0.) {
             Err(())
         } else {
-            let constant = mat.iter().all_equal();
-            Ok(Self {
-                mat,
-                n,
-                vars,
-                constant,
-            })
+            let n = get_mat_var_size(mat.len())?;
+            let vars = vars.into();
+            if n != vars.len() {
+                Err(())
+            } else {
+                let init: Option<f64> = None;
+                let constant_res = mat.iter().cloned().try_fold(init, |acc, item| match acc {
+                    None => Ok(Some(item)),
+                    Some(old) => {
+                        if (old - item).abs() < std::f64::EPSILON {
+                            Ok(Some(item))
+                        } else {
+                            Err(())
+                        }
+                    }
+                });
+                Ok(Self {
+                    mat,
+                    n,
+                    vars,
+                    constant: matches!(constant_res, Ok(_)),
+                })
+            }
         }
     }
 
@@ -232,15 +327,7 @@ impl Interaction {
         if inputs.len() != self.n || outputs.len() != self.n {
             Err(())
         } else {
-            let index = outputs
-                .iter()
-                .chain(inputs.iter())
-                .cloned()
-                .fold(0usize, |mut acc, b| {
-                    acc <<= 1;
-                    acc |= if b { 1 } else { 0 };
-                    acc
-                });
+            let index = Self::index_from_state(inputs, outputs);
             if index < self.mat.len() {
                 Ok(self.mat[index])
             } else {
@@ -254,7 +341,20 @@ impl Interaction {
         // Mask is 1s along the lower n+1 bits.
         let mask = !(std::usize::MAX << (self.n << 1));
         // Check that each index up to n is equal to its bit-flip counterpart (up to 2n).
-        (0..1usize << self.n).all(|indx| self.mat[indx] == self.mat[(!indx) & mask])
+        (0..1usize << self.n)
+            .all(|indx| (self.mat[indx] - self.mat[(!indx) & mask]).abs() < std::f64::EPSILON)
+    }
+
+    fn index_from_state(inputs: &[bool], outputs: &[bool]) -> usize {
+        outputs
+            .iter()
+            .chain(inputs.iter())
+            .cloned()
+            .fold(0usize, |mut acc, b| {
+                acc <<= 1;
+                acc |= if b { 1 } else { 0 };
+                acc
+            })
     }
 }
 

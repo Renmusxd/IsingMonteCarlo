@@ -4,16 +4,19 @@ use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::SimpleOpDiagonal;
 use rand::Rng;
 
+/// Allows QMC objects to swap internal state and op managers
+pub trait SwapManagers {
+    /// Checks if graphs can be swapped. Transitive/Commutative properties apply.
+    fn can_swap_graphs(&self, other: &Self) -> bool;
+
+    /// Swap op graphs with another struct.
+    fn swap_graphs(&mut self, other: &mut Self);
+}
+
 /// Allows retrieving states.
 pub trait StateGetter {
     /// Get the state of the instance.
     fn get_state_ref(&self) -> &[bool];
-}
-
-/// Allows setting states.
-pub trait StateSetter {
-    /// Set the state of the instance.
-    fn set_state(&mut self, state: Vec<bool>);
 }
 
 /// Allow getting the relative weight for a state compared to default.
@@ -27,6 +30,9 @@ pub trait OpWeights {
 
 /// Operator with a hamiltonian.
 pub trait OpHam {
+    /// Return true if the hamiltonians are equal.
+    fn ham_eq(&self, other: &Self) -> bool;
+
     /// Take an input state and output state for a given set of variables and bond, output the
     /// value of <a|H|b>.
     fn hamiltonian(
@@ -38,11 +44,26 @@ pub trait OpHam {
     ) -> f64;
 }
 
-impl<
-        R: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
-        L: ClusterUpdater + Into<M>,
-    > OpWeights for QMCIsingGraph<R, M, L>
+impl<R, M, L> SwapManagers for QMCIsingGraph<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    L: ClusterUpdater + Into<M>,
+{
+    fn can_swap_graphs(&self, other: &Self) -> bool {
+        self.can_swap_managers(other)
+    }
+
+    fn swap_graphs(&mut self, other: &mut Self) {
+        self.swap_manager_and_state(other)
+    }
+}
+
+impl<R, M, L> OpWeights for QMCIsingGraph<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    L: ClusterUpdater + Into<M>,
 {
     fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
     where
@@ -55,11 +76,16 @@ impl<
 }
 
 impl<
+        'a,
         R: Rng,
         M: OpContainerConstructor + DiagonalUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > OpHam for QMCIsingGraph<R, M, L>
 {
+    fn ham_eq(&self, other: &Self) -> bool {
+        self.make_haminfo() == other.make_haminfo()
+    }
+
     fn hamiltonian(
         &self,
         vars: &[usize],
@@ -80,72 +106,6 @@ impl<
 {
     fn get_state_ref(&self) -> &[bool] {
         self.state_ref()
-    }
-}
-
-impl<
-        R: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L> + StateSetter,
-        L: ClusterUpdater + Into<M>,
-    > StateSetter for QMCIsingGraph<R, M, L>
-{
-    fn set_state(&mut self, state: Vec<bool>) {
-        assert_eq!(self.state_ref().len(), state.len());
-        self.state_mut()
-            .iter_mut()
-            .zip(state.iter())
-            .for_each(|(o_s, n_s)| {
-                *o_s = *n_s;
-            });
-        // Ensure all ops are updated
-        self.get_manager_mut().set_state(state)
-    }
-}
-
-impl StateSetter for FastOps {
-    fn set_state(&mut self, state: Vec<bool>) {
-        let mut state = state;
-
-        let mut op_p = self.p_ends.map(|(p, _)| p);
-        while let Some(p) = op_p {
-            let op = self.get_node_mut(p).unwrap();
-
-            for i in 0..op.get_op_ref().get_vars().len() {
-                let opref = op.get_op_mut();
-                let v = opref.get_vars()[i];
-                let neq = opref.get_inputs()[i] != opref.get_outputs()[i];
-
-                let inputs = opref.get_inputs_mut();
-                inputs[i] = state[v];
-                if neq {
-                    state[v] = !state[v];
-                };
-                let outputs = opref.get_outputs_mut();
-                outputs[i] = state[v];
-            }
-            op_p = op.next_p;
-        }
-    }
-}
-
-impl StateSetter for SimpleOpDiagonal {
-    fn set_state(&mut self, state: Vec<bool>) {
-        self.ops
-            .iter_mut()
-            .filter(|op| op.is_some())
-            .map(|op| op.as_mut().unwrap())
-            .fold(state, |mut state, op| {
-                for i in 0..op.get_vars().len() {
-                    let v = op.get_vars()[i];
-                    let neq = op.get_inputs()[i] != op.get_outputs()[i];
-                    op.get_inputs_mut()[i] = state[v];
-                    if neq {
-                        state[v] = !state[v];
-                    };
-                    op.get_outputs_mut()[i] = state[v];
-                }
-                state
-            });
     }
 }
 
