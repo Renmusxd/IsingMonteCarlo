@@ -4,6 +4,8 @@ version = "2.0.1"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"
+documentation = "https://docs.rs/qmc/"
+repository = "https://github.com/Renmusxd/IsingMonteCarlo"
 license = "MIT"
 
 [features]
