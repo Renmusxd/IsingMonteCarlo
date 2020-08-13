@@ -269,6 +269,17 @@ impl<
         self.op_manager.as_mut().unwrap()
     }
 
+    /// Get internal energy offset.
+    pub fn get_offset(&self) -> f64 {
+        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
+        let twosite_energy_offset = self.twosite_energy_offset;
+        let singlesite_energy_offset = self.singlesite_energy_offset;
+        let nvars = self.vars.len();
+        let offset = twosite_energy_offset * self.edges.len() as f64
+            + singlesite_energy_offset * nvars as f64;
+        offset
+    }
+
     /// Check if two instances can safely swap managers and initial states
     pub fn can_swap_managers(&self, other: &Self) -> bool {
         self.edges == other.edges
@@ -304,6 +315,8 @@ impl<
             )
             .unwrap()
         });
+        qmc.increase_cutoff_to(self.cutoff);
+        qmc.set_diagonal_manager(self.op_manager.unwrap());
         qmc
     }
 }
@@ -381,12 +394,7 @@ where
 
     fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64 {
         let average_energy = -(average_n / beta);
-        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let nvars = self.vars.len();
-        let offset = twosite_energy_offset * self.edges.len() as f64
-            + singlesite_energy_offset * nvars as f64;
+        let offset = self.get_offset();
         average_energy + offset
     }
 }
@@ -506,13 +514,14 @@ where
         self.edges.len()
     }
 
-    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> bool {
+    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> f64 {
         let (edge, j) = &self.edges[bond];
         let even = edge.iter().cloned().filter(|i| sample[*i]).count() % 2 == 0;
-        if *j < 0.0 {
-            even
+        let val = if *j < 0.0 { even } else { !even };
+        if val {
+            1.0
         } else {
-            !even
+            -1.0
         }
     }
 }

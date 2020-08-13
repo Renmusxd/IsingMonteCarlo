@@ -1,9 +1,12 @@
 use crate::classical::graph::GraphState;
 use crate::sse::fast_ops::*;
 use crate::sse::qmc_traits::*;
+#[cfg(feature = "autocorrelations")]
+use crate::sse::QMCBondAutoCorrelations;
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
+use std::cmp::max;
 
 /// Default QMC implementation.
 pub type DefaultQMC<R> = QMC<R, FastOps, FastOps>;
@@ -31,6 +34,7 @@ where
     breaks_ising_symmetry: bool,
     do_loop_updates: bool,
     offset: f64,
+    non_const_diags: Vec<usize>,
 }
 
 impl<
@@ -67,6 +71,7 @@ impl<
             breaks_ising_symmetry: false,
             do_loop_updates,
             offset: 0.0,
+            non_const_diags: Vec::default(),
         }
     }
 
@@ -79,6 +84,9 @@ impl<
         if !interaction.sym_under_ising() {
             self.breaks_ising_symmetry = true;
         }
+        if !interaction.is_constant_diag() {
+            self.non_const_diags.push(self.bonds.len())
+        }
 
         self.bonds.push(interaction);
     }
@@ -88,7 +96,7 @@ impl<
         &mut self,
         mat: MAT,
         vars: VAR,
-    ) -> Result<(), ()> {
+    ) -> Result<(), String> {
         let interaction = Interaction::new(mat, vars)?;
         self.add_interaction(interaction);
         Ok(())
@@ -99,10 +107,10 @@ impl<
         &mut self,
         mat: MAT,
         vars: VAR,
-    ) -> Result<(), ()> {
+    ) -> Result<(), String> {
         let (interaction, offset) = Interaction::new_offset(mat, vars)?;
         self.add_interaction(interaction);
-        self.offset += offset;
+        self.offset -= offset;
         Ok(())
     }
 
@@ -111,7 +119,7 @@ impl<
         &mut self,
         mat: MAT,
         vars: VAR,
-    ) -> Result<(), ()> {
+    ) -> Result<(), String> {
         let interaction = Interaction::new_diagonal(mat, vars)?;
         self.add_interaction(interaction);
         Ok(())
@@ -122,10 +130,10 @@ impl<
         &mut self,
         mat: MAT,
         vars: VAR,
-    ) -> Result<(), ()> {
+    ) -> Result<(), String> {
         let (interaction, offset) = Interaction::new_diagonal_offset(mat, vars)?;
         self.add_interaction(interaction);
-        self.offset += offset;
+        self.offset -= offset;
         Ok(())
     }
 
@@ -157,6 +165,7 @@ impl<
             &ham,
             &mut rng,
         );
+        self.cutoff = max(self.cutoff, m.get_n() + m.get_n() / 2);
 
         self.state = Some(state);
         self.rng = Some(rng);
@@ -246,6 +255,43 @@ impl<
     pub fn into_vec(self) -> Vec<bool> {
         self.state.unwrap()
     }
+
+    /// Get the total energy offset.
+    pub fn get_offset(&self) -> f64 {
+        self.offset
+    }
+
+    /// Get a reference to the diagonal op manager.
+    pub fn get_diagonal_manager_ref(&mut self) -> &M {
+        let m = match (self.diagonal_updater.take(), self.loop_updater.take()) {
+            (Some(m), None) => m,
+            (None, Some(l)) => l.into(),
+            _ => unreachable!(),
+        };
+        self.diagonal_updater = Some(m);
+        self.diagonal_updater.as_ref().unwrap()
+    }
+
+    /// Get a reference to the loop op manager.
+    pub fn get_loop_manager_ref(&mut self) -> &L {
+        let l = match (self.diagonal_updater.take(), self.loop_updater.take()) {
+            (Some(m), None) => m.into(),
+            (None, Some(l)) => l,
+            _ => unreachable!(),
+        };
+        self.loop_updater = Some(l);
+        self.loop_updater.as_ref().unwrap()
+    }
+
+    /// Set the cutoff to a new value so long as that new value is larger than the old one.
+    pub fn increase_cutoff_to(&mut self, cutoff: usize) {
+        self.cutoff = max(self.cutoff, cutoff);
+    }
+
+    pub(crate) fn set_diagonal_manager(&mut self, manager: M) {
+        self.loop_updater = None;
+        self.diagonal_updater = Some(manager);
+    }
 }
 
 impl<R, M, L> QMCStepper for QMC<R, M, L>
@@ -288,7 +334,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 enum InteractionType {
     FULL(bool),
@@ -302,46 +348,66 @@ struct Interaction {
     mat: Vec<f64>,
     n: usize,
     vars: Vec<usize>,
+    constant_along_diagonal: bool,
 }
 
 impl Interaction {
     fn new_diagonal_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
         mat: MAT,
         vars: VAR,
-    ) -> Result<(Self, f64), ()> {
+    ) -> Result<(Self, f64), String> {
         let mut mat = mat.into();
         let min_diag = mat
             .iter()
             .fold(f64::MAX, |acc, item| if acc < *item { acc } else { *item });
         mat.iter_mut().for_each(|f| *f -= min_diag);
-        Self::new(mat, vars).map(|int| (int, min_diag))
+        Self::new_diagonal(mat, vars).map(|int| (int, min_diag))
     }
 
     fn new_diagonal<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
         mat: MAT,
         vars: VAR,
-    ) -> Result<Self, ()> {
+    ) -> Result<Self, String> {
         let mat = mat.into();
-        let n = get_power_of_two(mat.len())?;
+        let n = get_power_of_two(mat.len())
+            .map_err(|_| format!("Matrix size must be power of 2, was {}", mat.len()))?;
         let vars = vars.into();
+        let constant_along_diagonal = mat
+            .iter()
+            .cloned()
+            .try_fold(None, |acc, item| -> Result<Option<f64>, ()> {
+                match acc {
+                    None => Ok(Some(item)),
+                    Some(old) => {
+                        if (old - item).abs() < std::f64::EPSILON {
+                            Ok(Some(item))
+                        } else {
+                            Err(())
+                        }
+                    }
+                }
+            })
+            .is_ok();
         if n == vars.len() {
             Ok(Interaction {
                 interaction_type: InteractionType::DIAGONAL,
                 mat,
                 n,
                 vars,
+                constant_along_diagonal,
             })
         } else {
-            Err(())
+            Err(format!("Given {} vars, expected {}", vars.len(), n))
         }
     }
 
     fn new_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
         mat: MAT,
         vars: VAR,
-    ) -> Result<(Self, f64), ()> {
+    ) -> Result<(Self, f64), String> {
         let mut mat = mat.into();
-        let n = get_mat_var_size(mat.len())?;
+        let n = get_mat_var_size(mat.len())
+            .map_err(|_| format!("Matrix size must be power of 2, was {}", mat.len()))?;
         let tn = 1 << n;
         let min_diag = (0..tn)
             .map(|indx| mat[(1 + tn) * indx])
@@ -351,33 +417,57 @@ impl Interaction {
     }
 
     /// Make a new interaction
-    fn new<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(mat: MAT, vars: VAR) -> Result<Self, ()> {
+    fn new<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<Self, String> {
         let mat = mat.into();
         if mat.iter().any(|m| *m < 0.) {
-            Err(())
+            Err("Interaction contains negative weights".to_string())
         } else {
-            let n = get_mat_var_size(mat.len())?;
+            let n = get_mat_var_size(mat.len())
+                .map_err(|_| format!("Matrix size must be power of 2, was {}", mat.len()))?;
             let vars = vars.into();
             if n != vars.len() {
-                Err(())
+                Err(format!("Given {} vars, expected {}", vars.len(), n))
             } else {
-                let init: Option<f64> = None;
-                let constant_res = mat.iter().cloned().try_fold(init, |acc, item| match acc {
-                    None => Ok(Some(item)),
-                    Some(old) => {
-                        if (old - item).abs() < std::f64::EPSILON {
-                            Ok(Some(item))
-                        } else {
-                            Err(())
+                let constant = mat
+                    .iter()
+                    .cloned()
+                    .try_fold(None, |acc, item| -> Result<Option<f64>, ()> {
+                        match acc {
+                            None => Ok(Some(item)),
+                            Some(old) => {
+                                if (old - item).abs() < std::f64::EPSILON {
+                                    Ok(Some(item))
+                                } else {
+                                    Err(())
+                                }
+                            }
                         }
-                    }
-                });
-                let constant = matches!(constant_res, Ok(_));
+                    })
+                    .is_ok();
+                let constant_along_diagonal = (0..1 << n)
+                    .map(|row| mat[(row << n) + row])
+                    .try_fold(None, |acc, item| -> Result<Option<f64>, ()> {
+                        match acc {
+                            None => Ok(Some(item)),
+                            Some(old) => {
+                                if (old - item).abs() < std::f64::EPSILON {
+                                    Ok(Some(item))
+                                } else {
+                                    Err(())
+                                }
+                            }
+                        }
+                    })
+                    .is_ok();
                 Ok(Self {
                     interaction_type: InteractionType::FULL(constant),
                     mat,
                     n,
                     vars,
+                    constant_along_diagonal,
                 })
             }
         }
@@ -385,14 +475,24 @@ impl Interaction {
 
     /// Check if interaction is constant.
     fn is_constant(&self) -> bool {
-        matches!(self.interaction_type, InteractionType::FULL(true))
+        self.interaction_type == InteractionType::FULL(true)
+    }
+
+    /// Check if constant along diagonal.
+    fn is_constant_diag(&self) -> bool {
+        self.constant_along_diagonal
     }
 
     /// Index into the interaction matrix using inputs and outputs.
     /// Last bit is least significant, inputs are less significant than outputs.
-    fn at(&self, inputs: &[bool], outputs: &[bool]) -> Result<f64, ()> {
+    fn at(&self, inputs: &[bool], outputs: &[bool]) -> Result<f64, String> {
         if inputs.len() != self.n || outputs.len() != self.n {
-            Err(())
+            Err(format!(
+                "Interaction covers {} vars, given ({}/{})",
+                self.n,
+                inputs.len(),
+                outputs.len()
+            ))
         } else {
             match &self.interaction_type {
                 InteractionType::FULL(true) => Ok(self.mat[0]),
@@ -401,7 +501,10 @@ impl Interaction {
                     if index < self.mat.len() {
                         Ok(self.mat[index])
                     } else {
-                        Err(())
+                        Err(format!(
+                            "Index {} out of bounds for interaction with {} vars",
+                            index, self.n
+                        ))
                     }
                 }
                 InteractionType::DIAGONAL => {
@@ -410,7 +513,10 @@ impl Interaction {
                         if index < self.mat.len() {
                             Ok(self.mat[index])
                         } else {
-                            Err(())
+                            Err(format!(
+                                "Index {} out of bounds for interaction with {} vars",
+                                index, self.n
+                            ))
                         }
                     } else {
                         Ok(0.0)
@@ -420,25 +526,64 @@ impl Interaction {
         }
     }
 
+    fn at_diag_iter<It: Iterator<Item = bool>>(&self, it: It) -> Result<f64, String> {
+        let index = if self.constant_along_diagonal {
+            0 // Any index works.
+        } else {
+            match &self.interaction_type {
+                InteractionType::FULL(true) => 0, // Any index works.
+                InteractionType::DIAGONAL => Self::index_from_iter(it),
+                InteractionType::FULL(false) => {
+                    let index = Self::index_from_iter(it);
+                    (index << self.n) + index
+                }
+            }
+        };
+        if index < self.mat.len() {
+            Ok(self.mat[index])
+        } else {
+            Err(format!(
+                "Matrix is of length {}, index {} is invalid",
+                self.mat.len(),
+                index
+            ))
+        }
+    }
+
     /// Check if all entries are symmetric under global flip.
     fn sym_under_ising(&self) -> bool {
-        // Mask is 1s along the lower n+1 bits.
-        let mask = !(std::usize::MAX << (self.n << 1));
-        // Check that each index up to n is equal to its bit-flip counterpart (up to 2n).
-        (0..1usize << self.n)
-            .all(|indx| (self.mat[indx] - self.mat[(!indx) & mask]).abs() < std::f64::EPSILON)
+        match &self.interaction_type {
+            InteractionType::FULL(true) => true,
+            InteractionType::DIAGONAL if self.constant_along_diagonal => true,
+            InteractionType::FULL(false) => {
+                // Mask is 1s along the lower n+1 bits.
+                let mask = !(std::usize::MAX << (self.n << 1));
+                // Check that each index up to n is equal to its bit-flip counterpart (up to 2n).
+                (0..1usize << self.n).all(|indx| {
+                    (self.mat[indx] - self.mat[(!indx) & mask]).abs() < std::f64::EPSILON
+                })
+            }
+            InteractionType::DIAGONAL => {
+                // Mask is 1s along the lower n bits.
+                let mask = !(std::usize::MAX << self.n);
+                // Check that each index up to n is equal to its bit-flip counterpart (up to 2n).
+                (0..1usize << (self.n >> 1)).all(|indx| {
+                    (self.mat[indx] - self.mat[(!indx) & mask]).abs() < std::f64::EPSILON
+                })
+            }
+        }
     }
 
     fn index_from_state(inputs: &[bool], outputs: &[bool]) -> usize {
-        outputs
-            .iter()
-            .chain(inputs.iter())
-            .cloned()
-            .fold(0usize, |mut acc, b| {
-                acc <<= 1;
-                acc |= if b { 1 } else { 0 };
-                acc
-            })
+        Self::index_from_iter(outputs.iter().chain(inputs.iter()).cloned())
+    }
+
+    fn index_from_iter<It: Iterator<Item = bool>>(it: It) -> usize {
+        it.fold(0usize, |mut acc, b| {
+            acc <<= 1;
+            acc |= if b { 1 } else { 0 };
+            acc
+        })
     }
 }
 
@@ -458,6 +603,24 @@ fn get_power_of_two(n: usize) -> Result<usize, ()> {
         Ok(i)
     } else {
         Err(())
+    }
+}
+
+#[cfg(feature = "autocorrelations")]
+impl<R, M, L> QMCBondAutoCorrelations for QMC<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    L: ClusterUpdater + Into<M>,
+{
+    fn n_bonds(&self) -> usize {
+        self.non_const_diags.len()
+    }
+
+    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> f64 {
+        let bond = &self.bonds[self.non_const_diags[bond]];
+        bond.at_diag_iter(bond.vars.iter().map(|v| sample[*v]))
+            .unwrap()
     }
 }
 
@@ -490,7 +653,7 @@ mod qmc_tests {
     }
 
     #[test]
-    fn interaction_indexing_single() -> Result<(), ()> {
+    fn interaction_indexing_single() -> Result<(), String> {
         let interaction = Interaction {
             interaction_type: InteractionType::FULL(false),
             mat: vec![1.0, 2.0, 3.0, 4.0],
@@ -506,7 +669,7 @@ mod qmc_tests {
     }
 
     #[test]
-    fn interaction_indexing_double() -> Result<(), ()> {
+    fn interaction_indexing_double() -> Result<(), String> {
         let interaction = Interaction {
             interaction_type: InteractionType::FULL(false),
             mat: vec![
@@ -585,5 +748,27 @@ mod qmc_tests {
             vars: vec![0, 1],
         };
         assert!(interaction.sym_under_ising())
+    }
+
+    #[test]
+    fn ising_flip_check_true_larger_diagonal() {
+        let interaction = Interaction {
+            interaction_type: InteractionType::DIAGONAL,
+            mat: vec![1.0, 6.0, 6.0, 1.0],
+            n: 2,
+            vars: vec![0, 1],
+        };
+        assert!(interaction.sym_under_ising())
+    }
+
+    #[test]
+    fn ising_flip_check_false_larger_diagonal() {
+        let interaction = Interaction {
+            interaction_type: InteractionType::DIAGONAL,
+            mat: vec![1.0, 1.0, 6.0, 6.0],
+            n: 2,
+            vars: vec![0, 1],
+        };
+        assert!(!interaction.sym_under_ising())
     }
 }

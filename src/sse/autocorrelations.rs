@@ -57,6 +57,27 @@ pub trait QMCAutoCorrelations: QMCStepper {
                 .collect()
         })
     }
+
+    /// Take autocorrelations of products of spins.
+    fn calculate_spin_product_autocorrelation(
+        &mut self,
+        timesteps: usize,
+        beta: f64,
+        var_products: &[&[usize]],
+        sampling_freq: Option<usize>,
+        use_fft: Option<bool>,
+    ) -> Vec<f64> {
+        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |_, sample| {
+            var_products
+                .iter()
+                .map(|vs| {
+                    vs.iter()
+                        .map(|v| if sample[*v] { 1.0 } else { -1.0 })
+                        .product()
+                })
+                .collect()
+        })
+    }
 }
 
 impl<Q: QMCStepper> QMCAutoCorrelations for Q {}
@@ -67,7 +88,7 @@ pub trait QMCBondAutoCorrelations: QMCAutoCorrelations {
     fn n_bonds(&self) -> usize;
 
     /// Whether bond is satisfied.
-    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> bool;
+    fn value_for_bond(&self, bond: usize, sample: &[bool]) -> f64;
 
     /// Calculate the autcorrelation calculations for bonds.
     fn calculate_bond_autocorrelation(
@@ -80,13 +101,7 @@ pub trait QMCBondAutoCorrelations: QMCAutoCorrelations {
         let nbonds = self.n_bonds();
         self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |s, sample| {
             (0..nbonds)
-                .map(|bond| {
-                    if s.value_for_bond(bond, &sample) {
-                        1.0
-                    } else {
-                        -1.0
-                    }
-                })
+                .map(|bond| s.value_for_bond(bond, &sample))
                 .collect()
         })
     }

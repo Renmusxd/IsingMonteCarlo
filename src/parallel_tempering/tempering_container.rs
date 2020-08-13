@@ -455,6 +455,16 @@ pub mod rayon_tempering {
             ) -> Vec<Vec<f64>>
             where
                 F: Fn(&[bool], &Q) -> Vec<f64> + Copy + Send + Sync;
+
+            /// Take autocorrelations of products of spins.
+            fn calculate_spin_product_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                var_products: &[&[usize]],
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>>;
         }
 
         /// Allows parallel computation of bond variables.
@@ -493,6 +503,32 @@ pub mod rayon_tempering {
                             .iter()
                             .cloned()
                             .map(|b| if b { 1.0 } else { -1.0 })
+                            .collect()
+                    },
+                )
+            }
+
+            fn calculate_spin_product_autocorrelation(
+                &mut self,
+                timesteps: usize,
+                replica_swap_freq: Option<usize>,
+                var_products: &[&[usize]],
+                sampling_freq: Option<usize>,
+                use_fft: Option<bool>,
+            ) -> Vec<Vec<f64>> {
+                self.calculate_autocorrelation(
+                    timesteps,
+                    replica_swap_freq,
+                    sampling_freq,
+                    use_fft,
+                    |sample, _| {
+                        var_products
+                            .iter()
+                            .map(|vs| {
+                                vs.iter()
+                                    .map(|v| if sample[*v] { 1.0 } else { -1.0 })
+                                    .product()
+                            })
                             .collect()
                     },
                 )
@@ -559,13 +595,7 @@ pub mod rayon_tempering {
                     |sample, q| {
                         let nbonds = q.n_bonds();
                         (0..nbonds)
-                            .map(|bond| {
-                                if q.value_for_bond(bond, &sample) {
-                                    1.0
-                                } else {
-                                    -1.0
-                                }
-                            })
+                            .map(|bond| q.value_for_bond(bond, &sample))
                             .collect()
                     },
                 )

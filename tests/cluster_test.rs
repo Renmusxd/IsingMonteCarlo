@@ -1,7 +1,6 @@
-extern crate ising_monte_carlo;
 extern crate rand;
-use ising_monte_carlo::sse::qmc_traits::*;
-use ising_monte_carlo::sse::simple_ops::*;
+use qmc::sse::qmc_traits::*;
+use qmc::sse::simple_ops::*;
 use smallvec::smallvec;
 
 #[test]

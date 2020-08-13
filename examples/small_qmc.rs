@@ -1,5 +1,4 @@
-extern crate ising_monte_carlo;
-use ising_monte_carlo::sse::*;
+use qmc::sse::*;
 use rand::prelude::ThreadRng;
 
 fn main() {

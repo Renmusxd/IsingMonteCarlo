@@ -1,5 +1,5 @@
-use ising_monte_carlo::sse::qmc_ising::new_qmc;
-use ising_monte_carlo::sse::*;
+use qmc::sse::qmc_ising::new_qmc;
+use qmc::sse::*;
 
 fn main() {
     let side_len = 24;
