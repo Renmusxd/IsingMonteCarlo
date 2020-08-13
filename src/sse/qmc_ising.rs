@@ -1,8 +1,8 @@
-use crate::graph::{Edge, GraphState};
+use crate::classical::graph::{Edge, GraphState};
 #[cfg(feature = "autocorrelations")]
 pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc::QMC;
+use crate::sse::qmc_runner::QMC;
 pub use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
@@ -269,11 +269,13 @@ impl<
         self.op_manager.as_mut().unwrap()
     }
 
-    pub(crate) fn can_swap_managers(&self, other: &Self) -> bool {
+    /// Check if two instances can safely swap managers and initial states
+    pub fn can_swap_managers(&self, other: &Self) -> bool {
         self.edges == other.edges
     }
 
-    pub(crate) fn swap_manager_and_state(&mut self, other: &mut Self) {
+    /// Swap managers and initial states
+    pub fn swap_manager_and_state(&mut self, other: &mut Self) {
         let m = self.op_manager.take().unwrap();
         let s = self.state.take().unwrap();
         let om = other.op_manager.take().unwrap();
@@ -282,6 +284,27 @@ impl<
         self.state = Some(os);
         other.op_manager = Some(m);
         other.state = Some(s);
+    }
+
+    /// Convert to a generic QMC instance.
+    pub fn into_qmc(self) -> QMC<R, M, L> {
+        let nvars = self.get_nvars();
+        let rng = self.rng.unwrap();
+        let state = self.state.as_ref().unwrap().to_vec();
+        let mut qmc = QMC::<R, M, L>::new_with_state(nvars, rng, state, false);
+        let transverse = self.transverse;
+        self.edges.into_iter().for_each(|(vars, j)| {
+            qmc.make_diagonal_interaction_and_offset(vec![-j, j, j, -j], vars)
+                .unwrap()
+        });
+        (0..nvars).for_each(|var| {
+            qmc.make_interaction(
+                vec![transverse, transverse, transverse, transverse],
+                vec![var],
+            )
+            .unwrap()
+        });
+        qmc
     }
 }
 
@@ -468,26 +491,7 @@ where
     L: ClusterUpdater + Into<M>,
 {
     fn into(self) -> QMC<R, M, L> {
-        let nvars = self.get_nvars();
-        let rng = self.rng.unwrap();
-        let state = self.state.as_ref().unwrap().to_vec();
-        let mut qmc = QMC::<R, M, L>::new_with_state(nvars, rng, state, false);
-        let transverse = self.transverse;
-        self.edges.into_iter().for_each(|(vars, j)| {
-            qmc.make_interaction_and_offset(
-                vec![-j, 0., 0., 0., 0., j, 0., 0., 0., 0., j, 0., 0., 0., 0., -j],
-                vars,
-            )
-            .unwrap()
-        });
-        (0..nvars).for_each(|var| {
-            qmc.make_interaction(
-                vec![transverse, transverse, transverse, transverse],
-                vec![var],
-            )
-            .unwrap()
-        });
-        qmc
+        self.into_qmc()
     }
 }
 

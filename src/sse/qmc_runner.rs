@@ -1,4 +1,4 @@
-use crate::graph::GraphState;
+use crate::classical::graph::GraphState;
 use crate::sse::fast_ops::*;
 use crate::sse::qmc_traits::*;
 use rand::Rng;
@@ -106,6 +106,29 @@ impl<
         Ok(())
     }
 
+    /// Add an interaction to the QMC instance.
+    pub fn make_diagonal_interaction<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        &mut self,
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<(), ()> {
+        let interaction = Interaction::new_diagonal(mat, vars)?;
+        self.add_interaction(interaction);
+        Ok(())
+    }
+
+    /// Add an interaction to the QMC instance, adjust with a diagonal offset.
+    pub fn make_diagonal_interaction_and_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        &mut self,
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<(), ()> {
+        let (interaction, offset) = Interaction::new_diagonal_offset(mat, vars)?;
+        self.add_interaction(interaction);
+        self.offset += offset;
+        Ok(())
+    }
+
     /// Perform a single diagonal update.
     pub fn diagonal_update(&mut self, beta: f64) {
         let mut m = match (self.diagonal_updater.take(), self.loop_updater.take()) {
@@ -204,6 +227,11 @@ impl<
         self.rng = Some(rng);
     }
 
+    /// Change whether loop updates will be performed.
+    pub fn set_do_loop_updates(&mut self, do_loop_updates: bool) {
+        self.do_loop_updates = do_loop_updates;
+    }
+
     /// Should the model do loop updates.
     pub fn should_do_loop_update(&self) -> bool {
         self.do_loop_updates
@@ -262,14 +290,52 @@ where
 
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+enum InteractionType {
+    FULL(bool),
+    DIAGONAL,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 struct Interaction {
+    interaction_type: InteractionType,
     mat: Vec<f64>,
     n: usize,
     vars: Vec<usize>,
-    constant: bool,
 }
 
 impl Interaction {
+    fn new_diagonal_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<(Self, f64), ()> {
+        let mut mat = mat.into();
+        let min_diag = mat
+            .iter()
+            .fold(f64::MAX, |acc, item| if acc < *item { acc } else { *item });
+        mat.iter_mut().for_each(|f| *f -= min_diag);
+        Self::new(mat, vars).map(|int| (int, min_diag))
+    }
+
+    fn new_diagonal<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
+        mat: MAT,
+        vars: VAR,
+    ) -> Result<Self, ()> {
+        let mat = mat.into();
+        let n = get_power_of_two(mat.len())?;
+        let vars = vars.into();
+        if n == vars.len() {
+            Ok(Interaction {
+                interaction_type: InteractionType::DIAGONAL,
+                mat,
+                n,
+                vars,
+            })
+        } else {
+            Err(())
+        }
+    }
+
     fn new_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
         mat: MAT,
         vars: VAR,
@@ -306,11 +372,12 @@ impl Interaction {
                         }
                     }
                 });
+                let constant = matches!(constant_res, Ok(_));
                 Ok(Self {
+                    interaction_type: InteractionType::FULL(constant),
                     mat,
                     n,
                     vars,
-                    constant: matches!(constant_res, Ok(_)),
                 })
             }
         }
@@ -318,7 +385,7 @@ impl Interaction {
 
     /// Check if interaction is constant.
     fn is_constant(&self) -> bool {
-        self.constant
+        matches!(self.interaction_type, InteractionType::FULL(true))
     }
 
     /// Index into the interaction matrix using inputs and outputs.
@@ -327,11 +394,28 @@ impl Interaction {
         if inputs.len() != self.n || outputs.len() != self.n {
             Err(())
         } else {
-            let index = Self::index_from_state(inputs, outputs);
-            if index < self.mat.len() {
-                Ok(self.mat[index])
-            } else {
-                Err(())
+            match &self.interaction_type {
+                InteractionType::FULL(true) => Ok(self.mat[0]),
+                InteractionType::FULL(false) => {
+                    let index = Self::index_from_state(inputs, outputs);
+                    if index < self.mat.len() {
+                        Ok(self.mat[index])
+                    } else {
+                        Err(())
+                    }
+                }
+                InteractionType::DIAGONAL => {
+                    if inputs == outputs {
+                        let index = Self::index_from_state(inputs, &[]);
+                        if index < self.mat.len() {
+                            Ok(self.mat[index])
+                        } else {
+                            Err(())
+                        }
+                    } else {
+                        Ok(0.0)
+                    }
+                }
             }
         }
     }
@@ -359,15 +443,19 @@ impl Interaction {
 }
 
 fn get_mat_var_size(mat_len: usize) -> Result<usize, ()> {
+    get_power_of_two(mat_len).map(|i| i >> 1)
+}
+
+fn get_power_of_two(n: usize) -> Result<usize, ()> {
     let mut i = 0;
-    let mut x = mat_len >> 1;
+    let mut x = n >> 1;
     while x > 0 {
         x >>= 1;
         i += 1;
     }
-    // Now check that it's just 2^2n
-    if 1 << i == mat_len {
-        Ok(i >> 1)
+    // Now check that it's just 2^2i
+    if 1 << i == n {
+        Ok(i)
     } else {
         Err(())
     }
@@ -404,10 +492,10 @@ mod qmc_tests {
     #[test]
     fn interaction_indexing_single() -> Result<(), ()> {
         let interaction = Interaction {
+            interaction_type: InteractionType::FULL(false),
             mat: vec![1.0, 2.0, 3.0, 4.0],
             n: 1,
             vars: vec![0],
-            constant: false,
         };
 
         assert_eq!(interaction.at(&[false], &[false])?, 1.0);
@@ -420,12 +508,12 @@ mod qmc_tests {
     #[test]
     fn interaction_indexing_double() -> Result<(), ()> {
         let interaction = Interaction {
+            interaction_type: InteractionType::FULL(false),
             mat: vec![
                 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10., 11., 12., 13., 14., 15., 16.,
             ],
             n: 2,
             vars: vec![0, 1],
-            constant: false,
         };
 
         assert_eq!(interaction.at(&[false, false], &[false, false])?, 1.0);
@@ -453,10 +541,10 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_false() {
         let interaction = Interaction {
+            interaction_type: InteractionType::FULL(false),
             mat: vec![1.0, 2.0, 3.0, 4.0],
             n: 1,
             vars: vec![0],
-            constant: false,
         };
 
         assert!(!interaction.sym_under_ising())
@@ -465,10 +553,10 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_false_harder() {
         let interaction = Interaction {
+            interaction_type: InteractionType::FULL(false),
             mat: vec![1.0, 2.0, 2.0, 2.0],
             n: 1,
             vars: vec![0],
-            constant: false,
         };
 
         assert!(!interaction.sym_under_ising())
@@ -477,10 +565,10 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_true() {
         let interaction = Interaction {
+            interaction_type: InteractionType::FULL(false),
             mat: vec![1.0, 2.0, 2.0, 1.0],
             n: 1,
             vars: vec![0],
-            constant: false,
         };
 
         assert!(interaction.sym_under_ising())
@@ -489,12 +577,12 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_true_larger() {
         let interaction = Interaction {
+            interaction_type: InteractionType::FULL(false),
             mat: vec![
                 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0,
             ],
             n: 2,
             vars: vec![0, 1],
-            constant: false,
         };
         assert!(interaction.sym_under_ising())
     }

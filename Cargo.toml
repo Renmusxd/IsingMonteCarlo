@@ -1,5 +1,5 @@
 [package]
-name = "ising_monte_carlo"
+name = "qmc"
 version = "2.0.0"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"

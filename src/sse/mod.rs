@@ -1,7 +1,7 @@
 //! A module with various QMC algorithms and traits.
 
-pub use qmc::DefaultQMC;
 pub use qmc_ising::DefaultQMCIsingGraph;
+pub use qmc_runner::DefaultQMC;
 pub use qmc_traits::*;
 
 /// An arena for managing memory efficiently
@@ -15,7 +15,7 @@ pub mod autocorrelations;
 pub mod fast_ops;
 
 /// A generic QMC framework.
-pub mod qmc;
+pub mod qmc_runner;
 
 /// A QMC graph for easy TFIM.
 pub mod qmc_ising;

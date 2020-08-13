@@ -17,7 +17,7 @@
 #![cfg_attr(feature = "const_generics", feature(const_generics))]
 
 /// Classical monte carlo.
-pub mod graph;
+pub mod classical;
 /// Utilities for parallel tempering.
 #[cfg(feature = "tempering")]
 pub mod parallel_tempering;
