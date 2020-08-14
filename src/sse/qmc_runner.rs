@@ -283,15 +283,72 @@ impl<
         self.loop_updater.as_ref().unwrap()
     }
 
+    /// Get whichever manager ref is convenient.
+    pub fn get_manager_ref(&self) -> ManagerRef<M, L> {
+        match (self.diagonal_updater.as_ref(), self.loop_updater.as_ref()) {
+            (Some(a), None) => ManagerRef::DIAGONAL(a),
+            (None, Some(b)) => ManagerRef::LOOPER(b),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Get the cutoff.
+    pub fn get_cutoff(&self) -> usize {
+        self.cutoff
+    }
+
+    /// Set the cutoff to a new value
+    pub fn set_cutoff(&mut self, cutoff: usize) {
+        self.cutoff = cutoff;
+        match (self.diagonal_updater.as_mut(), self.loop_updater.as_mut()) {
+            (Some(a), None) => a.set_cutoff(cutoff),
+            (None, Some(b)) => b.set_cutoff(cutoff),
+            _ => unreachable!(),
+        }
+    }
+
     /// Set the cutoff to a new value so long as that new value is larger than the old one.
     pub fn increase_cutoff_to(&mut self, cutoff: usize) {
-        self.cutoff = max(self.cutoff, cutoff);
+        self.set_cutoff(max(self.cutoff, cutoff));
     }
 
     pub(crate) fn set_diagonal_manager(&mut self, manager: M) {
         self.loop_updater = None;
         self.diagonal_updater = Some(manager);
     }
+
+    /// Check if two instances can safely swap managers and initial states
+    pub fn can_swap_managers(&self, other: &Self) -> bool {
+        self.bonds == other.bonds
+    }
+
+    /// Swap managers and initial states
+    pub fn swap_manager_and_state(&mut self, other: &mut Self) {
+        let m = self.diagonal_updater.take();
+        let l = self.loop_updater.take();
+        let s = self.state.take();
+
+        let om = other.diagonal_updater.take();
+        let ol = other.loop_updater.take();
+        let os = other.state.take();
+
+        self.diagonal_updater = om;
+        self.loop_updater = ol;
+        self.state = os;
+
+        other.diagonal_updater = m;
+        other.loop_updater = l;
+        other.state = s;
+    }
+}
+
+/// Reference to one of either manager refs
+#[derive(Debug)]
+pub enum ManagerRef<'a, 'b, M, L> {
+    /// Diagonal ref
+    DIAGONAL(&'a M),
+    /// Offdiagonal ref
+    LOOPER(&'b L),
 }
 
 impl<R, M, L> QMCStepper for QMC<R, M, L>
@@ -350,6 +407,22 @@ struct Interaction {
     vars: Vec<usize>,
     constant_along_diagonal: bool,
 }
+
+impl PartialEq for Interaction {
+    fn eq(&self, other: &Self) -> bool {
+        self.interaction_type == other.interaction_type
+            && self.n == other.n
+            && self.vars == other.vars
+            && self.constant_along_diagonal == other.constant_along_diagonal
+            && self
+                .mat
+                .iter()
+                .zip(other.mat.iter())
+                .all(|(a, b)| (a - b).abs() < std::f64::EPSILON)
+    }
+}
+
+impl Eq for Interaction {}
 
 impl Interaction {
     fn new_diagonal_offset<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
@@ -526,6 +599,7 @@ impl Interaction {
         }
     }
 
+    #[cfg(feature = "autocorrelations")]
     fn at_diag_iter<It: Iterator<Item = bool>>(&self, it: It) -> Result<f64, String> {
         let index = if self.constant_along_diagonal {
             0 // Any index works.
@@ -659,6 +733,7 @@ mod qmc_tests {
             mat: vec![1.0, 2.0, 3.0, 4.0],
             n: 1,
             vars: vec![0],
+            constant_along_diagonal: false,
         };
 
         assert_eq!(interaction.at(&[false], &[false])?, 1.0);
@@ -677,6 +752,7 @@ mod qmc_tests {
             ],
             n: 2,
             vars: vec![0, 1],
+            constant_along_diagonal: false,
         };
 
         assert_eq!(interaction.at(&[false, false], &[false, false])?, 1.0);
@@ -708,6 +784,7 @@ mod qmc_tests {
             mat: vec![1.0, 2.0, 3.0, 4.0],
             n: 1,
             vars: vec![0],
+            constant_along_diagonal: false,
         };
 
         assert!(!interaction.sym_under_ising())
@@ -720,6 +797,7 @@ mod qmc_tests {
             mat: vec![1.0, 2.0, 2.0, 2.0],
             n: 1,
             vars: vec![0],
+            constant_along_diagonal: false,
         };
 
         assert!(!interaction.sym_under_ising())
@@ -732,6 +810,7 @@ mod qmc_tests {
             mat: vec![1.0, 2.0, 2.0, 1.0],
             n: 1,
             vars: vec![0],
+            constant_along_diagonal: false,
         };
 
         assert!(interaction.sym_under_ising())
@@ -746,6 +825,7 @@ mod qmc_tests {
             ],
             n: 2,
             vars: vec![0, 1],
+            constant_along_diagonal: false,
         };
         assert!(interaction.sym_under_ising())
     }
@@ -757,6 +837,7 @@ mod qmc_tests {
             mat: vec![1.0, 6.0, 6.0, 1.0],
             n: 2,
             vars: vec![0, 1],
+            constant_along_diagonal: false,
         };
         assert!(interaction.sym_under_ising())
     }
@@ -768,6 +849,7 @@ mod qmc_tests {
             mat: vec![1.0, 1.0, 6.0, 6.0],
             n: 2,
             vars: vec![0, 1],
+            constant_along_diagonal: false,
         };
         assert!(!interaction.sym_under_ising())
     }

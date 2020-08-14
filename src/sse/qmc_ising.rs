@@ -254,6 +254,12 @@ impl<
         self.cutoff
     }
 
+    /// Set the cutoff.
+    pub fn set_cutoff(&mut self, cutoff: usize) {
+        self.cutoff = cutoff;
+        self.op_manager.as_mut().unwrap().set_cutoff(cutoff)
+    }
+
     /// Get the number of ops in graph.
     pub fn get_n(&self) -> usize {
         self.op_manager.as_ref().unwrap().get_n()

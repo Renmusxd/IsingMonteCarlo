@@ -1,5 +1,7 @@
 use crate::sse::fast_ops::FastOps;
 use crate::sse::qmc_ising::QMCIsingGraph;
+use crate::sse::qmc_runner::ManagerRef;
+use crate::sse::qmc_runner::QMC;
 use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::SimpleOpDiagonal;
 use rand::Rng;
@@ -11,6 +13,12 @@ pub trait SwapManagers {
 
     /// Swap op graphs with another struct.
     fn swap_graphs(&mut self, other: &mut Self);
+
+    /// Get the cutoff of the manager.
+    fn get_op_cutoff(&self) -> usize;
+
+    /// Set the cutoff of the manager.
+    fn set_op_cutoff(&mut self, cutoff: usize);
 }
 
 /// Allows retrieving states.
@@ -44,6 +52,47 @@ pub trait OpHam {
     ) -> f64;
 }
 
+impl<R, M, L> OpWeights for QMC<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    L: ClusterUpdater + Into<M> + OpWeights,
+{
+    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
+    where
+        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
+    {
+        match self.get_manager_ref() {
+            ManagerRef::DIAGONAL(a) => a.relative_weight_for_hamiltonians(h1, h2),
+            ManagerRef::LOOPER(b) => b.relative_weight_for_hamiltonians(h1, h2),
+        }
+    }
+}
+
+impl<R, M, L> SwapManagers for QMC<R, M, L>
+where
+    R: Rng,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    L: ClusterUpdater + Into<M>,
+{
+    fn can_swap_graphs(&self, other: &Self) -> bool {
+        self.can_swap_managers(other)
+    }
+
+    fn swap_graphs(&mut self, other: &mut Self) {
+        self.swap_manager_and_state(other)
+    }
+
+    fn get_op_cutoff(&self) -> usize {
+        self.get_cutoff()
+    }
+
+    fn set_op_cutoff(&mut self, cutoff: usize) {
+        self.set_cutoff(cutoff);
+    }
+}
+
 impl<R, M, L> SwapManagers for QMCIsingGraph<R, M, L>
 where
     R: Rng,
@@ -56,6 +105,14 @@ where
 
     fn swap_graphs(&mut self, other: &mut Self) {
         self.swap_manager_and_state(other)
+    }
+
+    fn get_op_cutoff(&self) -> usize {
+        self.get_cutoff()
+    }
+
+    fn set_op_cutoff(&mut self, cutoff: usize) {
+        self.set_cutoff(cutoff);
     }
 }
 

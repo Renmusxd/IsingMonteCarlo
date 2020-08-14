@@ -120,13 +120,22 @@ where
 
     /// Perform a tempering step.
     pub fn tempering_step(&mut self) {
+        if self.graphs.len() <= 1 {
+            return;
+        }
         if self.graph_ham_eq_a.is_none() || self.graph_ham_eq_b.is_none() {
             self.make_ham_equalities()
         }
 
-        if self.graphs.len() <= 1 {
-            return;
-        }
+        let max_cutoff = self
+            .graphs
+            .iter()
+            .map(|(g, _)| g.get_op_cutoff())
+            .max()
+            .unwrap();
+        self.graphs
+            .iter_mut()
+            .for_each(|(g, _)| g.set_op_cutoff(max_cutoff));
         let mut rng = self.rng.take().unwrap();
 
         let hameqs = self.graph_ham_eq_a.take().unwrap();

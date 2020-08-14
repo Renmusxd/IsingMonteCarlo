@@ -547,7 +547,7 @@ enum LoopResult {
     Iterate(usize, Leg),
 }
 
-/// Apply loop update logic (call `make_loop_update` instead)
+/// Apply loop update logic
 fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
     l: &mut L,
     initial_op_and_leg: (usize, Leg),
