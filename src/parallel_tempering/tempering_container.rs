@@ -264,7 +264,7 @@ where
     let (ga, ba) = graph_beta_a;
     let (gb, bb) = graph_beta_b;
 
-    let rel_h_weight = if evaluate_hamiltonians {
+    let rel_h_weight = if !evaluate_hamiltonians {
         1.0
     } else {
         let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
@@ -340,9 +340,22 @@ pub mod rayon_tempering {
         }
 
         fn parallel_tempering_step(&mut self) {
+            if self.graphs.is_empty() {
+                return;
+            }
             if self.graph_ham_eq_a.is_none() || self.graph_ham_eq_b.is_none() {
                 self.make_ham_equalities()
             }
+
+            let max_cutoff = self
+                .graphs
+                .par_iter()
+                .map(|(g, _)| g.get_op_cutoff())
+                .max()
+                .unwrap();
+            self.graphs
+                .par_iter_mut()
+                .for_each(|(g, _)| g.set_op_cutoff(max_cutoff));
 
             let mut rng = self.rng.take().unwrap();
 
