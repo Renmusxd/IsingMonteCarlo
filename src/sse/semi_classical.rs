@@ -28,114 +28,119 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             aligned == p_aligned
         };
 
-        // Find the cluster.
+        // Flip a single edge, flipping more is difficult while preserving detailed balance.
+        let bond = rng.gen_range(0, edges.n_bonds());
+        let (a, b) = edges.vars_for_bond(bond);
         let mut boundary_alloc = self.get_boundary_alloc();
-        let cluster_size = grow_classical_cluster(
+        let skip_var = |var| self.var_ever_flips(var);
+        boundary_alloc.extend([(a, skip_var(a)), (b, skip_var(b))].iter());
+        let cluster_size = add_vars(
             edges,
             is_sat,
+            skip_var,
             (&mut sat_set, &mut broken_set),
             &mut in_cluster,
             &mut boundary_alloc,
-            |var| self.var_ever_flips(var),
-            &mut rng,
         );
         self.return_boundary_alloc(boundary_alloc);
 
-        // Flip the cluster.
-        state.iter_mut().zip(in_cluster.iter()).for_each(|(s, c)| {
-            if *c {
-                *s = !*s
-            }
-        });
+        // If this can be flipped, then set the right cluster size and do work, otherwise set to 0.
+        let cluster_size = if sat_set.len() == broken_set.len() {
+            // Flip the cluster.
+            state.iter_mut().zip(in_cluster.iter()).for_each(|(s, c)| {
+                if *c {
+                    *s = !*s
+                }
+            });
 
-        // Move ops around the border.
-        self.mutate_ps(
-            self.get_cutoff(),
-            (state, rng),
-            |_, op, (state, mut rng)| {
-                let new_op = if let Some(op) = op {
-                    // Check input.
-                    debug_assert!(op.get_vars().iter().zip(op.get_inputs().iter()).all(
-                        |(v, b)| {
-                            if in_cluster[*v] {
-                                state[*v] != *b
-                            } else {
-                                state[*v] == *b
+            // Move ops around the border.
+            self.mutate_ps(
+                self.get_cutoff(),
+                (state, rng),
+                |_, op, (state, mut rng)| {
+                    let new_op = if let Some(op) = op {
+                        // Check input.
+                        debug_assert!(op.get_vars().iter().zip(op.get_inputs().iter()).all(
+                            |(v, b)| {
+                                if in_cluster[*v] {
+                                    state[*v] != *b
+                                } else {
+                                    state[*v] == *b
+                                }
                             }
-                        }
-                    ));
+                        ));
 
-                    // Now, if the op has no vars in the cluster ignore it. If all are in the
-                    // cluster then just flip inputs and outputs, if mixed then see later.
-                    let (all_in, all_out) =
-                        op.get_vars().iter().cloned().map(|v| in_cluster[v]).fold(
-                            (true, true),
-                            |(all_true, all_false), b| {
-                                let all_true = all_true & b;
-                                let all_false = all_false & !b;
-                                (all_true, all_false)
-                            },
-                        );
-                    if all_out {
-                        // Set the state. (could be offdiagonal)
-                        op.get_vars()
-                            .iter()
-                            .zip(op.get_outputs().iter())
-                            .for_each(|(v, b)| {
-                                state[*v] = *b;
-                            });
-                        None
-                    } else if all_in {
-                        // Flip all inputs, otherwise the same.
-                        let vars = Self::Op::make_vars(op.get_vars().iter().cloned());
-                        let inputs = Self::Op::make_substate(op.get_inputs().iter().map(|b| !*b));
-                        let outputs = Self::Op::make_substate(op.get_outputs().iter().map(|b| !*b));
-                        let new_op = Self::Op::offdiagonal(
-                            vars,
-                            op.get_bond(),
-                            inputs,
-                            outputs,
-                            op.is_constant(),
-                        );
-                        // Set the state. (could be offdiagonal)
-                        new_op
-                            .get_vars()
-                            .iter()
-                            .zip(new_op.get_outputs().iter())
-                            .for_each(|(v, b)| {
-                                state[*v] = *b;
-                            });
-                        Some(Some(new_op))
-                    } else {
-                        // We are only covering 2-variable edges.
-                        debug_assert_eq!(op.get_vars().len(), 2);
-                        // We only move diagonal ops.
-                        debug_assert!(op.is_diagonal());
-                        let bond = op.get_bond();
-                        let new_bond = if sat_set.contains(&bond) {
-                            broken_set.get_random(&mut rng).unwrap()
-                        } else {
-                            debug_assert!(
-                                broken_set.contains(&bond),
-                                "Bond failed to be broken or not broken: {}",
-                                bond
+                        // Now, if the op has no vars in the cluster ignore it. If all are in the
+                        // cluster then just flip inputs and outputs, if mixed then see later.
+                        let (all_in, all_out) =
+                            op.get_vars().iter().cloned().map(|v| in_cluster[v]).fold(
+                                (true, true),
+                                |(all_true, all_false), b| {
+                                    let all_true = all_true & b;
+                                    let all_false = all_false & !b;
+                                    (all_true, all_false)
+                                },
                             );
-                            sat_set.get_random(&mut rng).unwrap()
-                        };
-                        let (new_a, new_b) = edges.vars_for_bond(*new_bond);
-                        let vars = Self::Op::make_vars([new_a, new_b].iter().cloned());
-                        let state =
-                            Self::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
-                        let new_op = Self::Op::diagonal(vars, *new_bond, state, op.is_constant());
+                        if all_out {
+                            // Set the state. (could be offdiagonal)
+                            op.get_vars()
+                                .iter()
+                                .zip(op.get_outputs().iter())
+                                .for_each(|(v, b)| {
+                                    state[*v] = *b;
+                                });
+                            None
+                        } else if all_in {
+                            // Flip all inputs, otherwise the same.
+                            let mut new_op = op.clone();
+                            let (ins, outs) = new_op.get_mut_inputs_and_outputs();
+                            ins.iter_mut().for_each(|b| *b = !*b);
+                            outs.iter_mut().for_each(|b| *b = !*b);
 
-                        Some(Some(new_op))
-                    }
-                } else {
-                    None
-                };
-                (new_op, (state, rng))
-            },
-        );
+                            // Set the state. (could be offdiagonal)
+                            new_op
+                                .get_vars()
+                                .iter()
+                                .zip(new_op.get_outputs().iter())
+                                .for_each(|(v, b)| {
+                                    state[*v] = *b;
+                                });
+                            Some(Some(new_op))
+                        } else {
+                            // We are only covering 2-variable edges.
+                            debug_assert_eq!(op.get_vars().len(), 2);
+                            // We only move diagonal ops.
+                            debug_assert!(op.is_diagonal());
+                            let bond = op.get_bond();
+                            let new_bond = if sat_set.contains(&bond) {
+                                broken_set.get_random(&mut rng).unwrap()
+                            } else {
+                                debug_assert!(
+                                    broken_set.contains(&bond),
+                                    "Bond failed to be broken or not broken: {}",
+                                    bond
+                                );
+                                sat_set.get_random(&mut rng).unwrap()
+                            };
+                            let (new_a, new_b) = edges.vars_for_bond(*new_bond);
+                            let vars = Self::Op::make_vars([new_a, new_b].iter().cloned());
+                            let state =
+                                Self::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
+                            let new_op =
+                                Self::Op::diagonal(vars, *new_bond, state, op.is_constant());
+
+                            Some(Some(new_op))
+                        }
+                    } else {
+                        None
+                    };
+                    (new_op, (state, rng))
+                },
+            );
+            cluster_size
+        } else {
+            0
+        };
 
         self.return_sat_alloc(sat_set);
         self.return_broken_alloc(broken_set);
@@ -177,92 +182,6 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
 
     /// Called after an update.
     fn post_semiclassical_update_hook(&mut self) {}
-}
-
-fn grow_classical_cluster<EN: EdgeNavigator, R: Rng, F, G>(
-    edges: &EN,
-    is_sat: F,
-    sets: (&mut BondContainer<usize>, &mut BondContainer<usize>),
-    in_cluster: &mut [bool],
-    recursive_search_alloc: &mut Vec<(usize, bool)>,
-    skip_var: G,
-    mut rng: R,
-) -> usize
-where
-    F: Fn(usize) -> bool + Copy,
-    G: Fn(usize) -> bool + Copy,
-{
-    let nvars = in_cluster.len();
-    let (sat_set, broken_set) = sets;
-    let starting_var = rng.gen_range(0, nvars);
-
-    let mut cluster_size = add_var(
-        edges,
-        is_sat,
-        skip_var,
-        (sat_set, broken_set),
-        in_cluster,
-        starting_var,
-        recursive_search_alloc,
-    );
-
-    while sat_set.len() != broken_set.len() {
-        let bond = if sat_set.len() > broken_set.len() {
-            sat_set.pop_random(&mut rng).unwrap()
-        } else {
-            broken_set.pop_random(&mut rng).unwrap()
-        };
-        let (a, b) = edges.vars_for_bond(bond);
-
-        cluster_size += match (in_cluster[a], in_cluster[b]) {
-            (true, false) => add_var(
-                edges,
-                is_sat,
-                skip_var,
-                (sat_set, broken_set),
-                in_cluster,
-                b,
-                recursive_search_alloc,
-            ),
-            (false, true) => add_var(
-                edges,
-                is_sat,
-                skip_var,
-                (sat_set, broken_set),
-                in_cluster,
-                a,
-                recursive_search_alloc,
-            ),
-            _ => unreachable!(),
-        }
-    }
-    cluster_size
-}
-
-fn add_var<EN, F, G>(
-    edges: &EN,
-    is_sat: F,
-    skip_var: G,
-    sets: (&mut BondContainer<usize>, &mut BondContainer<usize>),
-    in_cluster: &mut [bool],
-    var: usize,
-    recursive_search_alloc: &mut Vec<(usize, bool)>,
-) -> usize
-where
-    EN: EdgeNavigator,
-    F: Fn(usize) -> bool,
-    G: Fn(usize) -> bool,
-{
-    let skip_a = skip_var(var);
-    recursive_search_alloc.push((var, skip_a));
-    add_vars(
-        edges,
-        is_sat,
-        skip_var,
-        sets,
-        in_cluster,
-        recursive_search_alloc,
-    )
 }
 
 fn add_vars<EN, F, G>(
@@ -310,6 +229,8 @@ where
 
 /// A struct which allows navigation around the variables in a model.
 pub trait EdgeNavigator {
+    /// Number of bonds
+    fn n_bonds(&self) -> usize;
     /// Get the bonds attached to this variable.
     fn bonds_for_var(&self, var: usize) -> &[usize];
     /// Get the variables associated with this bond.
@@ -454,163 +375,5 @@ mod sc_tests {
             _ => false,
         };
         assert!(res)
-    }
-
-    struct TestEdges {
-        bonds: Vec<Vec<usize>>,
-        edges: Vec<(usize, usize, bool)>,
-    }
-
-    impl TestEdges {
-        fn new(nvars: usize, edges: &[(usize, usize, bool)]) -> Self {
-            let mut edge_lookup = vec![vec![]; nvars];
-            edges
-                .iter()
-                .cloned()
-                .enumerate()
-                .for_each(|(bond, (a, b, _))| {
-                    edge_lookup[a].push(bond);
-                    edge_lookup[b].push(bond);
-                });
-            Self {
-                bonds: edge_lookup,
-                edges: edges.to_vec(),
-            }
-        }
-    }
-
-    impl EdgeNavigator for TestEdges {
-        fn bonds_for_var(&self, var: usize) -> &[usize] {
-            &self.bonds[var]
-        }
-
-        fn vars_for_bond(&self, bond: usize) -> (usize, usize) {
-            (self.edges[bond].0, self.edges[bond].1)
-        }
-
-        fn bond_prefers_aligned(&self, bond: usize) -> bool {
-            self.edges[bond].2
-        }
-    }
-
-    fn is_sat<EN: EdgeNavigator>(edges: &EN, state: &[bool], bond: usize) -> bool {
-        let (a, b) = edges.vars_for_bond(bond);
-        let p_aligned = edges.bond_prefers_aligned(bond);
-        let aligned = state[a] == state[b];
-        aligned == p_aligned
-    }
-
-    #[test]
-    fn singlevar_test() {
-        let edges = TestEdges::new(1, &[]);
-        let state = vec![false];
-        let mut in_cluster = vec![false];
-        let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
-        grow_classical_cluster(
-            &edges,
-            |bond| is_sat(&edges, &state, bond),
-            (&mut a, &mut b),
-            &mut in_cluster,
-            &mut Vec::default(),
-            |_| false,
-            SmallRng::seed_from_u64(1234),
-        );
-        assert_eq!(in_cluster, vec![true])
-    }
-
-    #[test]
-    fn twovar_test_whole() {
-        let edges = TestEdges::new(2, &[(0, 1, true)]);
-        let state = vec![false, false];
-        let mut in_cluster = vec![false, false];
-        let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
-        grow_classical_cluster(
-            &edges,
-            |bond| is_sat(&edges, &state, bond),
-            (&mut a, &mut b),
-            &mut in_cluster,
-            &mut Vec::default(),
-            |_| false,
-            SmallRng::seed_from_u64(1234),
-        );
-        assert_eq!(in_cluster, vec![true, true])
-    }
-
-    #[test]
-    fn threevar_test_halfa() {
-        for i in 0..1024 {
-            let edges = TestEdges::new(3, &[(0, 1, true), (0, 2, false), (1, 2, false)]);
-            let state = vec![false, false, false];
-            let mut in_cluster = vec![false, false, false];
-            let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
-            grow_classical_cluster(
-                &edges,
-                |bond| is_sat(&edges, &state, bond),
-                (&mut a, &mut b),
-                &mut in_cluster,
-                &mut Vec::default(),
-                |_| false,
-                SmallRng::seed_from_u64(i),
-            );
-            let a = match in_cluster.as_slice() {
-                &[true, false, false] => true,
-                &[false, true, false] => true,
-                &[false, true, true] => true,
-                &[true, false, true] => true,
-                _ => false,
-            };
-            assert!(a)
-        }
-    }
-
-    #[test]
-    fn threevar_test_halfb() {
-        for i in 0..1024 {
-            let edges = TestEdges::new(3, &[(0, 1, false), (0, 2, true), (1, 2, false)]);
-            let state = vec![false, false, false];
-            let mut in_cluster = vec![false, false, false];
-            let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
-            grow_classical_cluster(
-                &edges,
-                |bond| is_sat(&edges, &state, bond),
-                (&mut a, &mut b),
-                &mut in_cluster,
-                &mut Vec::default(),
-                |_| false,
-                SmallRng::seed_from_u64(i),
-            );
-            let a = match in_cluster.as_slice() {
-                &[true, false, false] => true,
-                &[false, false, true] => true,
-                &[false, true, true] => true,
-                &[true, true, false] => true,
-                _ => false,
-            };
-            assert!(a)
-        }
-    }
-
-    #[test]
-    fn threevar_test_all() {
-        for i in 0..1024 {
-            let edges = TestEdges::new(3, &[(0, 1, false), (0, 2, false), (1, 2, false)]);
-            let state = vec![false, false, false];
-            let mut in_cluster = vec![false, false, false];
-            let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
-            grow_classical_cluster(
-                &edges,
-                |bond| is_sat(&edges, &state, bond),
-                (&mut a, &mut b),
-                &mut in_cluster,
-                &mut Vec::default(),
-                |_| false,
-                SmallRng::seed_from_u64(i),
-            );
-            let a = match in_cluster.as_slice() {
-                &[true, true, true] => true,
-                _ => false,
-            };
-            assert!(a)
-        }
     }
 }

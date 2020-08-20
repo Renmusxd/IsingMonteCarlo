@@ -237,7 +237,7 @@ impl<
         let rng = self.rng.as_mut().unwrap();
 
         let edges = EdgeNav {
-            bonds: self.semiclassical_bonds.as_ref().unwrap(),
+            var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
             edges: &self.edges,
         };
 
@@ -374,13 +374,17 @@ impl<
 }
 
 struct EdgeNav<'a, 'b> {
-    bonds: &'a [Vec<usize>],
+    var_to_bonds: &'a [Vec<usize>],
     edges: &'b [(VecEdge, f64)],
 }
 
 impl<'a, 'b> EdgeNavigator for EdgeNav<'a, 'b> {
+    fn n_bonds(&self) -> usize {
+        self.edges.len()
+    }
+
     fn bonds_for_var(&self, var: usize) -> &[usize] {
-        &self.bonds[var]
+        &self.var_to_bonds[var]
     }
 
     fn vars_for_bond(&self, bond: usize) -> (usize, usize) {
@@ -445,10 +449,13 @@ where
         // Perform semiclassical steps if requested.
         if self.run_semiclassical_steps {
             let edges = EdgeNav {
-                bonds: self.semiclassical_bonds.as_ref().unwrap(),
+                var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
                 edges: &self.edges,
             };
-            manager.run_classical_loop_update(&edges, &mut state, &mut rng);
+            // Each semi-classic update only hits a few variables so should be repeated.
+            for _ in 0..state.len() / 2 {
+                manager.run_classical_loop_update(&edges, &mut state, &mut rng);
+            }
         }
 
         let mut manager = manager.into();

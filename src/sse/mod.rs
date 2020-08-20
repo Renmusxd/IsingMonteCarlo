@@ -1,5 +1,6 @@
 //! A module with various QMC algorithms and traits.
 
+pub use qmc_debug::*;
 pub use qmc_ising::DefaultQMCIsingGraph;
 pub use qmc_runner::DefaultQMC;
 pub use qmc_traits::*;
@@ -32,6 +33,9 @@ pub mod semi_classical;
 
 /// A simpler operator management.
 pub mod simple_ops;
+
+/// Debugging stuff.
+pub mod qmc_debug;
 
 #[cfg(feature = "autocorrelations")]
 pub use autocorrelations::*;

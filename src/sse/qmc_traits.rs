@@ -127,7 +127,7 @@ pub trait QMCStepper {
 }
 
 /// Ops for holding SSE graph state.
-pub trait Op {
+pub trait Op: Clone {
     /// The list of op variables.
     type Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]>;
     /// The list of op input and output states.
