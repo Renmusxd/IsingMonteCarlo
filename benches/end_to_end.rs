@@ -1,9 +1,9 @@
 #![feature(test)]
 
-extern crate ising_monte_carlo;
+extern crate qmc;
 extern crate test;
 
-use ising_monte_carlo::graph::Edge;
+use qmc::classical::graph::Edge;
 
 fn one_d_periodic(l: usize) -> Vec<(Edge, f64)> {
     (0..l).map(|i| ((i, (i + 1) % l), 1.0)).collect()
@@ -32,9 +32,10 @@ fn two_d_periodic(l: usize) -> Vec<(Edge, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ising_monte_carlo::sse::fast_ops::*;
-    use ising_monte_carlo::sse::qmc_ising::QMCIsingGraph;
-    use ising_monte_carlo::sse::simple_ops::*;
+    use qmc::sse::fast_ops::*;
+    use qmc::sse::qmc_ising::QMCIsingGraph;
+    use qmc::sse::simple_ops::*;
+    use qmc::sse::*;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
     use test::Bencher;

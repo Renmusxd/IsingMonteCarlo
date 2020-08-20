@@ -2,7 +2,6 @@ use crate::sse::qmc_types::*;
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 use std::cmp::min;
 use std::iter::FromIterator;
 
@@ -146,6 +145,16 @@ pub trait Op {
         A: Into<Self::Vars>,
         B: Into<Self::SubState>,
         C: Into<Self::SubState>;
+
+    /// Make vars (this is here mostly due to rust bug 38078)
+    fn make_vars<V: Iterator<Item = usize>>(vars: V) -> Self::Vars {
+        vars.collect()
+    }
+
+    /// Make substate (this is here mostly due to rust bug 38078)
+    fn make_substate<S: Iterator<Item = bool>>(state: S) -> Self::SubState {
+        state.collect()
+    }
 
     /// Get the relative index of a variable.
     fn index_of_var(&self, var: usize) -> Option<usize>;
@@ -353,7 +362,11 @@ pub trait DiagonalUpdater: OpContainer {
             );
             (op, (state, rng))
         });
+        self.post_diagonal_update_hook();
     }
+
+    /// Called after an update.
+    fn post_diagonal_update_hook(&mut self) {}
 }
 
 /// Perform a single metropolis update.
@@ -537,7 +550,18 @@ pub trait LoopUpdater: OpContainer {
                 rng,
             );
         }
+        self.post_loop_update_hook();
     }
+
+    /// Allocation for leg buffer.
+    fn get_leg_weight_alloc(&mut self) -> Vec<(Leg, f64)> {
+        Vec::default()
+    }
+    /// Return the allocation from `get_leg_weight_alloc`.
+    fn return_leg_weight_alloc(&mut self, _alloc: Vec<(Leg, f64)>) {}
+
+    /// Called after an update.
+    fn post_loop_update_hook(&mut self) {}
 }
 
 /// Allow recursive loop updates with a trampoline mechanic
@@ -579,7 +603,7 @@ fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
     }
 }
 
-/// Apply loop update logic (call `make_loop_update` instead)
+/// Apply loop update logic.
 fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
     l: &mut L,
     initial_op_and_leg: (usize, Leg),
@@ -592,34 +616,32 @@ fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
 where
     H: Fn(&L::Op, Leg, Leg) -> f64,
 {
+    let mut legs = l.get_leg_weight_alloc();
     let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
     let sel_op = sel_opnode.get_op();
 
     let inputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Inputs));
     let outputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Outputs));
 
-    // TODO: Adjust this once const generics allow for more vars on stack.
-    let legs = inputs_legs
-        .chain(outputs_legs)
-        .collect::<SmallVec<[(usize, OpSide); 4]>>();
-    let weights = legs
-        .iter()
-        .map(|leg| h(&sel_op, entrance_leg, *leg))
-        .collect::<SmallVec<[f64; 4]>>();
+    legs.extend(
+        inputs_legs
+            .chain(outputs_legs)
+            .map(|leg| (leg, h(&sel_op, entrance_leg, leg))),
+    );
 
-    let total_weight: f64 = weights.iter().sum();
+    let total_weight: f64 = legs.iter().map(|(_, w)| *w).sum();
     let choice = rng.gen_range(0.0, total_weight);
-    let exit_leg = *weights
+    let exit_leg = legs
         .iter()
-        .zip(legs.iter())
-        .try_fold(choice, |c, (weight, leg)| {
+        .try_fold(choice, |c, (leg, weight)| {
             if c < *weight {
-                Err(leg)
+                Err(*leg)
             } else {
                 Ok(c - *weight)
             }
         })
         .unwrap_err();
+
     let mut inputs = sel_opnode.get_op_ref().clone_inputs();
     let mut outputs = sel_opnode.get_op_ref().clone_outputs();
     adjust_states(inputs.as_mut(), outputs.as_mut(), entrance_leg);
@@ -661,6 +683,8 @@ where
         let next_node = l.get_node_ref(next_op_pos).unwrap();
         let next_var_index = next_node.get_op_ref().index_of_var(var_to_match).unwrap();
         let new_entrance_leg = (next_var_index, exit_leg.1.reverse());
+
+        l.return_leg_weight_alloc(legs);
 
         // If back where we started, close loop and return state changes.
         if (next_op_pos, new_entrance_leg) == initial_op_and_leg {
@@ -769,6 +793,7 @@ pub trait ClusterUpdater: LoopUpdater {
             });
         self.return_boundaries_alloc(boundaries);
         self.return_flip_alloc(flips);
+        self.post_cluster_update_hook();
     }
 
     /// Find a site with a constant op.
@@ -817,6 +842,9 @@ pub trait ClusterUpdater: LoopUpdater {
 
     /// Return an alloc.
     fn return_flip_alloc(&mut self, _flips: Vec<bool>) {}
+
+    /// Called after an update.
+    fn post_cluster_update_hook(&mut self) {}
 }
 
 /// Expand a cluster at a given p and leg.

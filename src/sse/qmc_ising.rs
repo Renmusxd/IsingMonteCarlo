@@ -4,6 +4,7 @@ pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
 use crate::sse::qmc_runner::QMC;
 pub use crate::sse::qmc_traits::*;
+use crate::sse::semi_classical::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 #[cfg(feature = "serialize")]
@@ -21,7 +22,7 @@ type VecEdge = Vec<usize>;
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct QMCIsingGraph<
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 > {
     edges: Vec<(VecEdge, f64)>,
@@ -35,6 +36,9 @@ pub struct QMCIsingGraph<
     phantom: PhantomData<L>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
+    // Optional semiclassical update, for each var a: [(b, ferro/antiferro, bond)...]
+    run_semiclassical_steps: bool,
+    semiclassical_bonds: Option<Vec<Vec<usize>>>,
 }
 
 /// Build a new qmc graph with thread rng.
@@ -60,7 +64,7 @@ pub fn new_qmc_from_graph(
 
 impl<
         R: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > QMCIsingGraph<R, M, L>
 {
@@ -106,6 +110,8 @@ impl<
             rng: Some(rng),
             phantom: PhantomData,
             vars: (0..nvars).collect(),
+            run_semiclassical_steps: false,
+            semiclassical_bonds: None,
         }
     }
 
@@ -221,7 +227,49 @@ impl<
         self.state = Some(state);
     }
 
-    /// Prinbt debug output.
+    /// Perform a single semiclassical step.
+    pub fn single_semiclassical_step(&mut self) {
+        let mut state = self.state.take().unwrap();
+        if self.semiclassical_bonds.is_none() {
+            self.make_semiclassical_bonds(state.len());
+        }
+        let mut manager = self.op_manager.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
+
+        let edges = EdgeNav {
+            bonds: self.semiclassical_bonds.as_ref().unwrap(),
+            edges: &self.edges,
+        };
+
+        manager.run_classical_loop_update(&edges, &mut state, rng);
+
+        self.op_manager = Some(manager);
+        self.state = Some(state);
+    }
+
+    fn make_semiclassical_bonds(&mut self, nvars: usize) {
+        let mut edge_lookup = vec![vec![]; nvars];
+        self.edges
+            .iter()
+            .map(|(edge, _)| (edge[0], edge[1]))
+            .enumerate()
+            .for_each(|(bond, (a, b))| {
+                edge_lookup[a].push(bond);
+                edge_lookup[b].push(bond);
+            });
+        self.semiclassical_bonds = Some(edge_lookup);
+    }
+
+    /// Enable or disable automatic semiclassical steps.
+    pub fn set_run_semiclassical(&mut self, run_semiclassical: bool) {
+        self.run_semiclassical_steps = run_semiclassical;
+        if self.run_semiclassical_steps && self.semiclassical_bonds.is_none() {
+            let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
+            self.make_semiclassical_bonds(nvars);
+        }
+    }
+
+    /// Print debug output.
     pub fn print_debug(&self) {
         debug_print_diagonal(
             self.op_manager.as_ref().unwrap(),
@@ -281,9 +329,7 @@ impl<
         let twosite_energy_offset = self.twosite_energy_offset;
         let singlesite_energy_offset = self.singlesite_energy_offset;
         let nvars = self.vars.len();
-        let offset = twosite_energy_offset * self.edges.len() as f64
-            + singlesite_energy_offset * nvars as f64;
-        offset
+        twosite_energy_offset * self.edges.len() as f64 + singlesite_energy_offset * nvars as f64
     }
 
     /// Check if two instances can safely swap managers and initial states
@@ -327,17 +373,37 @@ impl<
     }
 }
 
+struct EdgeNav<'a, 'b> {
+    bonds: &'a [Vec<usize>],
+    edges: &'b [(VecEdge, f64)],
+}
+
+impl<'a, 'b> EdgeNavigator for EdgeNav<'a, 'b> {
+    fn bonds_for_var(&self, var: usize) -> &[usize] {
+        &self.bonds[var]
+    }
+
+    fn vars_for_bond(&self, bond: usize) -> (usize, usize) {
+        let e = &self.edges[bond].0;
+        (e[0], e[1])
+    }
+
+    fn bond_prefers_aligned(&self, bond: usize) -> bool {
+        self.edges[bond].1 < 0.0
+    }
+}
+
 impl<R, M, L> QMCStepper for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     /// Perform a single step of qmc.
     fn timestep(&mut self, beta: f64) -> &[bool] {
         let mut state = self.state.take().unwrap();
         let mut manager = self.op_manager.take().unwrap();
-        let rng = self.rng.as_mut().unwrap();
+        let mut rng = self.rng.take().unwrap();
 
         let nvars = state.len();
         let edges = &self.edges;
@@ -372,12 +438,21 @@ where
             beta,
             &mut state,
             &ham,
-            rng,
+            &mut rng,
         );
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
+        // Perform semiclassical steps if requested.
+        if self.run_semiclassical_steps {
+            let edges = EdgeNav {
+                bonds: self.semiclassical_bonds.as_ref().unwrap(),
+                edges: &self.edges,
+            };
+            manager.run_classical_loop_update(&edges, &mut state, &mut rng);
+        }
+
         let mut manager = manager.into();
-        manager.flip_each_cluster_rng(0.5, rng, &mut state);
+        manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
@@ -385,8 +460,12 @@ where
             }
         });
 
+        self.rng = Some(rng);
         self.op_manager = Some(manager.into());
         self.state = Some(state);
+
+        debug_assert!(self.verify());
+
         self.state.as_ref().unwrap()
     }
 
@@ -408,7 +487,7 @@ where
 impl<R, M, L> Verify for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     fn verify(&self) -> bool {
@@ -477,7 +556,7 @@ impl<'a> Eq for HamInfo<'a> {}
 impl<R, M, L> Clone for QMCIsingGraph<R, M, L>
 where
     R: Rng + Clone,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + Clone,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + Clone,
     L: ClusterUpdater + Into<M> + Clone,
 {
     fn clone(&self) -> Self {
@@ -492,6 +571,8 @@ where
             rng: self.rng.clone(),
             phantom: self.phantom,
             vars: self.vars.clone(),
+            run_semiclassical_steps: self.run_semiclassical_steps,
+            semiclassical_bonds: self.semiclassical_bonds.clone(),
         }
     }
 }
@@ -501,7 +582,7 @@ where
 impl<R, M, L> Into<QMC<R, M, L>> for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     fn into(self) -> QMC<R, M, L> {
@@ -513,7 +594,7 @@ where
 impl<R, M, L> QMCBondAutoCorrelations for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     fn n_bonds(&self) -> usize {
@@ -543,7 +624,7 @@ pub mod serialization {
     /// A QMC graph without rng for easy serialization.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SerializeQMCGraph<
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > {
         edges: Vec<(VecEdge, f64)>,
@@ -556,10 +637,14 @@ pub mod serialization {
         phantom: PhantomData<L>,
         // Can be easily reconstructed
         nvars: usize,
+        run_semiclassical_steps: bool,
+        semiclassical_bonds: Option<Vec<Vec<usize>>>,
     }
 
-    impl<M: OpContainerConstructor + DiagonalUpdater + Into<L>, L: ClusterUpdater + Into<M>>
-        SerializeQMCGraph<M, L>
+    impl<
+            M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
+            L: ClusterUpdater + Into<M>,
+        > SerializeQMCGraph<M, L>
     {
         /// Convert into a proper QMC graph using a new rng instance.
         pub fn into_qmc<R: Rng>(self, rng: R) -> QMCIsingGraph<R, M, L> {
@@ -574,13 +659,15 @@ pub mod serialization {
                 rng: Some(rng),
                 phantom: self.phantom,
                 vars: (0..self.nvars).collect(),
+                run_semiclassical_steps: self.run_semiclassical_steps,
+                semiclassical_bonds: self.semiclassical_bonds,
             }
         }
     }
 
     impl<
             R: Rng,
-            M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+            M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
             L: ClusterUpdater + Into<M>,
         > Into<SerializeQMCGraph<M, L>> for QMCIsingGraph<R, M, L>
     {
@@ -595,6 +682,8 @@ pub mod serialization {
                 singlesite_energy_offset: self.singlesite_energy_offset,
                 phantom: self.phantom,
                 nvars: self.vars.len(),
+                run_semiclassical_steps: self.run_semiclassical_steps,
+                semiclassical_bonds: self.semiclassical_bonds,
             }
         }
     }

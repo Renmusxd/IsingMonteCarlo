@@ -4,6 +4,7 @@ use crate::sse::qmc_runner::ManagerRef;
 use crate::sse::qmc_runner::QMC;
 use crate::sse::qmc_traits::*;
 use crate::sse::simple_ops::SimpleOpDiagonal;
+use crate::sse::ClassicalLoopUpdater;
 use rand::Rng;
 
 /// Allows QMC objects to swap internal state and op managers
@@ -96,7 +97,7 @@ where
 impl<R, M, L> SwapManagers for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
     L: ClusterUpdater + Into<M>,
 {
     fn can_swap_graphs(&self, other: &Self) -> bool {
@@ -119,7 +120,7 @@ where
 impl<R, M, L> OpWeights for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
     L: ClusterUpdater + Into<M>,
 {
     fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
@@ -135,7 +136,7 @@ where
 impl<
         'a,
         R: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > OpHam for QMCIsingGraph<R, M, L>
 {
@@ -157,7 +158,7 @@ impl<
 
 impl<
         R: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > StateGetter for QMCIsingGraph<R, M, L>
 {

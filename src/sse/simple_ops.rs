@@ -1,5 +1,6 @@
 use crate::sse::arena::*;
 use crate::sse::qmc_traits::*;
+use crate::sse::ClassicalLoopUpdater;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -342,5 +343,17 @@ impl Into<SimpleOpLooper> for SimpleOpDiagonal {
             var_ends,
             arena,
         }
+    }
+}
+
+impl ClassicalLoopUpdater for SimpleOpDiagonal {
+    fn var_ever_flips(&self, var: usize) -> bool {
+        self.ops.iter().filter_map(|op| op.as_ref()).any(|op| {
+            if let Some(indx) = op.index_of_var(var) {
+                op.get_inputs()[indx] != op.get_outputs()[indx]
+            } else {
+                false
+            }
+        })
     }
 }

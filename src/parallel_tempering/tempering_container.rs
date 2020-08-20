@@ -138,17 +138,29 @@ where
             .for_each(|(g, _)| g.set_op_cutoff(max_cutoff));
         let mut rng = self.rng.take().unwrap();
 
-        let hameqs = self.graph_ham_eq_a.take().unwrap();
-        let graphs = self.make_first_subgraphs();
-        self.total_swaps += perform_swaps(&mut rng, graphs, &hameqs);
-        self.graph_ham_eq_a = Some(hameqs);
-
-        let hameqs = self.graph_ham_eq_b.take().unwrap();
-        let graphs = self.make_second_subgraphs();
-        self.total_swaps += perform_swaps(&mut rng, graphs, &hameqs);
-        self.graph_ham_eq_b = Some(hameqs);
+        if rng.gen_bool(0.5) {
+            self.tempering_a(&mut rng);
+            self.tempering_b(&mut rng);
+        } else {
+            self.tempering_b(&mut rng);
+            self.tempering_a(&mut rng);
+        }
 
         self.rng = Some(rng);
+    }
+
+    fn tempering_a<R1: Rng>(&mut self, rng: R1) {
+        let hameqs = self.graph_ham_eq_a.take().unwrap();
+        let graphs = self.make_first_subgraphs();
+        self.total_swaps += perform_swaps(rng, graphs, &hameqs);
+        self.graph_ham_eq_a = Some(hameqs);
+    }
+
+    fn tempering_b<R1: Rng>(&mut self, rng: R1) {
+        let hameqs = self.graph_ham_eq_b.take().unwrap();
+        let graphs = self.make_second_subgraphs();
+        self.total_swaps += perform_swaps(rng, graphs, &hameqs);
+        self.graph_ham_eq_b = Some(hameqs);
     }
 
     /// Perform timesteps and sample spins. Return average energy for each graph.
@@ -328,6 +340,26 @@ pub mod rayon_tempering {
         ) -> Vec<(Vec<Vec<bool>>, f64)>;
     }
 
+    fn parallel_tempering_a<R: Rng, Q, R1: Rng>(tc: &mut TemperingContainer<R, Q>, rng: R1)
+    where
+        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+    {
+        let hameqs = tc.graph_ham_eq_a.take().unwrap();
+        let graphs = tc.make_first_subgraphs();
+        tc.total_swaps += parallel_perform_swaps(rng, graphs, &hameqs);
+        tc.graph_ham_eq_a = Some(hameqs);
+    }
+
+    fn parallel_tempering_b<R: Rng, Q, R1: Rng>(tc: &mut TemperingContainer<R, Q>, rng: R1)
+    where
+        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+    {
+        let hameqs = tc.graph_ham_eq_b.take().unwrap();
+        let graphs = tc.make_second_subgraphs();
+        tc.total_swaps += perform_swaps(rng, graphs, &hameqs);
+        tc.graph_ham_eq_b = Some(hameqs);
+    }
+
     impl<R, Q> ParallelQMCTimeSteps for TemperingContainer<R, Q>
     where
         R: Rng,
@@ -359,15 +391,13 @@ pub mod rayon_tempering {
 
             let mut rng = self.rng.take().unwrap();
 
-            let hameqs = self.graph_ham_eq_a.take().unwrap();
-            let graphs = self.make_first_subgraphs();
-            self.total_swaps += parallel_perform_swaps(&mut rng, graphs, &hameqs);
-            self.graph_ham_eq_a = Some(hameqs);
-
-            let hameqs = self.graph_ham_eq_b.take().unwrap();
-            let graphs = self.make_second_subgraphs();
-            self.total_swaps += parallel_perform_swaps(&mut rng, graphs, &hameqs);
-            self.graph_ham_eq_b = Some(hameqs);
+            if rng.gen_bool(0.5) {
+                parallel_tempering_a(self, &mut rng);
+                parallel_tempering_b(self, &mut rng);
+            } else {
+                parallel_tempering_b(self, &mut rng);
+                parallel_tempering_a(self, &mut rng);
+            }
 
             self.rng = Some(rng);
         }
@@ -664,6 +694,7 @@ pub mod rayon_tempering {
 pub mod serialization {
     use super::*;
     use crate::sse::qmc_ising::serialization::*;
+    use crate::sse::semi_classical::*;
 
     /// Default serializable tempering container.
     pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps, FastOps>;
@@ -672,7 +703,7 @@ pub mod serialization {
     /// A tempering container with no rng. Just for serialization.
     #[derive(Debug, Serialize, Deserialize)]
     pub struct SerializeTemperingContainer<
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > {
         graphs: Vec<SerializeGraphBeta<M, L>>,
@@ -682,7 +713,7 @@ pub mod serialization {
     impl<
             R1: Rng,
             R2: Rng,
-            M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+            M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
             L: ClusterUpdater + Into<M>,
         > Into<SerializeTemperingContainer<M, L>>
         for TemperingContainer<R1, QMCIsingGraph<R2, M, L>>
@@ -700,7 +731,7 @@ pub mod serialization {
     }
 
     impl<
-            M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+            M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
             L: ClusterUpdater + Into<M>,
         > SerializeTemperingContainer<M, L>
     {

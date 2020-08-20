@@ -1,8 +1,9 @@
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
+use crate::sse::{ClassicalLoopUpdater, HashSampler};
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 /// Underlying op for storing graph data, good for 2-variable ops.
 pub type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
@@ -30,12 +31,163 @@ pub struct FastOpsTemplate<O: Op> {
     pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(usize, usize)>>,
 
+    // For each variable check if flipped by an offdiagonal op.
+    // for use with semiclassical updates.
+    memoized_offdiagonal_ops: Option<Vec<bool>>,
+
     frontier: Option<Vec<(usize, OpSide)>>,
     interior_frontier: Option<Vec<(usize, Leg)>>,
     boundaries: Option<Vec<(Option<usize>, Option<usize>)>>,
     flips: Option<Vec<bool>>,
+    leg_and_weight: Option<Vec<(Leg, f64)>>,
     // Reusable vector
     last_vars_alloc: Option<Vec<Option<usize>>>,
+    // Semi classical updates
+    classical_vars_alloc: Option<Vec<bool>>,
+    classical_boundary_alloc: Option<Vec<(usize, bool)>>,
+    classical_sat_alloc: Option<HashSampler<usize>>,
+    classical_broken_alloc: Option<HashSampler<usize>>,
+}
+
+impl<O: Op + Clone> FastOpsTemplate<O> {
+    fn new_from_nvars(nvars: usize) -> Self {
+        Self {
+            ops: vec![],
+            n: 0,
+            p_ends: None,
+            var_ends: vec![None; nvars],
+            memoized_offdiagonal_ops: Some(vec![false; nvars]),
+            frontier: Some(vec![]),
+            interior_frontier: Some(vec![]),
+            boundaries: Some(vec![]),
+            flips: Some(vec![]),
+            leg_and_weight: Some(vec![]),
+            last_vars_alloc: Some(vec![]),
+            classical_vars_alloc: Some(vec![]),
+            classical_boundary_alloc: Some(vec![]),
+            classical_sat_alloc: Some(HashSampler::default()),
+            classical_broken_alloc: Some(HashSampler::default()),
+        }
+    }
+
+    /// Make a new Manager from an interator of ops, and number of variables.
+    pub fn new_from_ops<I: Iterator<Item = (usize, O)>>(nvars: usize, ps_and_ops: I) -> Self {
+        let mut man = Self::new_from_nvars(nvars);
+        man.clear_and_install_ops(ps_and_ops);
+        man
+    }
+
+    fn clear_and_install_ops<I: Iterator<Item = (usize, O)>>(&mut self, ps_and_ops: I) {
+        let nvars = self.var_ends.len();
+        let ps_and_ops = ps_and_ops.collect::<Vec<_>>();
+        if ps_and_ops.is_empty() {
+            return;
+        }
+        let opslen = ps_and_ops.iter().map(|(p, _)| p).max().unwrap() + 1;
+        self.ops.clear();
+        self.ops.resize_with(opslen, || None);
+        self.var_ends.clear();
+        self.var_ends.resize_with(nvars, || None);
+        self.p_ends = None;
+
+        let last_p: Option<usize> = None;
+        let mut last_vars = self.last_vars_alloc.take().unwrap();
+        last_vars.clear();
+        last_vars.resize(nvars, None);
+
+        let (last_p, last_vars) =
+            ps_and_ops
+                .into_iter()
+                .fold((last_p, last_vars), |(last_p, mut last_vars), (p, op)| {
+                    if let Some(last_p) = last_p {
+                        let last_node = self.ops[last_p].as_mut().unwrap();
+                        last_node.next_p = Some(p);
+                    } else {
+                        self.p_ends = Some((p, p))
+                    }
+
+                    let previous_for_vars = op
+                        .get_vars()
+                        .iter()
+                        .cloned()
+                        .map(|v| {
+                            if let Some(last_p) = last_vars[v] {
+                                let node = self.ops[last_p].as_mut().unwrap();
+                                let relv = node.get_op_ref().index_of_var(v).unwrap();
+                                node.next_for_vars[relv] = Some(p);
+                            } else {
+                                self.var_ends[v] = Some((p, p));
+                            }
+                            let last_v = last_vars[v];
+                            last_vars[v] = Some(p); // fine since vars cant be repeated.
+
+                            last_v
+                        })
+                        .collect();
+
+                    let n_opvars = op.get_vars().len();
+                    let mut node = FastOpNodeTemplate::<O>::new(
+                        op,
+                        previous_for_vars,
+                        smallvec![None; n_opvars],
+                    );
+                    node.previous_p = last_p;
+                    self.ops[p] = Some(node);
+                    self.n += 1;
+
+                    (Some(p), last_vars)
+                });
+        if let Some((_, p_end)) = self.p_ends.as_mut() {
+            *p_end = last_p.unwrap()
+        }
+        self.var_ends
+            .iter_mut()
+            .zip(last_vars.iter())
+            .for_each(|(ends, last_v)| {
+                if let Some((_, v_end)) = ends {
+                    *v_end = last_v.unwrap();
+                }
+            });
+
+        self.last_vars_alloc = Some(last_vars);
+    }
+
+    fn update_offdiagonal_lookup(&mut self) {
+        let mut has_flips = self.memoized_offdiagonal_ops.take().unwrap();
+        has_flips.iter_mut().for_each(|b| *b = false);
+        let mut vars_left = self.get_nvars();
+        let mut p = self.p_ends.map(|(start, _)| start);
+        while let Some(node_p) = p {
+            let node = self.ops[node_p].as_ref().unwrap();
+            let op = node.get_op_ref();
+            if !op.is_diagonal() {
+                let eqs = op
+                    .get_inputs()
+                    .iter()
+                    .zip(op.get_outputs().iter())
+                    .map(|(input, output)| input == output);
+                let _ = op
+                    .get_vars()
+                    .iter()
+                    .cloned()
+                    .zip(eqs)
+                    .filter(|(_, eq)| !*eq)
+                    .try_for_each(|(var, _)| {
+                        if !has_flips[var] {
+                            vars_left -= 1;
+                            has_flips[var] = true;
+                        }
+                        if vars_left == 0 {
+                            Err(())
+                        } else {
+                            Ok(())
+                        }
+                    });
+            }
+            p = node.next_p;
+        }
+        self.memoized_offdiagonal_ops = Some(has_flips);
+    }
 }
 
 type LinkVars = SmallVec<[Option<usize>; 2]>;
@@ -110,7 +262,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                         } else {
                             // No previous p, so we are removing the head. Make necessary adjustments.
                             self.p_ends = if let Some((head, tail)) = self.p_ends {
-                                assert_eq!(head, p);
+                                debug_assert_eq!(head, p);
                                 if tail == p {
                                     // We are removing the head and the tail.
                                     None
@@ -129,7 +281,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                         } else {
                             // No next p, so we are removing the tail. Adjust.
                             self.p_ends = if let Some((head, tail)) = self.p_ends {
-                                assert_eq!(tail, p);
+                                debug_assert_eq!(tail, p);
                                 if head == p {
                                     // This should have been handled above.
                                     unreachable!()
@@ -155,7 +307,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                             } else {
                                 // This was the first one, need to edit vars list.
                                 self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
-                                    assert_eq!(head, p);
+                                    debug_assert_eq!(head, p);
                                     if tail == p {
                                         // We are removing the head and the tail.
                                         None
@@ -176,7 +328,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 next_p_for_v_ref.previous_for_vars[next_rel_index] = last_vars[v];
                             } else {
                                 self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
-                                    assert_eq!(tail, p);
+                                    debug_assert_eq!(tail, p);
                                     if head == p {
                                         // Should have been caught already.
                                         unreachable!()
@@ -215,7 +367,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                     prev_node_for_v.next_for_vars[indx]
                                 } else if let Some((head, _)) = self.var_ends[v] {
                                     // Otherwise just look at the head (this is the new head).
-                                    assert_eq!(prev_p_for_v, None);
+                                    debug_assert_eq!(prev_p_for_v, None);
                                     Some(head)
                                 } else {
                                     // This is the new tail.
@@ -238,7 +390,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 } else {
                                     self.var_ends[*v] =
                                         if let Some((head, tail)) = self.var_ends[*v] {
-                                            assert!(head >= p);
+                                            debug_assert!(head >= p);
                                             Some((p, tail))
                                         } else {
                                             Some((p, p))
@@ -257,7 +409,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 } else {
                                     self.var_ends[*v] =
                                         if let Some((head, tail)) = self.var_ends[*v] {
-                                            assert!(tail <= p);
+                                            debug_assert!(tail <= p);
                                             Some((head, p))
                                         } else {
                                             Some((p, p))
@@ -282,7 +434,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                             prev_node.next_p = Some(p);
                         } else {
                             self.p_ends = if let Some((head, tail)) = self.p_ends {
-                                assert!(head >= p);
+                                debug_assert!(head >= p);
                                 Some((p, tail))
                             } else {
                                 Some((p, p))
@@ -294,7 +446,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                             next_node.previous_p = Some(p);
                         } else {
                             self.p_ends = if let Some((head, tail)) = self.p_ends {
-                                assert!(tail <= p);
+                                debug_assert!(tail <= p);
                                 Some((head, p))
                             } else {
                                 Some((p, p))
@@ -323,17 +475,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
 
 impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
     fn new(nvars: usize) -> Self {
-        Self {
-            ops: vec![],
-            n: 0,
-            p_ends: None,
-            var_ends: vec![None; nvars],
-            frontier: Some(vec![]),
-            interior_frontier: Some(vec![]),
-            boundaries: Some(vec![]),
-            flips: Some(vec![]),
-            last_vars_alloc: Some(vec![]),
-        }
+        Self::new_from_nvars(nvars)
     }
 }
 
@@ -415,6 +557,19 @@ impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {
         let init = self.p_ends.map(|(head, _)| head).unwrap();
         (0..n).fold(init, |p, _| self.ops[p].as_ref().unwrap().next_p.unwrap())
     }
+
+    fn get_leg_weight_alloc(&mut self) -> Vec<(Leg, f64)> {
+        self.leg_and_weight.take().unwrap()
+    }
+
+    fn return_leg_weight_alloc(&mut self, mut alloc: Vec<(Leg, f64)>) {
+        alloc.clear();
+        self.leg_and_weight = Some(alloc)
+    }
+
+    fn post_loop_update_hook(&mut self) {
+        self.update_offdiagonal_lookup()
+    }
 }
 
 impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
@@ -456,5 +611,53 @@ impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
     fn return_flip_alloc(&mut self, mut flips: Vec<bool>) {
         flips.clear();
         self.flips = Some(flips)
+    }
+
+    fn post_cluster_update_hook(&mut self) {
+        self.update_offdiagonal_lookup()
+    }
+}
+
+impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
+    fn var_ever_flips(&self, var: usize) -> bool {
+        self.memoized_offdiagonal_ops.as_ref().unwrap()[var]
+    }
+
+    fn get_var_alloc(&mut self, nvars: usize) -> Vec<bool> {
+        let mut class = self.classical_vars_alloc.take().unwrap();
+        class.resize(nvars, false);
+        class
+    }
+
+    fn return_var_alloc(&mut self, mut alloc: Vec<bool>) {
+        alloc.clear();
+        self.classical_vars_alloc = Some(alloc)
+    }
+
+    fn get_boundary_alloc(&mut self) -> Vec<(usize, bool)> {
+        self.classical_boundary_alloc.take().unwrap()
+    }
+
+    fn return_boundary_alloc(&mut self, mut alloc: Vec<(usize, bool)>) {
+        alloc.clear();
+        self.classical_boundary_alloc = Some(alloc)
+    }
+
+    fn get_sat_alloc(&mut self) -> HashSampler<usize> {
+        self.classical_sat_alloc.take().unwrap()
+    }
+
+    fn get_broken_alloc(&mut self) -> HashSampler<usize> {
+        self.classical_broken_alloc.take().unwrap()
+    }
+
+    fn return_sat_alloc(&mut self, mut alloc: HashSampler<usize>) {
+        alloc.clear();
+        self.classical_sat_alloc = Some(alloc);
+    }
+
+    fn return_broken_alloc(&mut self, mut alloc: HashSampler<usize>) {
+        alloc.clear();
+        self.classical_broken_alloc = Some(alloc);
     }
 }

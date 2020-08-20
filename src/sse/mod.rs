@@ -3,6 +3,7 @@
 pub use qmc_ising::DefaultQMCIsingGraph;
 pub use qmc_runner::DefaultQMC;
 pub use qmc_traits::*;
+pub use semi_classical::*;
 
 /// An arena for managing memory efficiently
 pub(crate) mod arena;
@@ -25,6 +26,9 @@ pub mod qmc_traits;
 
 /// QMC utility classes.
 pub mod qmc_types;
+
+/// Semi-classical SSE algorithms
+pub mod semi_classical;
 
 /// A simpler operator management.
 pub mod simple_ops;
