@@ -2,10 +2,6 @@ use crate::sse::qmc_traits::*;
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
-use std::borrow::Borrow;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::hash::Hash;
 
 /// This does an SSE equivalent of the classical dimer loop update. Requires ising symmetry and
 /// a set of bonds which are equivalent but either sat or broken.
@@ -126,11 +122,11 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                             );
                             sat_set.get_random(&mut rng).unwrap()
                         };
-                        let (new_a, new_b) = edges.vars_for_bond(new_bond);
+                        let (new_a, new_b) = edges.vars_for_bond(*new_bond);
                         let vars = Self::Op::make_vars([new_a, new_b].iter().cloned());
                         let state =
                             Self::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
-                        let new_op = Self::Op::diagonal(vars, new_bond, state, op.is_constant());
+                        let new_op = Self::Op::diagonal(vars, *new_bond, state, op.is_constant());
 
                         Some(Some(new_op))
                     }
@@ -166,18 +162,18 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
     fn return_boundary_alloc(&mut self, _alloc: Vec<(usize, bool)>) {}
 
     /// Get the allocation
-    fn get_sat_alloc(&mut self) -> HashSampler<usize> {
-        HashSampler::default()
+    fn get_sat_alloc(&mut self) -> BondContainer<usize> {
+        BondContainer::default()
     }
     /// Get the allocation
-    fn get_broken_alloc(&mut self) -> HashSampler<usize> {
-        HashSampler::default()
+    fn get_broken_alloc(&mut self) -> BondContainer<usize> {
+        BondContainer::default()
     }
 
     /// Return the allocation.
-    fn return_sat_alloc(&mut self, _alloc: HashSampler<usize>) {}
+    fn return_sat_alloc(&mut self, _alloc: BondContainer<usize>) {}
     /// Return the allocation.
-    fn return_broken_alloc(&mut self, _alloc: HashSampler<usize>) {}
+    fn return_broken_alloc(&mut self, _alloc: BondContainer<usize>) {}
 
     /// Called after an update.
     fn post_semiclassical_update_hook(&mut self) {}
@@ -186,7 +182,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
 fn grow_classical_cluster<EN: EdgeNavigator, R: Rng, F, G>(
     edges: &EN,
     is_sat: F,
-    sets: (&mut HashSampler<usize>, &mut HashSampler<usize>),
+    sets: (&mut BondContainer<usize>, &mut BondContainer<usize>),
     in_cluster: &mut [bool],
     recursive_search_alloc: &mut Vec<(usize, bool)>,
     skip_var: G,
@@ -247,7 +243,7 @@ fn add_var<EN, F, G>(
     edges: &EN,
     is_sat: F,
     skip_var: G,
-    sets: (&mut HashSampler<usize>, &mut HashSampler<usize>),
+    sets: (&mut BondContainer<usize>, &mut BondContainer<usize>),
     in_cluster: &mut [bool],
     var: usize,
     recursive_search_alloc: &mut Vec<(usize, bool)>,
@@ -273,7 +269,7 @@ fn add_vars<EN, F, G>(
     edges: &EN,
     is_sat: F,
     skip_var: G,
-    sets: (&mut HashSampler<usize>, &mut HashSampler<usize>),
+    sets: (&mut BondContainer<usize>, &mut BondContainer<usize>),
     in_cluster: &mut [bool],
     vars: &mut Vec<(usize, bool)>,
 ) -> usize
@@ -336,20 +332,20 @@ pub trait EdgeNavigator {
 /// A HashSet with random sampling.
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct HashSampler<T: Hash + Eq + Copy> {
-    map: HashMap<T, usize>,
+pub struct BondContainer<T: Clone + Into<usize>> {
+    map: Vec<Option<usize>>,
     keys: Vec<T>,
 }
 
-impl<T: Hash + Eq + Copy> HashSampler<T> {
+impl<T: Clone + Into<usize>> BondContainer<T> {
     /// Get a random entry from the HashSampler
-    pub fn get_random<R: Rng>(&self, mut r: R) -> Option<T> {
+    pub fn get_random<R: Rng>(&self, mut r: R) -> Option<&T> {
         if self.keys.is_empty() {
             None
         } else {
             // Choose a key to remove
             let index = r.gen_range(0, self.keys.len());
-            Some(self.keys[index])
+            Some(&self.keys[index])
         }
     }
 
@@ -359,18 +355,15 @@ impl<T: Hash + Eq + Copy> HashSampler<T> {
             None
         } else {
             // Choose a key to remove
-            let index = r.gen_range(0, self.keys.len());
-            Some(self.remove_index(index))
+            let keys_index = r.gen_range(0, self.keys.len());
+            Some(self.remove_index(keys_index))
         }
     }
 
     /// Remove a given value.
-    pub fn remove<Q: ?Sized>(&mut self, value: &Q) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq,
-    {
-        let address = self.map.get(value).cloned();
+    pub fn remove(&mut self, value: &T) -> bool {
+        let bond_number = value.clone().into();
+        let address = self.map[bond_number];
         if let Some(address) = address {
             self.remove_index(address);
             true
@@ -379,35 +372,40 @@ impl<T: Hash + Eq + Copy> HashSampler<T> {
         }
     }
 
-    fn remove_index(&mut self, index: usize) -> T {
+    fn remove_index(&mut self, keys_index: usize) -> T {
         // Move key to last position.
         let last_indx = self.keys.len() - 1;
-        self.keys.swap(index, last_indx);
+        self.keys.swap(keys_index, last_indx);
         // Update address
-        let old_indx = self.map.get_mut(&self.keys[index]).unwrap();
-        *old_indx = index;
+        let bond_number = self.keys[keys_index].clone().into();
+        let old_indx = self.map[bond_number].as_mut().unwrap();
+        *old_indx = keys_index;
         // Remove key
         let out = self.keys.pop().unwrap();
-        self.map.remove(&out);
+        self.map[out.clone().into()] = None;
         out
     }
 
     /// Check if a given element has been inserted.
-    pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
-    where
-        T: Borrow<Q>,
-        Q: Hash + Eq,
-    {
-        self.map.contains_key(value)
+    pub fn contains(&self, value: &T) -> bool {
+        let t = value.clone().into();
+        if t >= self.map.len() {
+            false
+        } else {
+            self.map[t].is_some()
+        }
     }
 
     /// Insert an element.
     pub fn insert(&mut self, value: T) -> bool {
-        let entry = self.map.entry(value);
-        match entry {
-            Entry::Occupied(_) => false,
-            Entry::Vacant(vac) => {
-                vac.insert(self.keys.len());
+        let entry_index = value.clone().into();
+        if entry_index >= self.map.len() {
+            self.map.resize(entry_index + 1, None);
+        }
+        match self.map[entry_index] {
+            Some(_) => false,
+            None => {
+                self.map[entry_index] = Some(self.keys.len());
                 self.keys.push(value);
                 true
             }
@@ -436,6 +434,27 @@ mod sc_tests {
     use super::*;
     use rand::prelude::SmallRng;
     use rand::SeedableRng;
+
+    #[test]
+    fn test_bond_container() {
+        let mut bc = BondContainer::<usize>::default();
+        bc.insert(0);
+        assert_eq!(bc.pop_random(SmallRng::seed_from_u64(0)), Some(0));
+    }
+
+    #[test]
+    fn test_bond_container_more() {
+        let mut bc = BondContainer::<usize>::default();
+        bc.insert(0);
+        bc.insert(1);
+        bc.insert(2);
+        assert_eq!(bc.len(), 3);
+        let res = match bc.pop_random(SmallRng::seed_from_u64(0)) {
+            Some(0) | Some(1) | Some(2) => true,
+            _ => false,
+        };
+        assert!(res)
+    }
 
     struct TestEdges {
         bonds: Vec<Vec<usize>>,
@@ -486,7 +505,7 @@ mod sc_tests {
         let edges = TestEdges::new(1, &[]);
         let state = vec![false];
         let mut in_cluster = vec![false];
-        let (mut a, mut b) = (HashSampler::default(), HashSampler::default());
+        let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
         grow_classical_cluster(
             &edges,
             |bond| is_sat(&edges, &state, bond),
@@ -504,7 +523,7 @@ mod sc_tests {
         let edges = TestEdges::new(2, &[(0, 1, true)]);
         let state = vec![false, false];
         let mut in_cluster = vec![false, false];
-        let (mut a, mut b) = (HashSampler::default(), HashSampler::default());
+        let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
         grow_classical_cluster(
             &edges,
             |bond| is_sat(&edges, &state, bond),
@@ -523,7 +542,7 @@ mod sc_tests {
             let edges = TestEdges::new(3, &[(0, 1, true), (0, 2, false), (1, 2, false)]);
             let state = vec![false, false, false];
             let mut in_cluster = vec![false, false, false];
-            let (mut a, mut b) = (HashSampler::default(), HashSampler::default());
+            let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
             grow_classical_cluster(
                 &edges,
                 |bond| is_sat(&edges, &state, bond),
@@ -550,7 +569,7 @@ mod sc_tests {
             let edges = TestEdges::new(3, &[(0, 1, false), (0, 2, true), (1, 2, false)]);
             let state = vec![false, false, false];
             let mut in_cluster = vec![false, false, false];
-            let (mut a, mut b) = (HashSampler::default(), HashSampler::default());
+            let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
             grow_classical_cluster(
                 &edges,
                 |bond| is_sat(&edges, &state, bond),
@@ -577,7 +596,7 @@ mod sc_tests {
             let edges = TestEdges::new(3, &[(0, 1, false), (0, 2, false), (1, 2, false)]);
             let state = vec![false, false, false];
             let mut in_cluster = vec![false, false, false];
-            let (mut a, mut b) = (HashSampler::default(), HashSampler::default());
+            let (mut a, mut b) = (BondContainer::default(), BondContainer::default());
             grow_classical_cluster(
                 &edges,
                 |bond| is_sat(&edges, &state, bond),

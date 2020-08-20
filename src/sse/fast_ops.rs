@@ -1,6 +1,6 @@
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
-use crate::sse::{ClassicalLoopUpdater, HashSampler};
+use crate::sse::{BondContainer, ClassicalLoopUpdater};
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
@@ -45,8 +45,8 @@ pub struct FastOpsTemplate<O: Op> {
     // Semi classical updates
     classical_vars_alloc: Option<Vec<bool>>,
     classical_boundary_alloc: Option<Vec<(usize, bool)>>,
-    classical_sat_alloc: Option<HashSampler<usize>>,
-    classical_broken_alloc: Option<HashSampler<usize>>,
+    classical_sat_alloc: Option<BondContainer<usize>>,
+    classical_broken_alloc: Option<BondContainer<usize>>,
 }
 
 impl<O: Op + Clone> FastOpsTemplate<O> {
@@ -65,8 +65,8 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             last_vars_alloc: Some(vec![]),
             classical_vars_alloc: Some(vec![]),
             classical_boundary_alloc: Some(vec![]),
-            classical_sat_alloc: Some(HashSampler::default()),
-            classical_broken_alloc: Some(HashSampler::default()),
+            classical_sat_alloc: Some(BondContainer::default()),
+            classical_broken_alloc: Some(BondContainer::default()),
         }
     }
 
@@ -643,20 +643,20 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
         self.classical_boundary_alloc = Some(alloc)
     }
 
-    fn get_sat_alloc(&mut self) -> HashSampler<usize> {
+    fn get_sat_alloc(&mut self) -> BondContainer<usize> {
         self.classical_sat_alloc.take().unwrap()
     }
 
-    fn get_broken_alloc(&mut self) -> HashSampler<usize> {
+    fn get_broken_alloc(&mut self) -> BondContainer<usize> {
         self.classical_broken_alloc.take().unwrap()
     }
 
-    fn return_sat_alloc(&mut self, mut alloc: HashSampler<usize>) {
+    fn return_sat_alloc(&mut self, mut alloc: BondContainer<usize>) {
         alloc.clear();
         self.classical_sat_alloc = Some(alloc);
     }
 
-    fn return_broken_alloc(&mut self, mut alloc: HashSampler<usize>) {
+    fn return_broken_alloc(&mut self, mut alloc: BondContainer<usize>) {
         alloc.clear();
         self.classical_broken_alloc = Some(alloc);
     }
