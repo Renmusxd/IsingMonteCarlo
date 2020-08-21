@@ -1,6 +1,6 @@
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
-use crate::sse::{BondContainer, ClassicalLoopUpdater};
+use crate::sse::{semi_classical, BondContainer, ClassicalLoopUpdater};
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
@@ -47,10 +47,12 @@ pub struct FastOpsTemplate<O: Op> {
     classical_boundary_alloc: Option<Vec<(usize, bool)>>,
     classical_sat_alloc: Option<BondContainer<usize>>,
     classical_broken_alloc: Option<BondContainer<usize>>,
+    // Optional bond counting.
+    bond_counters: Option<Vec<usize>>,
 }
 
 impl<O: Op + Clone> FastOpsTemplate<O> {
-    fn new_from_nvars(nvars: usize) -> Self {
+    fn new_from_nvars_and_nbonds(nvars: usize, nbonds: Option<usize>) -> Self {
         Self {
             ops: vec![],
             n: 0,
@@ -67,7 +69,12 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             classical_boundary_alloc: Some(vec![]),
             classical_sat_alloc: Some(BondContainer::default()),
             classical_broken_alloc: Some(BondContainer::default()),
+            bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
         }
+    }
+
+    fn new_from_nvars(nvars: usize) -> Self {
+        Self::new_from_nvars_and_nbonds(nvars, None)
     }
 
     /// Make a new Manager from an interator of ops, and number of variables.
@@ -343,6 +350,10 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                             }
                         });
                         self.n -= 1;
+                        if let Some(bond_counters) = self.bond_counters.as_mut() {
+                            let bond = node_ref.op.get_bond();
+                            bond_counters[bond] -= 1;
+                        }
                     }
 
                     if let Some(new_op) = new_op {
@@ -452,6 +463,10 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 Some((p, p))
                             }
                         };
+                        if let Some(bond_counters) = self.bond_counters.as_mut() {
+                            let bond = node_ref.op.get_bond();
+                            bond_counters[bond] += 1;
+                        }
                         self.ops[p] = Some(node_ref);
                         self.n += 1;
                     }
@@ -471,11 +486,28 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
         self.last_vars_alloc = Some(last_vars);
         t
     }
+
+    fn iterate_ops<F, T>(&self, mut t: T, f: F) -> T
+    where
+        F: Fn(&Self, &Self::Op, T) -> T,
+    {
+        let mut p = self.p_ends.map(|(start, _)| start);
+        while let Some(node_p) = p {
+            let node = self.ops[node_p].as_ref().unwrap();
+            t = f(self, node.get_op_ref(), t);
+            p = node.next_p;
+        }
+        t
+    }
 }
 
 impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
     fn new(nvars: usize) -> Self {
         Self::new_from_nvars(nvars)
+    }
+
+    fn new_with_bonds(nvars: usize, nbonds: usize) -> Self {
+        Self::new_from_nvars_and_nbonds(nvars, Some(nbonds))
     }
 }
 
@@ -621,6 +653,28 @@ impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
 impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
     fn var_ever_flips(&self, var: usize) -> bool {
         self.memoized_offdiagonal_ops.as_ref().unwrap()[var]
+    }
+
+    fn count_ops_on_border(
+        &self,
+        sat_set: &BondContainer<usize>,
+        broken_set: &BondContainer<usize>,
+    ) -> (usize, usize) {
+        if let Some(bond_counters) = self.bond_counters.as_ref() {
+            let sats = sat_set
+                .iter()
+                .cloned()
+                .map(|bond| bond_counters[bond])
+                .sum();
+            let brokens = broken_set
+                .iter()
+                .cloned()
+                .map(|bond| bond_counters[bond])
+                .sum();
+            (sats, brokens)
+        } else {
+            semi_classical::count_using_iter_ops(self, sat_set, broken_set)
+        }
     }
 
     fn get_var_alloc(&mut self, nvars: usize) -> Vec<bool> {

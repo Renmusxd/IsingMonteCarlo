@@ -210,6 +210,8 @@ pub trait OpNode<O: Op> {
 pub trait OpContainerConstructor {
     /// Make a new container for nvars.
     fn new(nvars: usize) -> Self;
+    /// Make a new container for nvars giving a hint as to the number of bonds.
+    fn new_with_bonds(nvars: usize, nbonds: usize) -> Self;
 }
 
 /// Contain and manage ops.
@@ -299,6 +301,21 @@ pub trait DiagonalUpdater: OpContainer {
         (0..cutoff).fold(t, |t, p| {
             let op = self.get_pth(p);
             f(&self, op, t)
+        })
+    }
+
+    /// Iterate through ops only.
+    fn iterate_ops<F, T>(&self, t: T, f: F) -> T
+    where
+        F: Fn(&Self, &Self::Op, T) -> T,
+    {
+        let cutoff = self.get_cutoff();
+        (0..cutoff).fold(t, |t, p| {
+            if let Some(op) = self.get_pth(p) {
+                f(&self, op, t)
+            } else {
+                t
+            }
         })
     }
 

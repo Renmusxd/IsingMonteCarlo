@@ -91,6 +91,10 @@ impl OpContainerConstructor for SimpleOpDiagonal {
             arena: Arena::new(None),
         }
     }
+
+    fn new_with_bonds(nvars: usize, _nbonds: usize) -> Self {
+        Self::new(nvars)
+    }
 }
 
 impl OpContainer for SimpleOpDiagonal {

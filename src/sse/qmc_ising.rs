@@ -92,7 +92,7 @@ impl<
             .unwrap_or(0.0)
             .abs();
         let singlesite_energy_offset = transverse;
-        let mut ops = M::new(nvars);
+        let mut ops = M::new_with_bonds(nvars, edges.len() + nvars);
         ops.set_cutoff(cutoff);
 
         let state = match state {
