@@ -73,5 +73,6 @@ fn run_four() {
         );
         ising.set_run_semiclassical(true);
         ising.timesteps(1000, 1.0);
+        println!("Average cluster: {}", ising.average_cluster_size());
     }
 }

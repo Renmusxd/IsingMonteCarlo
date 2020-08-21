@@ -15,7 +15,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
         edges: &EN,
         state: &mut [bool],
         mut rng: R,
-    ) -> usize {
+    ) -> (usize, bool) {
         let nvars = self.get_nvars();
         let mut in_cluster = self.get_var_alloc(nvars);
         let mut sat_set = self.get_sat_alloc();
@@ -45,7 +45,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
         self.return_boundary_alloc(boundary_alloc);
 
         // If this can be flipped, then set the right cluster size and do work, otherwise set to 0.
-        let cluster_size = if sat_set.len() == broken_set.len() {
+        let cluster_flipped = if sat_set.len() == broken_set.len() {
             // Flip the cluster.
             state.iter_mut().zip(in_cluster.iter()).for_each(|(s, c)| {
                 if *c {
@@ -137,16 +137,16 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                     (new_op, (state, rng))
                 },
             );
-            cluster_size
+            true
         } else {
-            0
+            false
         };
 
         self.return_sat_alloc(sat_set);
         self.return_broken_alloc(broken_set);
         self.return_var_alloc(in_cluster);
         self.post_semiclassical_update_hook();
-        cluster_size
+        (cluster_size, cluster_flipped)
     }
 
     /// Get the allocation.
@@ -251,32 +251,43 @@ pub trait EdgeNavigator {
 }
 
 /// A HashSet with random sampling.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct BondContainer<T: Clone + Into<usize>> {
     map: Vec<Option<usize>>,
-    keys: Vec<T>,
+    keys: Option<Vec<T>>,
+}
+
+impl<T: Clone + Into<usize>> Default for BondContainer<T> {
+    fn default() -> Self {
+        Self {
+            map: Vec::default(),
+            keys: Some(Vec::default()),
+        }
+    }
 }
 
 impl<T: Clone + Into<usize>> BondContainer<T> {
     /// Get a random entry from the HashSampler
     pub fn get_random<R: Rng>(&self, mut r: R) -> Option<&T> {
-        if self.keys.is_empty() {
+        let keys = self.keys.as_ref().unwrap();
+        if keys.is_empty() {
             None
         } else {
             // Choose a key to remove
-            let index = r.gen_range(0, self.keys.len());
-            Some(&self.keys[index])
+            let index = r.gen_range(0, keys.len());
+            Some(&keys[index])
         }
     }
 
     /// Pop a random element.
     pub fn pop_random<R: Rng>(&mut self, mut r: R) -> Option<T> {
-        if self.keys.is_empty() {
+        let keys = self.keys.as_ref().unwrap();
+        if keys.is_empty() {
             None
         } else {
             // Choose a key to remove
-            let keys_index = r.gen_range(0, self.keys.len());
+            let keys_index = r.gen_range(0, keys.len());
             Some(self.remove_index(keys_index))
         }
     }
@@ -295,14 +306,15 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
 
     fn remove_index(&mut self, keys_index: usize) -> T {
         // Move key to last position.
-        let last_indx = self.keys.len() - 1;
-        self.keys.swap(keys_index, last_indx);
+        let keys = self.keys.as_mut().unwrap();
+        let last_indx = keys.len() - 1;
+        keys.swap(keys_index, last_indx);
         // Update address
-        let bond_number = self.keys[keys_index].clone().into();
+        let bond_number = keys[keys_index].clone().into();
         let old_indx = self.map[bond_number].as_mut().unwrap();
         *old_indx = keys_index;
         // Remove key
-        let out = self.keys.pop().unwrap();
+        let out = self.keys.as_mut().unwrap().pop().unwrap();
         self.map[out.clone().into()] = None;
         out
     }
@@ -326,27 +338,33 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
         match self.map[entry_index] {
             Some(_) => false,
             None => {
-                self.map[entry_index] = Some(self.keys.len());
-                self.keys.push(value);
+                let keys = self.keys.as_mut().unwrap();
+                self.map[entry_index] = Some(keys.len());
+                keys.push(value);
                 true
             }
         }
     }
 
-    /// Clear the hashset
+    /// Clear the set
     pub fn clear(&mut self) {
-        self.keys.clear();
-        self.map.clear();
+        let mut keys = self.keys.take().unwrap();
+        keys.iter().for_each(|k| {
+            let bond = k.clone().into();
+            self.map[bond] = None
+        });
+        keys.clear();
+        self.keys = Some(keys);
     }
 
     /// Get number of elements in set.
     pub fn len(&self) -> usize {
-        self.keys.len()
+        self.keys.as_ref().unwrap().len()
     }
 
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
-        self.keys.is_empty()
+        self.keys.as_ref().unwrap().is_empty()
     }
 }
 

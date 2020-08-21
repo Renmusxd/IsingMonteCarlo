@@ -39,6 +39,8 @@ pub struct QMCIsingGraph<
     // Optional semiclassical update, for each var a: [(b, ferro/antiferro, bond)...]
     run_semiclassical_steps: bool,
     semiclassical_bonds: Option<Vec<Vec<usize>>>,
+    total_cluster_size: f64,
+    clusters_counted: usize,
 }
 
 /// Build a new qmc graph with thread rng.
@@ -112,6 +114,8 @@ impl<
             vars: (0..nvars).collect(),
             run_semiclassical_steps: false,
             semiclassical_bonds: None,
+            total_cluster_size: 2.0,
+            clusters_counted: 0,
         }
     }
 
@@ -371,6 +375,11 @@ impl<
         qmc.set_diagonal_manager(self.op_manager.unwrap());
         qmc
     }
+
+    /// Average semiclassical cluster size.
+    pub fn average_cluster_size(&self) -> f64 {
+        self.total_cluster_size / self.clusters_counted as f64
+    }
 }
 
 struct EdgeNav<'a, 'b> {
@@ -453,9 +462,25 @@ where
                 edges: &self.edges,
             };
             // Each semi-classic update only hits a few variables so should be repeated.
-            for _ in 0..state.len() / 2 {
-                manager.run_classical_loop_update(&edges, &mut state, &mut rng);
-            }
+            let average_cluster_size = self.total_cluster_size / self.clusters_counted as f64;
+            let average_cluster_size = if average_cluster_size < 2.0 {
+                2.0
+            } else {
+                average_cluster_size
+            };
+            let steps_to_run = (state.len() as f64 / average_cluster_size).ceil();
+            let steps_to_run = if steps_to_run < 1.0 {
+                1
+            } else {
+                steps_to_run as usize
+            };
+            self.total_cluster_size += (0..steps_to_run)
+                .map(|_| {
+                    let (size, _) = manager.run_classical_loop_update(&edges, &mut state, &mut rng);
+                    size
+                })
+                .sum::<usize>() as f64;
+            self.clusters_counted += steps_to_run;
         }
 
         let mut manager = manager.into();
@@ -580,6 +605,8 @@ where
             vars: self.vars.clone(),
             run_semiclassical_steps: self.run_semiclassical_steps,
             semiclassical_bonds: self.semiclassical_bonds.clone(),
+            total_cluster_size: self.total_cluster_size,
+            clusters_counted: self.clusters_counted,
         }
     }
 }
@@ -646,6 +673,8 @@ pub mod serialization {
         nvars: usize,
         run_semiclassical_steps: bool,
         semiclassical_bonds: Option<Vec<Vec<usize>>>,
+        total_cluster_size: f64,
+        clusters_counted: usize,
     }
 
     impl<
@@ -668,6 +697,8 @@ pub mod serialization {
                 vars: (0..self.nvars).collect(),
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
+                total_cluster_size: self.total_cluster_size,
+                clusters_counted: self.clusters_counted,
             }
         }
     }
@@ -691,6 +722,8 @@ pub mod serialization {
                 nvars: self.vars.len(),
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
+                total_cluster_size: self.total_cluster_size,
+                clusters_counted: self.clusters_counted,
             }
         }
     }
