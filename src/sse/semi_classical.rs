@@ -9,40 +9,80 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
     /// Check if variable is ever flipped by an offdiagonal op.
     fn var_ever_flips(&self, var: usize) -> bool;
 
-    /// Perform an update, return size of cluster.
-    fn run_classical_loop_update<R: Rng, EN: EdgeNavigator>(
+    /// Perform an edge update, return size of cluster.
+    fn run_semiclassical_edge_update<R: Rng, EN: EdgeNavigator>(
         &mut self,
         edges: &EN,
         state: &mut [bool],
-        mut rng: R,
+        rng: R,
     ) -> (usize, bool) {
+        let bond_select = |s: &mut Self,
+                           state: &[bool],
+                           in_cluster: &mut [bool],
+                           sat_set: &mut BondContainer<usize>,
+                           broken_set: &mut BondContainer<usize>,
+                           rng: &mut R| {
+            let is_sat = |bond: usize| -> bool {
+                let p_aligned = edges.bond_prefers_aligned(bond);
+                let (a, b) = edges.vars_for_bond(bond);
+                let aligned = state[a] == state[b];
+                aligned == p_aligned
+            };
+
+            // Flip a single edge, flipping more is difficult while preserving detailed balance.
+            let bond = rng.gen_range(0, edges.n_bonds());
+            let (a, b) = edges.vars_for_bond(bond);
+            let mut boundary_alloc = s.get_boundary_alloc();
+            let skip_var = |var| s.var_ever_flips(var);
+            boundary_alloc.extend([(a, skip_var(a)), (b, skip_var(b))].iter());
+            let cluster_size = add_vars(
+                edges,
+                is_sat,
+                skip_var,
+                (sat_set, broken_set),
+                in_cluster,
+                &mut boundary_alloc,
+            );
+            s.return_boundary_alloc(boundary_alloc);
+            cluster_size
+        };
+
+        self.run_semiclassical_update(edges, bond_select, state, rng)
+    }
+
+    /// Use a function bond_select to select a region of variables and the bordering bonds, then
+    /// perform a semiclassical update on those variables by flipping them and rearranging ops on
+    /// the bonds.
+    fn run_semiclassical_update<R: Rng, EN: EdgeNavigator, F>(
+        &mut self,
+        edges: &EN,
+        bond_select: F,
+        state: &mut [bool],
+        mut rng: R,
+    ) -> (usize, bool)
+    where
+        F: Fn(
+            &mut Self,                 // self
+            &[bool],                   // state
+            &mut [bool],               // in_cluster
+            &mut BondContainer<usize>, // sat_set
+            &mut BondContainer<usize>, // broken_set
+            &mut R,                    // rng
+        ) -> usize,
+    {
         let nvars = self.get_nvars();
         let mut in_cluster = self.get_var_alloc(nvars);
         let mut sat_set = self.get_sat_alloc();
         let mut broken_set = self.get_broken_alloc();
 
-        let is_sat = |bond: usize| -> bool {
-            let p_aligned = edges.bond_prefers_aligned(bond);
-            let (a, b) = edges.vars_for_bond(bond);
-            let aligned = state[a] == state[b];
-            aligned == p_aligned
-        };
-
-        // Flip a single edge, flipping more is difficult while preserving detailed balance.
-        let bond = rng.gen_range(0, edges.n_bonds());
-        let (a, b) = edges.vars_for_bond(bond);
-        let mut boundary_alloc = self.get_boundary_alloc();
-        let skip_var = |var| self.var_ever_flips(var);
-        boundary_alloc.extend([(a, skip_var(a)), (b, skip_var(b))].iter());
-        let cluster_size = add_vars(
-            edges,
-            is_sat,
-            skip_var,
-            (&mut sat_set, &mut broken_set),
+        let cluster_size = bond_select(
+            self,
+            state,
             &mut in_cluster,
-            &mut boundary_alloc,
+            &mut sat_set,
+            &mut broken_set,
+            &mut rng,
         );
-        self.return_boundary_alloc(boundary_alloc);
 
         let should_edit = if sat_set.len() != broken_set.len() {
             let (sat_count, broken_count) = self.count_ops_on_border(&sat_set, &broken_set);

@@ -245,7 +245,7 @@ impl<
             edges: &self.edges,
         };
 
-        manager.run_classical_loop_update(&edges, &mut state, rng);
+        manager.run_semiclassical_edge_update(&edges, &mut state, rng);
 
         self.op_manager = Some(manager);
         self.state = Some(state);
@@ -476,7 +476,8 @@ where
             };
             self.total_cluster_size += (0..steps_to_run)
                 .map(|_| {
-                    let (size, _) = manager.run_classical_loop_update(&edges, &mut state, &mut rng);
+                    let (size, _) =
+                        manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng);
                     size
                 })
                 .sum::<usize>() as f64;
