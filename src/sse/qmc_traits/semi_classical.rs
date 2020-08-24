@@ -9,7 +9,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
     /// Check if variable is ever flipped by an offdiagonal op.
     fn var_ever_flips(&self, var: usize) -> bool;
 
-    /// Perform an edge update, return size of cluster.
+    /// Perform an edge update, return size of cluster and whether it was flipped.
     fn run_semiclassical_edge_update<R: Rng, EN: EdgeNavigator>(
         &mut self,
         edges: &EN,
@@ -52,7 +52,11 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
 
     /// Use a function bond_select to select a region of variables and the bordering bonds, then
     /// perform a semiclassical update on those variables by flipping them and rearranging ops on
-    /// the bonds.
+    /// the bonds. The function bond_select must take the current state, a mutable array giving
+    /// whether variables are in the cluster to be flipped, and two mutable BondContainers which
+    /// should be filled with bonds on the border of the cluster which are broken or unbroken and
+    /// of equal weight, then must return the size of the cluster.
+    /// See `run_semiclassical_edge_update` for an implementation.
     fn run_semiclassical_update<R: Rng, EN: EdgeNavigator, F>(
         &mut self,
         edges: &EN,
@@ -83,6 +87,15 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             &mut broken_set,
             &mut rng,
         );
+
+        debug_assert!(!sat_set
+            .iter()
+            .chain(broken_set.iter())
+            .cloned()
+            .any(|bond| {
+                let (a, b) = edges.vars_for_bond(bond);
+                self.var_ever_flips(a) || self.var_ever_flips(b)
+            }));
 
         let should_edit = if sat_set.len() != broken_set.len() {
             let (sat_count, broken_count) = self.count_ops_on_border(&sat_set, &broken_set);

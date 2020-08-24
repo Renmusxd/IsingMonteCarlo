@@ -1,6 +1,5 @@
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
-use crate::sse::{semi_classical, BondContainer, ClassicalLoopUpdater};
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
@@ -673,7 +672,7 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
                 .sum();
             (sats, brokens)
         } else {
-            semi_classical::count_using_iter_ops(self, sat_set, broken_set)
+            count_using_iter_ops(self, sat_set, broken_set)
         }
     }
 

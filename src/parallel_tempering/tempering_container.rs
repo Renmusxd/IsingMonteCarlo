@@ -694,7 +694,7 @@ pub mod rayon_tempering {
 pub mod serialization {
     use super::*;
     use crate::sse::qmc_ising::serialization::*;
-    use crate::sse::semi_classical::*;
+    // use crate::sse::qmc_traits::semi_classical::*;
 
     /// Default serializable tempering container.
     pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps, FastOps>;

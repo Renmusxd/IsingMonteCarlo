@@ -4,7 +4,6 @@ pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
 use crate::sse::qmc_runner::QMC;
 pub use crate::sse::qmc_traits::*;
-use crate::sse::semi_classical::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 #[cfg(feature = "serialize")]
