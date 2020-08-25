@@ -10,18 +10,23 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
     fn var_ever_flips(&self, var: usize) -> bool;
 
     /// Perform an edge update, return size of cluster and whether it was flipped.
-    fn run_semiclassical_edge_update<R: Rng, EN: EdgeNavigator>(
+    fn run_semiclassical_edge_update<R, EN>(
         &mut self,
         edges: &EN,
         state: &mut [bool],
         rng: R,
-    ) -> (usize, bool) {
+    ) -> (usize, bool)
+    where
+        EN: EdgeNavigator,
+        R: Rng,
+    {
         let bond_select = |s: &mut Self,
                            state: &[bool],
                            in_cluster: &mut [bool],
                            sat_set: &mut BondContainer<usize>,
                            broken_set: &mut BondContainer<usize>,
-                           rng: &mut R| {
+                           rng: &mut R|
+         -> Option<usize> {
             let is_sat = |bond: usize| -> bool {
                 let p_aligned = edges.bond_prefers_aligned(bond);
                 let (a, b) = edges.vars_for_bond(bond);
@@ -44,9 +49,195 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                 &mut boundary_alloc,
             );
             s.return_boundary_alloc(boundary_alloc);
-            cluster_size
+            Some(cluster_size)
         };
 
+        self.run_semiclassical_update(edges, bond_select, state, rng)
+    }
+
+    /// Apply a classical dimer-loop update to a 2D system.
+    fn run_two_d_semiclassical_loop_update<R, EN, D>(
+        &mut self,
+        edges: &EN,
+        dual: &D,
+        state: &mut [bool],
+        rng: R,
+    ) -> (usize, bool)
+    where
+        R: Rng,
+        EN: EdgeNavigator,
+        D: DualGraphNavigator,
+    {
+        let bond_select = |s: &mut Self,
+                           state: &[bool],
+                           in_cluster: &mut [bool],
+                           sat_set: &mut BondContainer<usize>,
+                           broken_set: &mut BondContainer<usize>,
+                           rng: &mut R|
+         -> Option<usize> {
+            let mut rng = rng;
+            let is_sat = |bond: usize| -> bool {
+                let p_aligned = edges.bond_prefers_aligned(bond);
+                let (a, b) = edges.vars_for_bond(bond);
+                let aligned = state[a] == state[b];
+                aligned == p_aligned
+            };
+            let other_face = |bond: usize, face: usize| -> usize {
+                match dual.faces_sharing_bond(bond) {
+                    (a, b) if a == face => b,
+                    (a, b) if b == face => a,
+                    _ => unreachable!(),
+                }
+            };
+
+            let mut checked_bonds = s.get_checked_alloc();
+            checked_bonds.resize(dual.n_faces(), false);
+            // Most systems have more sat than broken, choose a broken starting bond
+            let num_broken = (0..checked_bonds.len())
+                .filter(|bond| is_sat(*bond))
+                .count();
+            let first_bond = (0..checked_bonds.len())
+                .filter(|bond| is_sat(*bond))
+                .nth(rng.gen_range(0, num_broken))
+                .unwrap();
+            let mut last_face = dual.faces_sharing_bond(first_bond).0; // Just pick the first one.
+            let mut last_sat = is_sat(first_bond);
+
+            loop {
+                let bonds = dual.bonds_around_face(last_face);
+                let next_bond = uniform_with_filter(
+                    bonds,
+                    |bond| {
+                        let bond = **bond;
+                        let next_bond_checked = checked_bonds[bond];
+                        let sat_match = is_sat(bond) != last_sat;
+                        let (a, b) = edges.vars_for_bond(bond);
+                        let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
+                        let not_visited = !next_bond_checked || bond == first_bond;
+                        sat_match && is_quantum && not_visited
+                    },
+                    &mut rng,
+                )
+                .map(|choice| bonds[choice])?;
+
+                if next_bond == first_bond {
+                    // Success
+                    break Some(());
+                } else {
+                    last_sat = !last_sat;
+                    debug_assert_eq!(last_sat, is_sat(next_bond));
+                    if last_sat {
+                        sat_set.insert(next_bond);
+                    } else {
+                        broken_set.insert(next_bond);
+                    }
+                    last_face = other_face(next_bond, last_face);
+                    checked_bonds[next_bond] = true;
+                }
+            }?;
+            s.return_checked_alloc(checked_bonds);
+
+            // Now we have a path from beginning to end, this defines the boundaries of our
+            // clusters.
+            let mut boundary = s.get_boundary_alloc();
+            let mut checked_face = s.get_checked_alloc();
+
+            checked_face.resize(dual.n_faces(), false);
+            let mut cluster_size = 0;
+            let interior_var = if rng.gen_bool(0.5) {
+                edges.vars_for_bond(first_bond).0
+            } else {
+                edges.vars_for_bond(first_bond).1
+            };
+
+            // Add a variable to the cluster, add all faces to boundary to check.
+            let mut add_var = |var: usize,
+                               checked_face: &[bool],
+                               in_cluster: &mut [bool],
+                               boundary: &mut Vec<(usize, bool)>| {
+                if !in_cluster[var] {
+                    in_cluster[var] = true;
+                    cluster_size += 1;
+                    edges.bonds_for_var(var).iter().cloned().for_each(|bond| {
+                        let (facea, faceb) = dual.faces_sharing_bond(bond);
+                        [facea, faceb].iter().cloned().for_each(|face| {
+                            if !checked_face[face] {
+                                boundary.push((face, false))
+                            }
+                        })
+                    })
+                }
+            };
+            add_var(interior_var, &checked_face, in_cluster, &mut boundary);
+
+            while let Some((face, _)) = boundary.pop() {
+                if !checked_face[face] {
+                    checked_face[face] = true;
+                    let bonds = dual.bonds_around_face(face);
+                    let nbonds = bonds.len();
+                    let starting_relbond = (0..nbonds)
+                        .find(|relbond| {
+                            let (a, _) = edges.vars_for_bond(bonds[*relbond]);
+                            in_cluster[a]
+                        })
+                        .unwrap();
+                    let ok = (0..nbonds - 1)
+                        .map(|relbond| (relbond + starting_relbond) % nbonds)
+                        .try_for_each(|relbond| {
+                            let bond = bonds[relbond];
+                            let (a, b) = edges.vars_for_bond(bond);
+                            let crosses_path =
+                                sat_set.contains(&bond) || broken_set.contains(&bond);
+                            let b_should_be = if crosses_path {
+                                !in_cluster[a]
+                            } else {
+                                in_cluster[a]
+                            };
+                            if !in_cluster[b] {
+                                // Add to the cluster if needed.
+                                if b_should_be {
+                                    add_var(b, &checked_face, in_cluster, &mut boundary)
+                                }
+                                Ok(())
+                            } else {
+                                // Need to check to make sure we didn't get a winding number issue.
+                                // This can happen if the loop is closed but there's only a single
+                                // side due to topology (thing straight line on torus).
+                                if in_cluster[b] != b_should_be {
+                                    Err(())
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                        });
+                    // If encountered a winding number issue.
+                    if ok.is_err() {
+                        s.return_boundary_alloc(boundary);
+                        s.return_checked_alloc(checked_face);
+                        return None;
+                    }
+                }
+            }
+            s.return_boundary_alloc(boundary);
+            s.return_checked_alloc(checked_face);
+            Some(cluster_size)
+        };
+
+        // Check that each bond is connected to the next.
+        debug_assert!((0..dual.n_faces()).all(|face| {
+            let bonds = dual.bonds_around_face(face);
+            (0..bonds.len()).all(|i| {
+                let ba = bonds[i];
+                let bb = bonds[(i + 1) % bonds.len()];
+                match (edges.vars_for_bond(ba), edges.vars_for_bond(bb)) {
+                    ((a, _), (c, _)) if a == c => true,
+                    ((_, b), (c, _)) if b == c => true,
+                    ((a, _), (_, d)) if a == d => true,
+                    ((_, b), (_, d)) if b == d => true,
+                    _ => false,
+                }
+            })
+        }));
         self.run_semiclassical_update(edges, bond_select, state, rng)
     }
 
@@ -72,7 +263,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             &mut BondContainer<usize>, // sat_set
             &mut BondContainer<usize>, // broken_set
             &mut R,                    // rng
-        ) -> usize,
+        ) -> Option<usize>,
     {
         let nvars = self.get_nvars();
         let mut in_cluster = self.get_var_alloc(nvars);
@@ -86,7 +277,8 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             &mut sat_set,
             &mut broken_set,
             &mut rng,
-        );
+        )
+        .unwrap_or(0);
 
         debug_assert!(!sat_set
             .iter()
@@ -111,7 +303,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
         };
 
         // If this can be flipped, then set the right cluster size and do work, otherwise set to 0.
-        if should_edit {
+        if should_edit && cluster_size > 0 {
             // Flip the cluster.
             state.iter_mut().zip(in_cluster.iter()).for_each(|(s, c)| {
                 if *c {
@@ -190,8 +382,29 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
     /// Return the allocation.
     fn return_broken_alloc(&mut self, _alloc: BondContainer<usize>) {}
 
+    /// Get the allocation
+    fn get_checked_alloc(&mut self) -> Vec<bool> {
+        Vec::default()
+    }
+    /// Return the allocation
+    fn return_checked_alloc(&mut self, _bonds: Vec<bool>) {}
+
     /// Called after an update.
     fn post_semiclassical_update_hook(&mut self) {}
+}
+
+fn uniform_with_filter<T, F, R>(slice: &[T], f: F, mut rng: R) -> Option<usize>
+where
+    F: Fn(&&T) -> bool,
+    R: Rng,
+{
+    let choices = slice.iter().filter(f).count();
+    if choices == 0 {
+        None
+    } else {
+        let choice = rng.gen_range(0, choices);
+        Some(choice)
+    }
 }
 
 fn check_borders<O: Op>(op: &O, in_cluster: &[bool]) -> (bool, bool) {
@@ -485,6 +698,17 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.keys.as_ref().unwrap().iter()
     }
+}
+
+/// The dual graph is defined by the set of faces as vertices, and edges between them if they share
+/// a bond. For 2D systems where each bond neighbors exactly 2 faces.
+pub trait DualGraphNavigator {
+    /// Number of faces in dual.
+    fn n_faces(&self) -> usize;
+    /// Get the two faces sharing a bond.
+    fn faces_sharing_bond(&self, bond: usize) -> (usize, usize);
+    /// List of bonds around a given face.
+    fn bonds_around_face(&self, face: usize) -> &[usize];
 }
 
 #[cfg(test)]
