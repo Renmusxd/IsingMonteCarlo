@@ -46,6 +46,7 @@ pub struct FastOpsTemplate<O: Op> {
     classical_boundary_alloc: Option<Vec<(usize, bool)>>,
     classical_sat_alloc: Option<BondContainer<usize>>,
     classical_broken_alloc: Option<BondContainer<usize>>,
+    bond_checked: Option<Vec<bool>>,
     // Optional bond counting.
     bond_counters: Option<Vec<usize>>,
 }
@@ -68,6 +69,7 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             classical_boundary_alloc: Some(vec![]),
             classical_sat_alloc: Some(BondContainer::default()),
             classical_broken_alloc: Some(BondContainer::default()),
+            bond_checked: Some(vec![]),
             bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
         }
     }
@@ -712,5 +714,13 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
     fn return_broken_alloc(&mut self, mut alloc: BondContainer<usize>) {
         alloc.clear();
         self.classical_broken_alloc = Some(alloc);
+    }
+
+    fn get_checked_alloc(&mut self) -> Vec<bool> {
+        self.bond_checked.take().unwrap()
+    }
+
+    fn return_checked_alloc(&mut self, bonds: Vec<bool>) {
+        self.bond_checked = Some(bonds)
     }
 }
