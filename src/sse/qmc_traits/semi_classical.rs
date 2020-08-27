@@ -98,13 +98,13 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                 let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
                 !is_quantum
             };
-            let num_broken = (0..edges.n_bonds()).filter(starting_filter).count();
-            if num_broken == 0 {
+            let choices = (0..edges.n_bonds()).filter(starting_filter).count();
+            if choices == 0 {
                 return None;
             }
             let first_bond = (0..edges.n_bonds())
                 .filter(starting_filter)
-                .nth(rng.gen_range(0, num_broken))
+                .nth(rng.gen_range(0, choices))
                 .unwrap();
             let mut last_face = dual.faces_sharing_bond(first_bond).0; // Just pick the first one.
             let starting_sat = is_sat(first_bond);
