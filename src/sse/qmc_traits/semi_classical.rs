@@ -207,11 +207,10 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                     checked_face[face] = true;
                     let bonds = dual.bonds_around_face(face);
                     let nbonds = bonds.len();
-                    let starting_relbond = (0..nbonds)
-                        .find(|relbond| {
-                            let (a, _) = edges.vars_for_bond(bonds[*relbond]);
-                            in_cluster[a]
-                        });
+                    let starting_relbond = (0..nbonds).find(|relbond| {
+                        let (a, _) = edges.vars_for_bond(bonds[*relbond]);
+                        in_cluster[a]
+                    });
                     if let Some(starting_relbond) = starting_relbond {
                         let ok = (0..nbonds - 1)
                             .map(|relbond| (relbond + starting_relbond) % nbonds)
