@@ -307,12 +307,12 @@ impl<
                         bond_lookup[face[indx]].push(face_indx);
                         match next_v {
                             Some(next_v) => Ok(next_v),
-                            None => Err("Variables must form closed loop.".to_string()),
+                            None => Err(format!("Could not find bond with common var: {}.", last_v)),
                         }
                     }) // Now check that the loop was closed.
                     .and_then(|last_v| match last_v == v {
                         true => Ok(()),
-                        false => Err("Variables must form closed loop.".to_string()),
+                        false => Err("Last bond doesn't lead to first variable, variables must form closed loop.".to_string()),
                     })
             })?;
         if bond_lookup.iter().all(|faces| faces.len() == 2) {
@@ -355,6 +355,10 @@ impl<
 
     /// Enable semiclassical updates on 2D graphs.
     pub fn enable_semiclassical_loops(&mut self, faces: Vec<Vec<usize>>) -> Result<(), String> {
+        if self.semiclassical_bonds.is_none() {
+            let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
+            self.make_semiclassical_bonds(nvars);
+        }
         self.make_semiclassical_dual(faces)
     }
 
