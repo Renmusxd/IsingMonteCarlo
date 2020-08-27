@@ -125,16 +125,70 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                 (state, rng),
                 |_, op, (state, mut rng)| {
                     let new_op = if let Some(op) = op {
-                        let new_op = make_replacement_op(
-                            op,
-                            edges,
-                            &sat_set,
-                            &broken_set,
-                            &in_cluster,
-                            state,
-                            &mut rng,
-                        );
-                        Some(new_op)
+                        // Check input.
+                        debug_assert!(op.get_vars().iter().zip(op.get_inputs().iter()).all(
+                            |(v, b)| {
+                                if in_cluster[*v] {
+                                    state[*v] != *b
+                                } else {
+                                    state[*v] == *b
+                                }
+                            }
+                        ));
+
+                        // Now, if the op has no vars in the cluster ignore it. If all are in the
+                        // cluster then just flip inputs and outputs, if mixed then see later.
+                        let (all_in, all_out) = check_borders(op, &in_cluster);
+                        if all_out {
+                            // Set the state. (could be offdiagonal)
+                            op.get_vars()
+                                .iter()
+                                .zip(op.get_outputs().iter())
+                                .for_each(|(v, b)| {
+                                    state[*v] = *b;
+                                });
+                            None
+                        } else if all_in {
+                            // Flip all inputs, otherwise the same.
+                            let mut new_op = op.clone();
+                            let (ins, outs) = new_op.get_mut_inputs_and_outputs();
+                            ins.iter_mut().for_each(|b| *b = !*b);
+                            outs.iter_mut().for_each(|b| *b = !*b);
+
+                            // Set the state. (could be offdiagonal)
+                            new_op
+                                .get_vars()
+                                .iter()
+                                .zip(new_op.get_outputs().iter())
+                                .for_each(|(v, b)| {
+                                    state[*v] = *b;
+                                });
+                            Some(Some(new_op))
+                        } else {
+                            // We are only covering 2-variable edges.
+                            debug_assert_eq!(op.get_vars().len(), 2);
+                            // We only move diagonal ops.
+                            debug_assert!(op.is_diagonal());
+                            let bond = op.get_bond();
+                            let new_bond = if sat_set.contains(&bond) {
+                                broken_set.get_random(&mut rng).unwrap()
+                            } else {
+                                debug_assert!(
+                                    broken_set.contains(&bond),
+                                    "Bond failed to be broken or not broken: {}",
+                                    bond
+                                );
+                                sat_set.get_random(&mut rng).unwrap()
+                            };
+                            let (new_a, new_b) = edges.vars_for_bond(*new_bond);
+                            let vars = Self::Op::make_vars([new_a, new_b].iter().cloned());
+                            let state =
+                                Self::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
+                            let new_op =
+                                Self::Op::diagonal(vars, *new_bond, state, op.is_constant());
+
+                            Some(Some(new_op))
+                        }
                     } else {
                         None
                     };
@@ -221,81 +275,6 @@ pub fn count_using_iter_ops<C: ClassicalLoopUpdater + ?Sized>(
             (sat, broken)
         }
     })
-}
-
-fn make_replacement_op<O: Op, R: Rng, EN: EdgeNavigator>(
-    op: &O,
-    edges: &EN,
-    sat_set: &BondContainer<usize>,
-    broken_set: &BondContainer<usize>,
-    in_cluster: &[bool],
-    state: &mut [bool],
-    rng: &mut R,
-) -> Option<O> {
-    // Check input.
-    debug_assert!(op
-        .get_vars()
-        .iter()
-        .zip(op.get_inputs().iter())
-        .all(|(v, b)| {
-            if in_cluster[*v] {
-                state[*v] != *b
-            } else {
-                state[*v] == *b
-            }
-        }));
-
-    // Now, if the op has no vars in the cluster ignore it. If all are in the
-    // cluster then just flip inputs and outputs, if mixed then see later.
-    let (all_in, all_out) = check_borders(op, in_cluster);
-    if all_out {
-        // Set the state. (could be offdiagonal)
-        op.get_vars()
-            .iter()
-            .zip(op.get_outputs().iter())
-            .for_each(|(v, b)| {
-                state[*v] = *b;
-            });
-        None
-    } else if all_in {
-        // Flip all inputs, otherwise the same.
-        let mut new_op = op.clone();
-        let (ins, outs) = new_op.get_mut_inputs_and_outputs();
-        ins.iter_mut().for_each(|b| *b = !*b);
-        outs.iter_mut().for_each(|b| *b = !*b);
-
-        // Set the state. (could be offdiagonal)
-        new_op
-            .get_vars()
-            .iter()
-            .zip(new_op.get_outputs().iter())
-            .for_each(|(v, b)| {
-                state[*v] = *b;
-            });
-        Some(new_op)
-    } else {
-        // We are only covering 2-variable edges.
-        debug_assert_eq!(op.get_vars().len(), 2);
-        // We only move diagonal ops.
-        debug_assert!(op.is_diagonal());
-        let bond = op.get_bond();
-        let new_bond = if sat_set.contains(&bond) {
-            broken_set.get_random(rng).unwrap()
-        } else {
-            debug_assert!(
-                broken_set.contains(&bond),
-                "Bond failed to be broken or not broken: {}",
-                bond
-            );
-            sat_set.get_random(rng).unwrap()
-        };
-        let (new_a, new_b) = edges.vars_for_bond(*new_bond);
-        let vars = O::make_vars([new_a, new_b].iter().cloned());
-        let state = O::make_substate([new_a, new_b].iter().map(|v| state[*v]));
-        let new_op = O::diagonal(vars, *new_bond, state, op.is_constant());
-
-        Some(new_op)
-    }
 }
 
 fn add_vars<EN, F, G>(
