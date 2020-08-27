@@ -71,7 +71,7 @@ fn run_four() {
         );
         ising.set_run_semiclassical(true);
         ising.timesteps(1000, 1.0);
-        println!("Average cluster: {}", ising.average_cluster_size());
+        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
     }
 }
 
@@ -120,7 +120,7 @@ fn run_dual_four() -> Result<(), String> {
 
         ising.enable_semiclassical_loops(faces)?;
         ising.timesteps(1000, 1.0);
-        println!("Average cluster: {}", ising.average_cluster_size());
+        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
     }
     Ok(())
 }
@@ -143,7 +143,7 @@ fn run_dual_four_more_q() -> Result<(), String> {
 
         ising.enable_semiclassical_loops(faces)?;
         ising.timesteps(1000, 1.0);
-        println!("Average cluster: {}", ising.average_cluster_size());
+        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
     }
     Ok(())
 }
@@ -167,7 +167,7 @@ fn run_dual_four_random_start() -> Result<(), String> {
 
         ising.enable_semiclassical_loops(faces)?;
         ising.timesteps(1000, 1.0);
-        println!("Average cluster: {}", ising.average_cluster_size());
+        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
     }
     Ok(())
 }

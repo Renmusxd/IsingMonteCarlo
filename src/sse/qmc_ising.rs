@@ -41,6 +41,7 @@ pub struct QMCIsingGraph<
     run_semiclassical_steps: bool,
     semiclassical_bonds: Option<Vec<Vec<usize>>>,
     total_cluster_size: f64,
+    cluster_successes: usize,
     clusters_counted: usize,
     semiclassical_dual: Option<(FaceList, FacesForBond)>,
 }
@@ -117,6 +118,7 @@ impl<
             run_semiclassical_steps: false,
             semiclassical_bonds: None,
             total_cluster_size: 2.0,
+            cluster_successes: 0,
             clusters_counted: 0,
             semiclassical_dual: None,
         }
@@ -468,6 +470,11 @@ impl<
     pub fn average_cluster_size(&self) -> f64 {
         self.total_cluster_size / self.clusters_counted as f64
     }
+
+    /// Ratio of successes/attempts.
+    pub fn average_cluster_success(&self) -> f64 {
+        self.cluster_successes as f64 / self.clusters_counted as f64
+    }
 }
 
 // Can use tuples as EdgeNavigator.
@@ -568,13 +575,15 @@ where
                 self.semiclassical_bonds.as_ref().unwrap().as_slice(),
                 self.edges.as_slice(),
             );
-            self.total_cluster_size += (0..steps_to_run)
+            let (sum_size, sum_succ) = (0..steps_to_run)
                 .map(|_| {
-                    let (size, _) =
-                        manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng);
-                    size
-                })
-                .sum::<usize>() as f64;
+                    manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng)
+                }).fold((0,0), |(sum_size, sum_succ), (cluster, succ)| {
+                    (sum_size + cluster, sum_succ + if succ {1} else {0})
+                });
+
+            self.total_cluster_size += sum_size as f64;
+            self.cluster_successes += sum_succ;
             self.clusters_counted += steps_to_run;
         }
 
@@ -709,6 +718,7 @@ where
             run_semiclassical_steps: self.run_semiclassical_steps,
             semiclassical_bonds: self.semiclassical_bonds.clone(),
             total_cluster_size: self.total_cluster_size,
+            cluster_successes: self.cluster_successes,
             clusters_counted: self.clusters_counted,
             semiclassical_dual: self.semiclassical_dual.clone(),
         }
@@ -778,6 +788,7 @@ pub mod serialization {
         run_semiclassical_steps: bool,
         semiclassical_bonds: Option<Vec<Vec<usize>>>,
         total_cluster_size: f64,
+        cluster_successes: usize,
         clusters_counted: usize,
         semiclassical_dual: Option<(FaceList, FacesForBond)>,
     }
@@ -803,6 +814,7 @@ pub mod serialization {
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
                 total_cluster_size: self.total_cluster_size,
+                cluster_successes: self.cluster_successes,
                 clusters_counted: self.clusters_counted,
                 semiclassical_dual: self.semiclassical_dual,
             }
@@ -829,6 +841,7 @@ pub mod serialization {
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
                 total_cluster_size: self.total_cluster_size,
+                cluster_successes: self.cluster_successes,
                 clusters_counted: self.clusters_counted,
                 semiclassical_dual: self.semiclassical_dual,
             }
