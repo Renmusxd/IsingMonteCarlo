@@ -75,7 +75,6 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                            broken_set: &mut BondContainer<usize>,
                            rng: &mut R|
          -> Option<usize> {
-            let mut rng = rng;
             let is_sat = |bond: usize| -> bool {
                 let p_aligned = edges.bond_prefers_aligned(bond);
                 let (a, b) = edges.vars_for_bond(bond);
@@ -91,51 +90,84 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             };
 
             let mut checked_bonds = s.get_checked_alloc();
-            checked_bonds.resize(dual.n_faces(), false);
+            checked_bonds.resize(edges.n_bonds(), false);
             // Most systems have more sat than broken, choose a broken starting bond
             let num_broken = (0..checked_bonds.len())
                 .filter(|bond| is_sat(*bond))
                 .count();
-            let first_bond = (0..checked_bonds.len())
-                .filter(|bond| is_sat(*bond))
+            let first_bond = (0..edges.n_bonds())
+                .filter(|bond| {
+                    let bond = *bond;
+                    let (a, b) = edges.vars_for_bond(bond);
+                    let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
+                    is_sat(bond) && !is_quantum
+                })
                 .nth(rng.gen_range(0, num_broken))
                 .unwrap();
             let mut last_face = dual.faces_sharing_bond(first_bond).0; // Just pick the first one.
-            let mut last_sat = is_sat(first_bond);
+            let starting_sat = is_sat(first_bond);
 
-            loop {
+            let res = loop {
+                let filter = |bond: &usize, sat_must_be: bool| {
+                    let bond = *bond;
+                    let next_bond_checked = checked_bonds[bond];
+                    let sat_match = is_sat(bond) == sat_must_be;
+                    let (a, b) = edges.vars_for_bond(bond);
+                    let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
+                    let not_visited = !next_bond_checked || bond == first_bond;
+                    sat_match && (!is_quantum) && not_visited
+                };
+                let f = |bond: usize| {
+                    let other_face = other_face(bond, last_face);
+                    dual.bonds_around_face(other_face)
+                        .iter()
+                        .cloned()
+                        .filter(|b| filter(b, starting_sat))
+                        .map(move |next_bond| (bond, next_bond))
+                };
+
                 let bonds = dual.bonds_around_face(last_face);
-                let next_bond = uniform_with_filter(
-                    bonds,
-                    |bond| {
-                        let bond = **bond;
-                        let next_bond_checked = checked_bonds[bond];
-                        let sat_match = is_sat(bond) != last_sat;
-                        let (a, b) = edges.vars_for_bond(bond);
-                        let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
-                        let not_visited = !next_bond_checked || bond == first_bond;
-                        sat_match && is_quantum && not_visited
-                    },
-                    &mut rng,
-                )
-                .map(|choice| bonds[choice])?;
+                let npairs = bonds
+                    .iter()
+                    .cloned()
+                    .filter(|b| filter(b, !starting_sat))
+                    .map(f)
+                    .flatten()
+                    .count();
+                if npairs == 0 {
+                    break None;
+                }
 
-                if next_bond == first_bond {
+                let chosen = rng.gen_range(0, npairs);
+                let (next, after) = bonds
+                    .iter()
+                    .cloned()
+                    .filter(|b| filter(b, !starting_sat))
+                    .map(f)
+                    .flatten()
+                    .nth(chosen)
+                    .unwrap();
+
+                let mut add_bond = |bond: usize, sat: bool| {
+                    if sat {
+                        sat_set.insert(bond);
+                    } else {
+                        broken_set.insert(bond);
+                    }
+                    last_face = other_face(bond, last_face);
+                    checked_bonds[bond] = true;
+                };
+
+                add_bond(next, !starting_sat);
+                if after == first_bond {
                     // Success
                     break Some(());
                 } else {
-                    last_sat = !last_sat;
-                    debug_assert_eq!(last_sat, is_sat(next_bond));
-                    if last_sat {
-                        sat_set.insert(next_bond);
-                    } else {
-                        broken_set.insert(next_bond);
-                    }
-                    last_face = other_face(next_bond, last_face);
-                    checked_bonds[next_bond] = true;
+                    add_bond(after, starting_sat);
                 }
-            }?;
+            };
             s.return_checked_alloc(checked_bonds);
+            res?;
 
             // Now we have a path from beginning to end, this defines the boundaries of our
             // clusters.
@@ -179,42 +211,43 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                         .find(|relbond| {
                             let (a, _) = edges.vars_for_bond(bonds[*relbond]);
                             in_cluster[a]
-                        })
-                        .unwrap();
-                    let ok = (0..nbonds - 1)
-                        .map(|relbond| (relbond + starting_relbond) % nbonds)
-                        .try_for_each(|relbond| {
-                            let bond = bonds[relbond];
-                            let (a, b) = edges.vars_for_bond(bond);
-                            let crosses_path =
-                                sat_set.contains(&bond) || broken_set.contains(&bond);
-                            let b_should_be = if crosses_path {
-                                !in_cluster[a]
-                            } else {
-                                in_cluster[a]
-                            };
-                            if !in_cluster[b] {
-                                // Add to the cluster if needed.
-                                if b_should_be {
-                                    add_var(b, &checked_face, in_cluster, &mut boundary)
-                                }
-                                Ok(())
-                            } else {
-                                // Need to check to make sure we didn't get a winding number issue.
-                                // This can happen if the loop is closed but there's only a single
-                                // side due to topology (thing straight line on torus).
-                                if in_cluster[b] != b_should_be {
-                                    Err(())
-                                } else {
-                                    Ok(())
-                                }
-                            }
                         });
-                    // If encountered a winding number issue.
-                    if ok.is_err() {
-                        s.return_boundary_alloc(boundary);
-                        s.return_checked_alloc(checked_face);
-                        return None;
+                    if let Some(starting_relbond) = starting_relbond {
+                        let ok = (0..nbonds - 1)
+                            .map(|relbond| (relbond + starting_relbond) % nbonds)
+                            .try_for_each(|relbond| {
+                                let bond = bonds[relbond];
+                                let (a, b) = edges.vars_for_bond(bond);
+                                let crosses_path =
+                                    sat_set.contains(&bond) || broken_set.contains(&bond);
+                                let b_should_be = if crosses_path {
+                                    !in_cluster[a]
+                                } else {
+                                    in_cluster[a]
+                                };
+                                if !in_cluster[b] {
+                                    // Add to the cluster if needed.
+                                    if b_should_be {
+                                        add_var(b, &checked_face, in_cluster, &mut boundary)
+                                    }
+                                    Ok(())
+                                } else {
+                                    // Need to check to make sure we didn't get a winding number issue.
+                                    // This can happen if the loop is closed but there's only a single
+                                    // side due to topology (thing straight line on torus).
+                                    if in_cluster[b] != b_should_be {
+                                        Err(())
+                                    } else {
+                                        Ok(())
+                                    }
+                                }
+                            });
+                        // If encountered a winding number issue.
+                        if ok.is_err() {
+                            s.return_boundary_alloc(boundary);
+                            s.return_checked_alloc(checked_face);
+                            return None;
+                        }
                     }
                 }
             }
@@ -391,20 +424,6 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
 
     /// Called after an update.
     fn post_semiclassical_update_hook(&mut self) {}
-}
-
-fn uniform_with_filter<T, F, R>(slice: &[T], f: F, mut rng: R) -> Option<usize>
-where
-    F: Fn(&&T) -> bool,
-    R: Rng,
-{
-    let choices = slice.iter().filter(f).count();
-    if choices == 0 {
-        None
-    } else {
-        let choice = rng.gen_range(0, choices);
-        Some(choice)
-    }
 }
 
 fn check_borders<O: Op>(op: &O, in_cluster: &[bool]) -> (bool, bool) {

@@ -15,6 +15,8 @@ use std::marker::PhantomData;
 pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps, FastOps>;
 
 type VecEdge = Vec<usize>;
+type FaceList = Vec<Vec<usize>>;
+type FacesForBond = Vec<(usize, usize)>;
 
 /// A container to run QMC simulations.
 #[derive(Debug)]
@@ -35,11 +37,12 @@ pub struct QMCIsingGraph<
     phantom: PhantomData<L>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
-    // Optional semiclassical update, for each var a: [(b, ferro/antiferro, bond)...]
+    // Optional semiclassical update
     run_semiclassical_steps: bool,
     semiclassical_bonds: Option<Vec<Vec<usize>>>,
     total_cluster_size: f64,
     clusters_counted: usize,
+    semiclassical_dual: Option<(FaceList, FacesForBond)>,
 }
 
 /// Build a new qmc graph with thread rng.
@@ -115,6 +118,7 @@ impl<
             semiclassical_bonds: None,
             total_cluster_size: 2.0,
             clusters_counted: 0,
+            semiclassical_dual: None,
         }
     }
 
@@ -237,17 +241,21 @@ impl<
             self.make_semiclassical_bonds(state.len());
         }
         let mut manager = self.op_manager.take().unwrap();
-        let rng = self.rng.as_mut().unwrap();
+        let mut rng = self.rng.take().unwrap();
 
-        let edges = EdgeNav {
-            var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
-            edges: &self.edges,
-        };
+        let edges = (
+            self.semiclassical_bonds.as_ref().unwrap().as_slice(),
+            self.edges.as_slice(),
+        );
+        manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng);
 
-        manager.run_semiclassical_edge_update(&edges, &mut state, rng);
+        if let Some(dual) = &self.semiclassical_dual {
+            manager.run_two_d_semiclassical_loop_update(&edges, dual, &mut state, &mut rng);
+        }
 
         self.op_manager = Some(manager);
         self.state = Some(state);
+        self.rng = Some(rng);
     }
 
     fn make_semiclassical_bonds(&mut self, nvars: usize) {
@@ -263,12 +271,83 @@ impl<
         self.semiclassical_bonds = Some(edge_lookup);
     }
 
+    /// Take a list of faces, defined by their edges.
+    fn make_semiclassical_dual(&mut self, mut faces: Vec<Vec<usize>>) -> Result<(), String> {
+        // Rearrange faces to be in line
+        let edges = &self.edges;
+        let other_var = |bond: usize, var: usize| -> Option<usize> {
+            match edges[bond].0.as_slice() {
+                &[a, b] if a == var => Some(b),
+                &[a, b] if b == var => Some(a),
+                [_, _] => None,
+                _ => unreachable!(),
+            }
+        };
+        let mut bond_lookup = vec![vec![]; self.edges.len()];
+        faces
+            .iter_mut()
+            .map(|face| (edges[face[0]].0[0], face))
+            .enumerate()
+            .try_for_each(|(face_indx, (v, face))| {
+                // Make sure each bond shares a variable with its neighbors.
+                (0..face.len())
+                    .try_fold(v, |last_v, indx| {
+                        let next_v = (indx..face.len()).find_map(|swap_indx| {
+                            let swap_bond = face[swap_indx];
+                            match other_var(swap_bond, last_v) {
+                                Some(next_v) => {
+                                    face.swap(indx, swap_indx);
+                                    Some(next_v)
+                                }
+                                None => None,
+                            }
+                        });
+                        bond_lookup[face[indx]].push(face_indx);
+                        match next_v {
+                            Some(next_v) => Ok(next_v),
+                            None => Err("Variables must form closed loop.".to_string()),
+                        }
+                    }) // Now check that the loop was closed.
+                    .and_then(|last_v| match last_v == v {
+                        true => Ok(()),
+                        false => Err("Variables must form closed loop.".to_string()),
+                    })
+            })?;
+        if bond_lookup.iter().all(|faces| faces.len() == 2) {
+            let bond_lookup = bond_lookup
+                .into_iter()
+                .map(|faces| match faces.as_slice() {
+                    [a, b] => (*a, *b),
+                    _ => unreachable!(),
+                })
+                .collect();
+            self.semiclassical_dual = Some((faces, bond_lookup));
+            Ok(())
+        } else {
+            Err("Each bond must define exactly 2 faces".to_string())
+        }
+    }
+
     /// Enable or disable automatic semiclassical steps.
     pub fn set_run_semiclassical(&mut self, run_semiclassical: bool) {
         self.run_semiclassical_steps = run_semiclassical;
         if self.run_semiclassical_steps && self.semiclassical_bonds.is_none() {
             let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
             self.make_semiclassical_bonds(nvars);
+        }
+    }
+
+    /// Enable or disable semiclassical updates on 2D graphs.
+    pub fn set_run_semiclassical_loops(
+        &mut self,
+        run_semiclassical: bool,
+        faces: Vec<Vec<usize>>,
+    ) -> Result<(), String> {
+        if run_semiclassical {
+            self.make_semiclassical_dual(faces)
+        } else {
+            self.semiclassical_dual = None;
+            Ok(())
         }
     }
 
@@ -381,27 +460,33 @@ impl<
     }
 }
 
-struct EdgeNav<'a, 'b> {
-    var_to_bonds: &'a [Vec<usize>],
-    edges: &'b [(VecEdge, f64)],
-}
-
-impl<'a, 'b> EdgeNavigator for EdgeNav<'a, 'b> {
+// Can use tuples as EdgeNavigator.
+impl<'a, 'b> EdgeNavigator for (&'a [Vec<usize>], &'b [(VecEdge, f64)]) {
     fn n_bonds(&self) -> usize {
-        self.edges.len()
+        self.1.len()
     }
-
     fn bonds_for_var(&self, var: usize) -> &[usize] {
-        &self.var_to_bonds[var]
+        &self.0[var]
     }
-
     fn vars_for_bond(&self, bond: usize) -> (usize, usize) {
-        let e = &self.edges[bond].0;
+        let e = &self.1[bond].0;
         (e[0], e[1])
     }
-
     fn bond_prefers_aligned(&self, bond: usize) -> bool {
-        self.edges[bond].1 < 0.0
+        self.1[bond].1 < 0.0
+    }
+}
+
+// Can use tuples as DualGraphNavigator.
+impl DualGraphNavigator for (FaceList, FacesForBond) {
+    fn n_faces(&self) -> usize {
+        self.0.len()
+    }
+    fn faces_sharing_bond(&self, bond: usize) -> (usize, usize) {
+        self.1[bond]
+    }
+    fn bonds_around_face(&self, face: usize) -> &[usize] {
+        &self.0[face]
     }
 }
 
@@ -456,10 +541,6 @@ where
 
         // Perform semiclassical steps if requested.
         if self.run_semiclassical_steps {
-            let edges = EdgeNav {
-                var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
-                edges: &self.edges,
-            };
             // Each semi-classic update only hits a few variables so should be repeated.
             let average_cluster_size = self.total_cluster_size / self.clusters_counted as f64;
             let average_cluster_size = if average_cluster_size < 2.0 {
@@ -473,6 +554,10 @@ where
             } else {
                 steps_to_run as usize
             };
+            let edges = (
+                self.semiclassical_bonds.as_ref().unwrap().as_slice(),
+                self.edges.as_slice(),
+            );
             self.total_cluster_size += (0..steps_to_run)
                 .map(|_| {
                     let (size, _) =
@@ -481,6 +566,14 @@ where
                 })
                 .sum::<usize>() as f64;
             self.clusters_counted += steps_to_run;
+        }
+
+        if let Some(dual) = &self.semiclassical_dual {
+            let edges = (
+                self.semiclassical_bonds.as_ref().unwrap().as_slice(),
+                self.edges.as_slice(),
+            );
+            manager.run_two_d_semiclassical_loop_update(&edges, dual, &mut state, &mut rng);
         }
 
         let mut manager = manager.into();
@@ -607,6 +700,7 @@ where
             semiclassical_bonds: self.semiclassical_bonds.clone(),
             total_cluster_size: self.total_cluster_size,
             clusters_counted: self.clusters_counted,
+            semiclassical_dual: self.semiclassical_dual.clone(),
         }
     }
 }
@@ -675,6 +769,7 @@ pub mod serialization {
         semiclassical_bonds: Option<Vec<Vec<usize>>>,
         total_cluster_size: f64,
         clusters_counted: usize,
+        semiclassical_dual: Option<(FaceList, FacesForBond)>,
     }
 
     impl<
@@ -699,6 +794,7 @@ pub mod serialization {
                 semiclassical_bonds: self.semiclassical_bonds,
                 total_cluster_size: self.total_cluster_size,
                 clusters_counted: self.clusters_counted,
+                semiclassical_dual: self.semiclassical_dual,
             }
         }
     }
@@ -724,6 +820,7 @@ pub mod serialization {
                 semiclassical_bonds: self.semiclassical_bonds,
                 total_cluster_size: self.total_cluster_size,
                 clusters_counted: self.clusters_counted,
+                semiclassical_dual: self.semiclassical_dual,
             }
         }
     }
