@@ -91,17 +91,19 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
 
             let mut checked_bonds = s.get_checked_alloc();
             checked_bonds.resize(edges.n_bonds(), false);
-            // Most systems have more sat than broken, choose a broken starting bond
-            let num_broken = (0..checked_bonds.len())
-                .filter(|bond| is_sat(*bond))
-                .count();
+            // Choose a starting bond
+            let starting_filter = |bond: &usize| {
+                let bond = *bond;
+                let (a, b) = edges.vars_for_bond(bond);
+                let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
+                !is_quantum
+            };
+            let num_broken = (0..edges.n_bonds()).filter(starting_filter).count();
+            if num_broken == 0 {
+                return None;
+            }
             let first_bond = (0..edges.n_bonds())
-                .filter(|bond| {
-                    let bond = *bond;
-                    let (a, b) = edges.vars_for_bond(bond);
-                    let is_quantum = s.var_ever_flips(a) || s.var_ever_flips(b);
-                    is_sat(bond) && !is_quantum
-                })
+                .filter(starting_filter)
                 .nth(rng.gen_range(0, num_broken))
                 .unwrap();
             let mut last_face = dual.faces_sharing_bond(first_bond).0; // Just pick the first one.
