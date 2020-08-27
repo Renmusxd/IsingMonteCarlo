@@ -720,7 +720,8 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
         self.bond_checked.take().unwrap()
     }
 
-    fn return_checked_alloc(&mut self, bonds: Vec<bool>) {
+    fn return_checked_alloc(&mut self, mut bonds: Vec<bool>) {
+        bonds.clear();
         self.bond_checked = Some(bonds)
     }
 }
