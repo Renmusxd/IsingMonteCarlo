@@ -8,7 +8,7 @@ use rand::rngs::ThreadRng;
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::marker::PhantomData;
 
 /// Default QMC graph implementation.
@@ -271,6 +271,14 @@ impl<
                 edge_lookup[b].push(bond);
             });
         self.semiclassical_bonds = Some(edge_lookup);
+    }
+
+    /// Make a dual graph with bonds from a dual graph with variables.
+    pub fn make_bond_dual_from_var_dual(
+        &self,
+        faces: Vec<Vec<usize>>,
+    ) -> Result<Vec<Vec<usize>>, String> {
+        make_dual_from_edges_and_faces(&self.edges, faces.iter().map(|face| face.as_slice()))
     }
 
     /// Take a list of faces, defined by their edges.
@@ -580,10 +588,9 @@ where
                 self.edges.as_slice(),
             );
             let (sum_size, sum_succ) = (0..steps_to_run)
-                .map(|_| {
-                    manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng)
-                }).fold((0,0), |(sum_size, sum_succ), (cluster, succ)| {
-                    (sum_size + cluster, sum_succ + if succ {1} else {0})
+                .map(|_| manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng))
+                .fold((0, 0), |(sum_size, sum_succ), (cluster, succ)| {
+                    (sum_size + cluster, sum_succ + if succ { 1 } else { 0 })
                 });
 
             self.total_cluster_size += sum_size as f64;
@@ -740,6 +747,51 @@ where
     fn into(self) -> QMC<R, M, L> {
         self.into_qmc()
     }
+}
+
+/// Make a dual graph with bonds from a dual graph with variables, and the edges of the graph.
+pub fn make_dual_from_edges_and_faces<'a, It: Iterator<Item = &'a [usize]>>(
+    edges: &[(VecEdge, f64)],
+    faces: It,
+) -> Result<Vec<Vec<usize>>, String> {
+    let lookup = |vars: (usize, usize)| {
+        let vars = (min(vars.0, vars.1), max(vars.0, vars.1));
+        edges
+            .iter()
+            .map(|(check_vars, _)| {
+                let tup = match *check_vars.as_slice() {
+                    [a, b] if a < b => (a, b),
+                    [a, b] if a > b => (b, a),
+                    _ => unreachable!(),
+                };
+                tup
+            })
+            .enumerate()
+            .find(|(_, tup)| vars == *tup)
+            .map(|(i, _)| i)
+    };
+    let dual_graph: Vec<Vec<Option<usize>>> = faces
+        .into_iter()
+        .map(|face| {
+            (0..face.len())
+                .map(|indx| (face[indx], face[(indx + 1) % face.len()]))
+                .map(lookup)
+                .collect()
+        })
+        .collect();
+    dual_graph.iter().try_for_each(|face| {
+        face.iter().try_for_each(|bond| match bond {
+            Some(_) => Ok(()),
+            None => Err(
+                "All variable pairs in face must correspond to an edge in the graph".to_string(),
+            ),
+        })
+    })?;
+    let dual_graph = dual_graph
+        .into_iter()
+        .map(|face| face.into_iter().map(|x| x.unwrap()).collect())
+        .collect();
+    Ok(dual_graph)
 }
 
 #[cfg(feature = "autocorrelations")]

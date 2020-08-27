@@ -100,6 +100,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             };
             let choices = (0..edges.n_bonds()).filter(starting_filter).count();
             if choices == 0 {
+                s.return_checked_alloc(checked_bonds);
                 return None;
             }
             let first_bond = (0..edges.n_bonds())

@@ -71,7 +71,11 @@ fn run_four() {
         );
         ising.set_run_semiclassical(true);
         ising.timesteps(1000, 1.0);
-        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
+        println!(
+            "Size: {}\tSucc: {}",
+            ising.average_cluster_size(),
+            ising.average_cluster_success()
+        );
     }
 }
 
@@ -120,7 +124,11 @@ fn run_dual_four() -> Result<(), String> {
 
         ising.enable_semiclassical_loops(faces)?;
         ising.timesteps(1000, 1.0);
-        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
+        println!(
+            "Size: {}\tSucc: {}",
+            ising.average_cluster_size(),
+            ising.average_cluster_success()
+        );
     }
     Ok(())
 }
@@ -143,11 +151,14 @@ fn run_dual_four_more_q() -> Result<(), String> {
 
         ising.enable_semiclassical_loops(faces)?;
         ising.timesteps(1000, 1.0);
-        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
+        println!(
+            "Size: {}\tSucc: {}",
+            ising.average_cluster_size(),
+            ising.average_cluster_success()
+        );
     }
     Ok(())
 }
-
 
 #[test]
 fn run_dual_four_random_start() -> Result<(), String> {
@@ -156,18 +167,17 @@ fn run_dual_four_random_start() -> Result<(), String> {
         let edges = two_d_periodic(l);
         let faces = two_d_periodic_faces(4, &edges);
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
-            edges,
-            0.01,
-            l * l,
-            rng,
-            None,
-        );
+        let mut ising =
+            DefaultQMCIsingGraph::<SmallRng>::new_with_rng(edges, 0.01, l * l, rng, None);
         ising.set_run_semiclassical(true);
 
         ising.enable_semiclassical_loops(faces)?;
         ising.timesteps(1000, 1.0);
-        println!("Size: {}\tSucc: {}", ising.average_cluster_size(), ising.average_cluster_success());
+        println!(
+            "Size: {}\tSucc: {}",
+            ising.average_cluster_size(),
+            ising.average_cluster_success()
+        );
     }
     Ok(())
 }
