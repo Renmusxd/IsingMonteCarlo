@@ -337,18 +337,17 @@ impl<
         }
     }
 
-    /// Enable or disable semiclassical updates on 2D graphs.
-    pub fn set_run_semiclassical_loops(
+    /// Enable semiclassical updates on 2D graphs.
+    pub fn enable_semiclassical_loops(
         &mut self,
-        run_semiclassical: bool,
         faces: Vec<Vec<usize>>,
     ) -> Result<(), String> {
-        if run_semiclassical {
-            self.make_semiclassical_dual(faces)
-        } else {
-            self.semiclassical_dual = None;
-            Ok(())
-        }
+        self.make_semiclassical_dual(faces)
+    }
+
+    /// Disable semiclassical updates on 2D graphs.
+    pub fn disable_semiclassical_loops(&mut self) {
+        self.semiclassical_dual = None
     }
 
     /// Print debug output.
