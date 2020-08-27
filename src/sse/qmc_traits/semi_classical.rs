@@ -263,13 +263,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             (0..bonds.len()).all(|i| {
                 let ba = bonds[i];
                 let bb = bonds[(i + 1) % bonds.len()];
-                match (edges.vars_for_bond(ba), edges.vars_for_bond(bb)) {
-                    ((a, _), (c, _)) if a == c => true,
-                    ((_, b), (c, _)) if b == c => true,
-                    ((a, _), (_, d)) if a == d => true,
-                    ((_, b), (_, d)) if b == d => true,
-                    _ => false,
-                }
+                tuples_share_entry(edges.vars_for_bond(ba), edges.vars_for_bond(bb))
             })
         }));
         self.run_semiclassical_update(edges, bond_select, state, rng)
@@ -436,6 +430,16 @@ fn check_borders<O: Op>(op: &O, in_cluster: &[bool]) -> (bool, bool) {
             (all_true, all_false)
         },
     )
+}
+
+fn tuples_share_entry<T: Eq>(a: (T, T), b: (T, T)) -> bool {
+    match (a, b) {
+        ((a, _), (c, _)) if a == c => true,
+        ((_, b), (c, _)) if b == c => true,
+        ((a, _), (_, d)) if a == d => true,
+        ((_, b), (_, d)) if b == d => true,
+        _ => false,
+    }
 }
 
 /// Count ops using the iter_ops call.
