@@ -1,5 +1,7 @@
-use crate::sse::arena::*;
+use crate::memory::allocator::Factory;
+use crate::memory::arena::*;
 use crate::sse::qmc_traits::*;
+use crate::sse::qmc_types::{Leg, OpSide};
 use crate::sse::ClassicalLoopUpdater;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
@@ -360,4 +362,76 @@ impl ClassicalLoopUpdater for SimpleOpDiagonal {
             }
         })
     }
+}
+
+impl Factory<Vec<bool>> for SimpleOpLooper {
+    fn get_instance(&mut self) -> Vec<bool> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<bool>) {}
+}
+
+impl Factory<Vec<usize>> for SimpleOpLooper {
+    fn get_instance(&mut self) -> Vec<usize> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<usize>) {}
+}
+
+impl Factory<Vec<Option<usize>>> for SimpleOpLooper {
+    fn get_instance(&mut self) -> Vec<Option<usize>> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<Option<usize>>) {}
+}
+
+impl Factory<Vec<OpSide>> for SimpleOpLooper {
+    fn get_instance(&mut self) -> Vec<OpSide> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<OpSide>) {}
+}
+
+impl Factory<Vec<Leg>> for SimpleOpLooper {
+    fn get_instance(&mut self) -> Vec<Leg> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<Leg>) {}
+}
+
+impl Factory<Vec<f64>> for SimpleOpLooper {
+    fn get_instance(&mut self) -> Vec<f64> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<f64>) {}
+}
+
+impl Factory<BondContainer<usize>> for SimpleOpDiagonal {
+    fn get_instance(&mut self) -> BondContainer<usize> {
+        BondContainer::default()
+    }
+
+    fn return_instance(&mut self, _t: BondContainer<usize>) {}
+}
+
+impl Factory<Vec<usize>> for SimpleOpDiagonal {
+    fn get_instance(&mut self) -> Vec<usize> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<usize>) {}
+}
+
+impl Factory<Vec<bool>> for SimpleOpDiagonal {
+    fn get_instance(&mut self) -> Vec<bool> {
+        vec![]
+    }
+
+    fn return_instance(&mut self, _t: Vec<bool>) {}
 }

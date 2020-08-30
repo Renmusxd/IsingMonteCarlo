@@ -1,10 +1,18 @@
+use crate::memory::allocator::{Factory, StackTuplizer};
 use crate::sse::qmc_traits::directed_loop::*;
 use crate::sse::qmc_traits::op_container::*;
 use crate::sse::qmc_types::*;
 use rand::Rng;
 
 /// Add cluster updates to LoopUpdater.
-pub trait ClusterUpdater: LoopUpdater {
+pub trait ClusterUpdater:
+    LoopUpdater
+    + Factory<Vec<bool>>
+    + Factory<Vec<usize>>
+    + Factory<Vec<Option<usize>>>
+    + Factory<Vec<OpSide>>
+    + Factory<Vec<Leg>>
+{
     /// Flip each cluster in the graph using an rng instance, add to state changes in acc.
     fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R, state: &mut [bool]) {
         if self.get_n() == 0 {
@@ -12,12 +20,13 @@ pub trait ClusterUpdater: LoopUpdater {
         }
 
         let last_p = self.get_last_p().unwrap();
-        let mut boundaries = self.get_boundaries_alloc(last_p + 1);
+        let mut boundaries = StackTuplizer::<Option<usize>, Option<usize>>::new(self);
+        boundaries.resize_each(last_p + 1, || None, || None);
 
         let constant_op_p = self.find_constant_op();
         let n_clusters = if let Some(constant_op_p) = constant_op_p {
             // Expand to edges of cluster
-            let mut frontier = self.get_frontier_alloc();
+            let mut frontier = StackTuplizer::<usize, OpSide>::new(self);
             frontier.push((constant_op_p, OpSide::Outputs));
             frontier.push((constant_op_p, OpSide::Inputs));
 
@@ -50,25 +59,26 @@ pub trait ClusterUpdater: LoopUpdater {
                     })
                 });
                 if let Some(p) = unmapped_p {
-                    frontier.extend_from_slice(&[(p, OpSide::Outputs), (p, OpSide::Inputs)])
+                    frontier.push((p, OpSide::Outputs));
+                    frontier.push((p, OpSide::Inputs));
                 } else {
                     break;
                 }
             }
-            self.return_frontier_alloc(frontier);
+            frontier.dissolve(self);
             cluster_num
         } else {
             // The whole thing is one cluster.
-            boundaries.iter_mut().enumerate().for_each(|(p, v)| {
+            boundaries.iter_mut().enumerate().for_each(|(p, (a, b))| {
                 if self.get_node_ref(p).is_some() {
-                    v.0 = Some(0);
-                    v.1 = Some(0);
+                    *a = Some(0);
+                    *b = Some(0);
                 }
             });
             1
         };
 
-        let mut flips = self.get_flip_alloc();
+        let mut flips: Vec<bool> = self.get_instance();
         flips.extend((0..n_clusters).map(|_| rng.gen_bool(prob)));
         boundaries
             .iter()
@@ -99,8 +109,8 @@ pub trait ClusterUpdater: LoopUpdater {
                     flip_state_for_op(op, OpSide::Outputs)
                 }
             });
-        self.return_boundaries_alloc(boundaries);
-        self.return_flip_alloc(flips);
+        boundaries.dissolve(self);
+        self.return_instance(flips);
         self.post_cluster_update_hook();
     }
 
@@ -118,39 +128,6 @@ pub trait ClusterUpdater: LoopUpdater {
         None
     }
 
-    // Overwrite these functions to reduce the number of memory allocs in the cluster step.
-    /// Get an allocation for the frontier.
-    fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
-        vec![]
-    }
-
-    /// Get an allocation for the interior frontier.
-    fn get_interior_frontier_alloc(&mut self) -> Vec<(usize, Leg)> {
-        vec![]
-    }
-
-    /// Get an allocation for the bounaries.
-    fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
-        vec![(None, None); size]
-    }
-
-    /// Get an allocation for the spin flips.
-    fn get_flip_alloc(&mut self) -> Vec<bool> {
-        vec![]
-    }
-
-    /// Return an alloc.
-    fn return_frontier_alloc(&mut self, _frontier: Vec<(usize, OpSide)>) {}
-
-    /// Return an alloc.
-    fn return_interior_frontier_alloc(&mut self, _interior_frontier: Vec<(usize, Leg)>) {}
-
-    /// Return an alloc.
-    fn return_boundaries_alloc(&mut self, _boundaries: Vec<(Option<usize>, Option<usize>)>) {}
-
-    /// Return an alloc.
-    fn return_flip_alloc(&mut self, _flips: Vec<bool>) {}
-
     /// Called after an update.
     fn post_cluster_update_hook(&mut self) {}
 }
@@ -161,14 +138,15 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
     p: usize,
     leg: Leg,
     cluster_num: usize,
-    boundaries: &mut [(Option<usize>, Option<usize>)],
-    frontier: &mut Vec<(usize, OpSide)>,
+    boundaries: &mut StackTuplizer<Option<usize>, Option<usize>>,
+    frontier: &mut StackTuplizer<usize, OpSide>,
 ) {
-    let mut interior_frontier = c.get_interior_frontier_alloc();
+    let mut interior_frontier = StackTuplizer::<usize, Leg>::new(c);
+
     let node = c.get_node_ref(p).unwrap();
     if node.get_op().get_vars().len() > 1 {
         // Add all legs
-        assert_eq!(boundaries[p], (None, None));
+        debug_assert_eq!(boundaries.at(p), (&None, &None));
         let op = node.get_op_ref();
         let inputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Inputs));
         let outputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Outputs));
@@ -209,7 +187,8 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
         } else {
             // Allow (None, None), (Some(c), None) or (None, Some(c))
             // For (None, None) just set c==cluster_num as a hack.
-            match (boundaries[next_p], cluster_num) {
+            let (a, b) = boundaries.at(next_p);
+            match ((*a, *b), cluster_num) {
                 ((None, None), c) | ((Some(c), None), _) | ((None, Some(c)), _)
                     if c == cluster_num =>
                 {
@@ -226,7 +205,7 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
             }
         }
     }
-    c.return_interior_frontier_alloc(interior_frontier);
+    interior_frontier.dissolve(c);
 }
 
 /// Valid cluster edges are constant and have a single variable, in the future we can rewrite
@@ -249,10 +228,10 @@ fn set_boundary(
     p: usize,
     sel: OpSide,
     cluster_num: usize,
-    boundaries: &mut [(Option<usize>, Option<usize>)],
+    boundaries: &mut StackTuplizer<Option<usize>, Option<usize>>,
 ) -> bool {
-    let t = &boundaries[p];
-    boundaries[p] = match (sel, t) {
+    let t = boundaries.at(p);
+    let res = match (sel, t) {
         (OpSide::Inputs, (None, t1)) => (Some(cluster_num), *t1),
         (OpSide::Outputs, (t0, None)) => (*t0, Some(cluster_num)),
         // Now being careful
@@ -260,10 +239,15 @@ fn set_boundary(
         (OpSide::Outputs, (t0, Some(c))) if *c == cluster_num => (*t0, Some(cluster_num)),
         _ => unreachable!(),
     };
-    matches!(boundaries[p], (Some(_), Some(_)))
+    boundaries.set(p, res);
+    matches!(boundaries.at(p), (Some(_), Some(_)))
 }
 
-fn set_boundaries(p: usize, cluster_num: usize, boundaries: &mut [(Option<usize>, Option<usize>)]) {
+fn set_boundaries(
+    p: usize,
+    cluster_num: usize,
+    boundaries: &mut StackTuplizer<Option<usize>, Option<usize>>,
+) {
     set_boundary(p, OpSide::Inputs, cluster_num, boundaries);
     set_boundary(p, OpSide::Outputs, cluster_num, boundaries);
 }

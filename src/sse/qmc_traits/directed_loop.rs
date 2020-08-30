@@ -1,10 +1,11 @@
+use crate::memory::allocator::{Factory, StackTuplizer};
 use crate::sse::qmc_traits::op_container::*;
 use crate::sse::qmc_types::*;
 use rand::Rng;
 use std::cmp::min;
 
 /// Add loop updates to OpContainer.
-pub trait LoopUpdater: OpContainer {
+pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     /// The type used to contain the Op and handle movement around the worldlines.
     type Node: OpNode<Self::Op>;
 
@@ -131,13 +132,6 @@ pub trait LoopUpdater: OpContainer {
         self.post_loop_update_hook();
     }
 
-    /// Allocation for leg buffer.
-    fn get_leg_weight_alloc(&mut self) -> Vec<(Leg, f64)> {
-        Vec::default()
-    }
-    /// Return the allocation from `get_leg_weight_alloc`.
-    fn return_leg_weight_alloc(&mut self, _alloc: Vec<(Leg, f64)>) {}
-
     /// Called after an update.
     fn post_loop_update_hook(&mut self) {}
 }
@@ -194,7 +188,7 @@ fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
 where
     H: Fn(&L::Op, Leg, Leg) -> f64,
 {
-    let mut legs = l.get_leg_weight_alloc();
+    let mut legs = StackTuplizer::<Leg, f64>::new(l);
     let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
     let sel_op = sel_opnode.get_op();
 
@@ -262,7 +256,7 @@ where
         let next_var_index = next_node.get_op_ref().index_of_var(var_to_match).unwrap();
         let new_entrance_leg = (next_var_index, exit_leg.1.reverse());
 
-        l.return_leg_weight_alloc(legs);
+        legs.dissolve(l);
 
         // If back where we started, close loop and return state changes.
         if (next_op_pos, new_entrance_leg) == initial_op_and_leg {

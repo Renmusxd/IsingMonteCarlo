@@ -6,9 +6,6 @@ pub use qmc_runner::DefaultQMC;
 pub use qmc_traits::semi_classical::*;
 pub use qmc_traits::*;
 
-/// An arena for managing memory efficiently
-pub(crate) mod arena;
-
 /// Calculate the autcorrelation calculations for bonds.
 #[cfg(feature = "autocorrelations")]
 pub mod autocorrelations;

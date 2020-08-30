@@ -1,3 +1,4 @@
+use crate::memory::allocator::{Allocator, Factory};
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
 #[cfg(feature = "serialize")]
@@ -34,20 +35,17 @@ pub struct FastOpsTemplate<O: Op> {
     // for use with semiclassical updates.
     memoized_offdiagonal_ops: Option<Vec<bool>>,
 
-    frontier: Option<Vec<(usize, OpSide)>>,
-    interior_frontier: Option<Vec<(usize, Leg)>>,
-    boundaries: Option<Vec<(Option<usize>, Option<usize>)>>,
-    flips: Option<Vec<bool>>,
-    leg_and_weight: Option<Vec<(Leg, f64)>>,
-    // Reusable vector
-    last_vars_alloc: Option<Vec<Option<usize>>>,
-    // Semi classical updates
-    classical_vars_alloc: Option<Vec<bool>>,
-    classical_boundary_alloc: Option<Vec<(usize, bool)>>,
-    classical_sat_alloc: Option<BondContainer<usize>>,
-    classical_broken_alloc: Option<BondContainer<usize>>,
     // Optional bond counting.
     bond_counters: Option<Vec<usize>>,
+
+    // Allocators to save malloc calls.
+    usize_alloc: Allocator<Vec<usize>>,
+    bool_alloc: Allocator<Vec<bool>>,
+    opside_alloc: Allocator<Vec<OpSide>>,
+    leg_alloc: Allocator<Vec<Leg>>,
+    option_usize_alloc: Allocator<Vec<Option<usize>>>,
+    f64_alloc: Allocator<Vec<f64>>,
+    bond_container_alloc: Allocator<BondContainer<usize>>,
 }
 
 impl<O: Op + Clone> FastOpsTemplate<O> {
@@ -58,17 +56,14 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             p_ends: None,
             var_ends: vec![None; nvars],
             memoized_offdiagonal_ops: Some(vec![false; nvars]),
-            frontier: Some(vec![]),
-            interior_frontier: Some(vec![]),
-            boundaries: Some(vec![]),
-            flips: Some(vec![]),
-            leg_and_weight: Some(vec![]),
-            last_vars_alloc: Some(vec![]),
-            classical_vars_alloc: Some(vec![]),
-            classical_boundary_alloc: Some(vec![]),
-            classical_sat_alloc: Some(BondContainer::default()),
-            classical_broken_alloc: Some(BondContainer::default()),
+            usize_alloc: Allocator::default(),
+            bool_alloc: Allocator::default(),
+            opside_alloc: Allocator::default(),
+            leg_alloc: Allocator::default(),
+            option_usize_alloc: Allocator::default(),
+            f64_alloc: Allocator::default(),
             bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
+            bond_container_alloc: Allocator::default(),
         }
     }
 
@@ -97,7 +92,7 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
         self.p_ends = None;
 
         let last_p: Option<usize> = None;
-        let mut last_vars = self.last_vars_alloc.take().unwrap();
+        let mut last_vars: Vec<Option<usize>> = self.get_instance();
         last_vars.clear();
         last_vars.resize(nvars, None);
 
@@ -154,8 +149,7 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
                     *v_end = last_v.unwrap();
                 }
             });
-
-        self.last_vars_alloc = Some(last_vars);
+        self.return_instance(last_vars);
     }
 
     fn update_offdiagonal_lookup(&mut self) {
@@ -248,7 +242,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
         };
 
         let last_p: Option<usize> = None;
-        let mut last_vars = self.last_vars_alloc.take().unwrap();
+        let mut last_vars: Vec<Option<usize>> = self.get_instance();
         last_vars.clear();
         last_vars.resize(self.var_ends.len(), None);
 
@@ -518,7 +512,7 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                 (t, last_p, last_vars)
             },
         );
-        self.last_vars_alloc = Some(last_vars);
+        self.return_instance(last_vars);
         t
     }
 
@@ -625,61 +619,80 @@ impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {
         (0..n).fold(init, |p, _| self.ops[p].as_ref().unwrap().next_p.unwrap())
     }
 
-    fn get_leg_weight_alloc(&mut self) -> Vec<(Leg, f64)> {
-        self.leg_and_weight.take().unwrap()
-    }
-
-    fn return_leg_weight_alloc(&mut self, mut alloc: Vec<(Leg, f64)>) {
-        alloc.clear();
-        self.leg_and_weight = Some(alloc)
-    }
-
     fn post_loop_update_hook(&mut self) {
         self.update_offdiagonal_lookup()
     }
 }
 
+impl<O: Op + Clone> Factory<Vec<bool>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> Vec<bool> {
+        self.bool_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<bool>) {
+        self.bool_alloc.return_instance(t)
+    }
+}
+
+impl<O: Op + Clone> Factory<Vec<usize>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> Vec<usize> {
+        self.usize_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<usize>) {
+        self.usize_alloc.return_instance(t)
+    }
+}
+
+impl<O: Op + Clone> Factory<Vec<Option<usize>>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> Vec<Option<usize>> {
+        self.option_usize_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<Option<usize>>) {
+        self.option_usize_alloc.return_instance(t)
+    }
+}
+
+impl<O: Op + Clone> Factory<Vec<OpSide>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> Vec<OpSide> {
+        self.opside_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<OpSide>) {
+        self.opside_alloc.return_instance(t)
+    }
+}
+impl<O: Op + Clone> Factory<Vec<Leg>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> Vec<Leg> {
+        self.leg_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<Leg>) {
+        self.leg_alloc.return_instance(t)
+    }
+}
+
+impl<O: Op + Clone> Factory<Vec<f64>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> Vec<f64> {
+        self.f64_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<f64>) {
+        self.f64_alloc.return_instance(t)
+    }
+}
+impl<O: Op + Clone> Factory<BondContainer<usize>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> BondContainer<usize> {
+        self.bond_container_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: BondContainer<usize>) {
+        self.bond_container_alloc.return_instance(t)
+    }
+}
+
 impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
-    // No need for logic here, just reuse some allocations.
-    fn get_frontier_alloc(&mut self) -> Vec<(usize, OpSide)> {
-        self.frontier.take().unwrap()
-    }
-
-    fn get_interior_frontier_alloc(&mut self) -> Vec<(usize, Leg)> {
-        self.interior_frontier.take().unwrap()
-    }
-
-    fn get_boundaries_alloc(&mut self, size: usize) -> Vec<(Option<usize>, Option<usize>)> {
-        let mut boundaries = self.boundaries.take().unwrap();
-        boundaries.resize(size, (None, None));
-        boundaries
-    }
-
-    fn get_flip_alloc(&mut self) -> Vec<bool> {
-        self.flips.take().unwrap()
-    }
-
-    // Put all the clears in the returns so that serialization doesn't save useless data.
-    fn return_frontier_alloc(&mut self, mut frontier: Vec<(usize, OpSide)>) {
-        frontier.clear();
-        self.frontier = Some(frontier);
-    }
-
-    fn return_interior_frontier_alloc(&mut self, mut interior_frontier: Vec<(usize, Leg)>) {
-        interior_frontier.clear();
-        self.interior_frontier = Some(interior_frontier)
-    }
-
-    fn return_boundaries_alloc(&mut self, mut boundaries: Vec<(Option<usize>, Option<usize>)>) {
-        boundaries.clear();
-        self.boundaries = Some(boundaries)
-    }
-
-    fn return_flip_alloc(&mut self, mut flips: Vec<bool>) {
-        flips.clear();
-        self.flips = Some(flips)
-    }
-
     fn post_cluster_update_hook(&mut self) {
         self.update_offdiagonal_lookup()
     }
@@ -710,43 +723,5 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
         } else {
             count_using_iter_ops(self, sat_set, broken_set)
         }
-    }
-
-    fn get_var_alloc(&mut self, nvars: usize) -> Vec<bool> {
-        let mut class = self.classical_vars_alloc.take().unwrap();
-        class.resize(nvars, false);
-        class
-    }
-
-    fn return_var_alloc(&mut self, mut alloc: Vec<bool>) {
-        alloc.clear();
-        self.classical_vars_alloc = Some(alloc)
-    }
-
-    fn get_boundary_alloc(&mut self) -> Vec<(usize, bool)> {
-        self.classical_boundary_alloc.take().unwrap()
-    }
-
-    fn return_boundary_alloc(&mut self, mut alloc: Vec<(usize, bool)>) {
-        alloc.clear();
-        self.classical_boundary_alloc = Some(alloc)
-    }
-
-    fn get_sat_alloc(&mut self) -> BondContainer<usize> {
-        self.classical_sat_alloc.take().unwrap()
-    }
-
-    fn get_broken_alloc(&mut self) -> BondContainer<usize> {
-        self.classical_broken_alloc.take().unwrap()
-    }
-
-    fn return_sat_alloc(&mut self, mut alloc: BondContainer<usize>) {
-        alloc.clear();
-        self.classical_sat_alloc = Some(alloc);
-    }
-
-    fn return_broken_alloc(&mut self, mut alloc: BondContainer<usize>) {
-        alloc.clear();
-        self.classical_broken_alloc = Some(alloc);
     }
 }

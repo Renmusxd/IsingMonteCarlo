@@ -18,6 +18,8 @@
 
 /// Classical monte carlo.
 pub mod classical;
+/// Memory management.
+pub mod memory;
 /// Utilities for parallel tempering.
 #[cfg(feature = "tempering")]
 pub mod parallel_tempering;

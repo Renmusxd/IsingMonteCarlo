@@ -1,3 +1,4 @@
+use crate::memory::allocator::{Factory, Reset, StackTuplizer};
 use crate::sse::qmc_traits::*;
 use rand::Rng;
 #[cfg(feature = "serialize")]
@@ -5,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 /// This does an SSE equivalent of the classical dimer loop update. Requires ising symmetry and
 /// a set of bonds which are equivalent but either sat or broken.
-pub trait ClassicalLoopUpdater: DiagonalUpdater {
+pub trait ClassicalLoopUpdater:
+    DiagonalUpdater + Factory<Vec<bool>> + Factory<Vec<usize>> + Factory<BondContainer<usize>>
+{
     /// Check if variable is ever flipped by an offdiagonal op.
     fn var_ever_flips(&self, var: usize) -> bool;
 
@@ -32,9 +35,11 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
             // Flip a single edge, flipping more is difficult while preserving detailed balance.
             let bond = rng.gen_range(0, edges.n_bonds());
             let (a, b) = edges.vars_for_bond(bond);
-            let mut boundary_alloc = s.get_boundary_alloc();
+            let mut boundary_alloc = StackTuplizer::<usize, bool>::new(s);
+
             let skip_var = |var| s.var_ever_flips(var);
-            boundary_alloc.extend([(a, skip_var(a)), (b, skip_var(b))].iter());
+            boundary_alloc.push((a, skip_var(a)));
+            boundary_alloc.push((b, skip_var(b)));
             let cluster_size = add_vars(
                 edges,
                 is_sat,
@@ -43,7 +48,7 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                 in_cluster,
                 &mut boundary_alloc,
             );
-            s.return_boundary_alloc(boundary_alloc);
+            boundary_alloc.dissolve(s);
             cluster_size
         };
 
@@ -75,9 +80,10 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
         ) -> usize,
     {
         let nvars = self.get_nvars();
-        let mut in_cluster = self.get_var_alloc(nvars);
-        let mut sat_set = self.get_sat_alloc();
-        let mut broken_set = self.get_broken_alloc();
+        let mut in_cluster: Vec<bool> = self.get_instance();
+        in_cluster.resize(nvars, false);
+        let mut sat_set: BondContainer<usize> = self.get_instance();
+        let mut broken_set: BondContainer<usize> = self.get_instance();
 
         let cluster_size = bond_select(
             self,
@@ -196,10 +202,9 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
                 },
             );
         };
-
-        self.return_sat_alloc(sat_set);
-        self.return_broken_alloc(broken_set);
-        self.return_var_alloc(in_cluster);
+        self.return_instance(sat_set);
+        self.return_instance(broken_set);
+        self.return_instance(in_cluster);
         self.post_semiclassical_update_hook();
         (cluster_size, should_edit)
     }
@@ -213,36 +218,36 @@ pub trait ClassicalLoopUpdater: DiagonalUpdater {
         count_using_iter_ops(self, sat_set, broken_set)
     }
 
-    /// Get the allocation.
-    fn get_var_alloc(&mut self, nvars: usize) -> Vec<bool> {
-        let mut alloc = Vec::default();
-        alloc.resize(nvars, false);
-        alloc
-    }
-    /// Return the allocation.
-    fn return_var_alloc(&mut self, _alloc: Vec<bool>) {}
-
-    /// Get the allocation.
-    fn get_boundary_alloc(&mut self) -> Vec<(usize, bool)> {
-        Vec::default()
-    }
-
-    /// Return the allocation.
-    fn return_boundary_alloc(&mut self, _alloc: Vec<(usize, bool)>) {}
-
-    /// Get the allocation
-    fn get_sat_alloc(&mut self) -> BondContainer<usize> {
-        BondContainer::default()
-    }
-    /// Get the allocation
-    fn get_broken_alloc(&mut self) -> BondContainer<usize> {
-        BondContainer::default()
-    }
-
-    /// Return the allocation.
-    fn return_sat_alloc(&mut self, _alloc: BondContainer<usize>) {}
-    /// Return the allocation.
-    fn return_broken_alloc(&mut self, _alloc: BondContainer<usize>) {}
+    // /// Get the allocation.
+    // fn get_var_alloc(&mut self, nvars: usize) -> Vec<bool> {
+    //     let mut alloc = Vec::default();
+    //     alloc.resize(nvars, false);
+    //     alloc
+    // }
+    // /// Return the allocation.
+    // fn return_var_alloc(&mut self, _alloc: Vec<bool>) {}
+    //
+    // /// Get the allocation.
+    // fn get_boundary_alloc(&mut self) -> Vec<(usize, bool)> {
+    //     Vec::default()
+    // }
+    //
+    // /// Return the allocation.
+    // fn return_boundary_alloc(&mut self, _alloc: Vec<(usize, bool)>) {}
+    //
+    // /// Get the allocation
+    // fn get_sat_alloc(&mut self) -> BondContainer<usize> {
+    //     BondContainer::default()
+    // }
+    // /// Get the allocation
+    // fn get_broken_alloc(&mut self) -> BondContainer<usize> {
+    //     BondContainer::default()
+    // }
+    //
+    // /// Return the allocation.
+    // fn return_sat_alloc(&mut self, _alloc: BondContainer<usize>) {}
+    // /// Return the allocation.
+    // fn return_broken_alloc(&mut self, _alloc: BondContainer<usize>) {}
 
     /// Called after an update.
     fn post_semiclassical_update_hook(&mut self) {}
@@ -283,7 +288,7 @@ fn add_vars<EN, F, G>(
     skip_var: G,
     sets: (&mut BondContainer<usize>, &mut BondContainer<usize>),
     in_cluster: &mut [bool],
-    vars: &mut Vec<(usize, bool)>,
+    vars: &mut StackTuplizer<usize, bool>,
 ) -> usize
 where
     EN: EdgeNavigator,
@@ -349,6 +354,12 @@ pub trait EdgeNavigator {
 pub struct BondContainer<T: Clone + Into<usize>> {
     map: Vec<Option<usize>>,
     keys: Option<Vec<T>>,
+}
+
+impl<T: Clone + Into<usize>> Reset for BondContainer<T> {
+    fn reset(&mut self) {
+        self.clear();
+    }
 }
 
 impl<T: Clone + Into<usize>> Default for BondContainer<T> {
