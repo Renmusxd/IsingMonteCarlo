@@ -23,6 +23,21 @@ pub trait DebugOps: OpContainer {
         debug_assert_eq!(diag + offdiag, self.get_n());
         (diag, offdiag)
     }
+
+    /// Count the number of constant ops.
+    fn count_constant_ops(&self) -> usize {
+        let cutoff = self.get_cutoff();
+        let mut constant = 0;
+        for p in 0..cutoff {
+            let op = self.get_pth(p);
+            if let Some(op) = op {
+                if op.is_constant() {
+                    constant += 1;
+                }
+            }
+        }
+        constant
+    }
 }
 
 /// Allows for debugging QMC instances given they have a debuggable OpContainer.
@@ -35,6 +50,10 @@ pub trait QMCDebug {
     /// Count the number of diagonal and offdiagonal ops.
     fn count_diagonal_and_off(&self) -> (usize, usize) {
         self.get_debug_manager().count_diagonal_and_off()
+    }
+    /// Count the number of constant ops.
+    fn count_constant_ops(&self) -> usize {
+        self.get_debug_manager().count_constant_ops()
     }
 }
 
