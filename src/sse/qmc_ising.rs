@@ -39,8 +39,10 @@ pub struct QMCIsingGraph<
     run_semiclassical_steps: bool,
     run_rvb_steps: bool,
     semiclassical_bonds: Option<Vec<Vec<usize>>>,
-    total_cluster_size: f64,
-    clusters_counted: usize,
+    total_semiclassical_cluster_size: f64,
+    semiclassical_clusters_counted: usize,
+    total_rvb_successes: usize,
+    rvb_clusters_counted: usize,
 }
 
 /// Build a new qmc graph with thread rng.
@@ -115,8 +117,10 @@ impl<
             run_semiclassical_steps: false,
             run_rvb_steps: false,
             semiclassical_bonds: None,
-            total_cluster_size: 2.0,
-            clusters_counted: 0,
+            total_semiclassical_cluster_size: 2.0,
+            semiclassical_clusters_counted: 0,
+            total_rvb_successes: 0,
+            rvb_clusters_counted: 0,
         }
     }
 
@@ -407,8 +411,13 @@ impl<
     }
 
     /// Average semiclassical cluster size.
-    pub fn average_cluster_size(&self) -> f64 {
-        self.total_cluster_size / self.clusters_counted as f64
+    pub fn average_semiclassical_cluster_size(&self) -> f64 {
+        self.total_semiclassical_cluster_size / self.semiclassical_clusters_counted as f64
+    }
+
+    /// Average semiclassical cluster size.
+    pub fn rvb_success_rate(&self) -> f64 {
+        self.total_rvb_successes as f64 / self.rvb_clusters_counted as f64
     }
 }
 
@@ -492,7 +501,8 @@ where
                 edges: &self.edges,
             };
             // Each semi-classic update only hits a few variables so should be repeated.
-            let average_cluster_size = self.total_cluster_size / self.clusters_counted as f64;
+            let average_cluster_size =
+                self.total_semiclassical_cluster_size / self.semiclassical_clusters_counted as f64;
             let average_cluster_size = if average_cluster_size < 2.0 {
                 2.0
             } else {
@@ -504,14 +514,14 @@ where
             } else {
                 steps_to_run as usize
             };
-            self.total_cluster_size += (0..steps_to_run)
+            self.total_semiclassical_cluster_size += (0..steps_to_run)
                 .map(|_| {
                     let (size, _) =
                         manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng);
                     size
                 })
                 .sum::<usize>() as f64;
-            self.clusters_counted += steps_to_run;
+            self.semiclassical_clusters_counted += steps_to_run;
         }
 
         if self.run_rvb_steps {
@@ -519,7 +529,15 @@ where
                 var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
                 edges: &self.edges,
             };
-            manager.rvb_update(&edges, &mut state, &mut rng);
+            // Average cluster size is always 2.
+            let steps_to_run = (state.len() + 1) / 2;
+            let (_, succs) = (0..steps_to_run)
+                .map(|_| manager.rvb_update(&edges, &mut state, &mut rng))
+                .fold((0usize, 0usize), |(totvars, nsucc), (nvars, succ)| {
+                    (totvars + nvars, nsucc + if succ { 1 } else { 0 })
+                });
+            self.total_rvb_successes += succs;
+            self.rvb_clusters_counted += steps_to_run;
         }
 
         let mut manager = manager.into();
@@ -645,8 +663,10 @@ where
             run_semiclassical_steps: self.run_semiclassical_steps,
             run_rvb_steps: self.run_rvb_steps,
             semiclassical_bonds: self.semiclassical_bonds.clone(),
-            total_cluster_size: self.total_cluster_size,
-            clusters_counted: self.clusters_counted,
+            total_semiclassical_cluster_size: self.total_semiclassical_cluster_size,
+            semiclassical_clusters_counted: self.semiclassical_clusters_counted,
+            total_rvb_successes: self.total_rvb_successes,
+            rvb_clusters_counted: self.rvb_clusters_counted,
         }
     }
 }
@@ -714,8 +734,10 @@ pub mod serialization {
         run_semiclassical_steps: bool,
         run_rvb_steps: bool,
         semiclassical_bonds: Option<Vec<Vec<usize>>>,
-        total_cluster_size: f64,
-        clusters_counted: usize,
+        total_semiclassical_cluster_size: f64,
+        semiclassical_clusters_counted: usize,
+        total_rvb_successes: usize,
+        rvb_clusters_counted: usize,
     }
 
     impl<M, L> SerializeQMCGraph<M, L>
@@ -739,8 +761,10 @@ pub mod serialization {
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
-                total_cluster_size: self.total_cluster_size,
-                clusters_counted: self.clusters_counted,
+                total_semiclassical_cluster_size: self.total_semiclassical_cluster_size,
+                semiclassical_clusters_counted: self.semiclassical_clusters_counted,
+                total_rvb_successes: self.total_rvb_successes,
+                rvb_clusters_counted: self.rvb_clusters_counted,
             }
         }
     }
@@ -765,8 +789,10 @@ pub mod serialization {
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
-                total_cluster_size: self.total_cluster_size,
-                clusters_counted: self.clusters_counted,
+                total_semiclassical_cluster_size: self.total_semiclassical_cluster_size,
+                semiclassical_clusters_counted: self.semiclassical_clusters_counted,
+                total_rvb_successes: self.total_rvb_successes,
+                rvb_clusters_counted: self.rvb_clusters_counted,
             }
         }
     }

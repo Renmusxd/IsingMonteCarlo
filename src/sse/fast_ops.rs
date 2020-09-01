@@ -729,10 +729,26 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
 
 impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {
-        constant_ops_on_var(self, var, ps)
+        let mut p = self.get_first_p_for_var(var);
+        while let Some(node_p) = p {
+            let node = self.get_node_ref(node_p).unwrap();
+            if node.get_op_ref().is_constant() {
+                ps.push(node_p);
+            }
+            p = self.get_next_p_for_var(var, node).unwrap();
+        }
     }
 
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>) {
-        spin_flips_on_var(self, var, ps)
+        let mut p = self.get_first_p_for_var(var);
+        while let Some(node_p) = p {
+            let node = self.get_node_ref(node_p).unwrap();
+            let op = node.get_op_ref();
+            let relvar = op.index_of_var(var).unwrap();
+            if op.get_inputs()[relvar] != op.get_outputs()[relvar] {
+                ps.push(node_p)
+            };
+            p = self.get_next_p_for_rel_var(relvar, node);
+        }
     }
 }

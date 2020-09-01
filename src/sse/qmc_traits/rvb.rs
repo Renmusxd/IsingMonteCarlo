@@ -1,5 +1,5 @@
 use crate::memory::allocator::Factory;
-use crate::sse::{BondContainer, DiagonalUpdater, EdgeNavigator, LoopUpdater, Op, OpNode};
+use crate::sse::{BondContainer, DiagonalUpdater, EdgeNavigator, Op};
 use rand::Rng;
 
 const SENTINEL_FLIP_POSITION: usize = std::usize::MAX;
@@ -14,7 +14,7 @@ pub trait RVBUpdater:
         edges: &EN,
         state: &mut [bool],
         mut rng: R,
-    ) {
+    ) -> (usize, bool) {
         let contiguous_vars = contiguous_bits(&mut rng);
         let mut vars_list: Vec<usize> = self.get_instance();
         let mut in_cluster: Vec<bool> = self.get_instance();
@@ -75,11 +75,12 @@ pub trait RVBUpdater:
         in_or_around_cluster.resize(state.len(), false);
         vars_list.iter().cloned().for_each(|v| {
             in_or_around_cluster[v] = true;
+            self.spin_flips_on_var(v, &mut all_spin_flips);
             edges.bonds_for_var(v).iter().cloned().for_each(|bond| {
-                let v = edges.other_var_for_bond(v, bond).unwrap();
-                if !in_or_around_cluster[v] {
-                    self.spin_flips_on_var(v, &mut all_spin_flips);
-                    in_or_around_cluster[v] = true;
+                let ov = edges.other_var_for_bond(v, bond).unwrap();
+                if !in_or_around_cluster[ov] {
+                    self.spin_flips_on_var(ov, &mut all_spin_flips);
+                    in_or_around_cluster[ov] = true;
                 };
             });
         });
@@ -110,9 +111,6 @@ pub trait RVBUpdater:
             (state, &mut in_cluster),
         );
         let perform_update = if p_to_succ > 1.0 {
-            if p_to_succ > 4.0 && p_to_succ < 5.0 {
-                println!("Here");
-            }
             true
         } else {
             rng.gen_bool(p_to_succ)
@@ -131,6 +129,8 @@ pub trait RVBUpdater:
             )
         }
 
+        let ret_val = (vars_list.len(), perform_update);
+
         // Return things.
         self.return_instance(sat_bonds);
         self.return_instance(unsat_bonds);
@@ -139,6 +139,7 @@ pub trait RVBUpdater:
         self.return_instance(var_starts);
         self.return_instance(in_cluster);
         self.return_instance(vars_list);
+        ret_val
     }
 
     /// Get up to n contiguous variables by following bonds on edges.
@@ -180,32 +181,6 @@ pub trait RVBUpdater:
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
 }
 
-/// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
-pub fn constant_ops_on_var<L: LoopUpdater>(l: &L, var: usize, ps: &mut Vec<usize>) {
-    let mut p = l.get_first_p_for_var(var);
-    while let Some(node_p) = p {
-        let node = l.get_node_ref(node_p).unwrap();
-        if node.get_op_ref().is_constant() {
-            ps.push(node_p);
-        }
-        p = l.get_next_p_for_var(var, node).unwrap();
-    }
-}
-
-/// Fill `ps` with the p values of spin flips for a given var.
-pub fn spin_flips_on_var<L: LoopUpdater>(l: &L, var: usize, ps: &mut Vec<usize>) {
-    let mut p = l.get_first_p_for_var(var);
-    while let Some(node_p) = p {
-        let node = l.get_node_ref(node_p).unwrap();
-        let op = node.get_op_ref();
-        let relvar = op.index_of_var(var).unwrap();
-        if op.get_inputs()[relvar] != op.get_outputs()[relvar] {
-            ps.push(node_p)
-        };
-        p = l.get_next_p_for_rel_var(relvar, node);
-    }
-}
-
 /// Get returns n with chance 1/2^(n+1)
 /// Chance of failure is 1/2^(2^64) and should therefore be acceptable.
 fn contiguous_bits<R: Rng>(mut r: R) -> usize {
@@ -234,7 +209,7 @@ where
         let in_cluster = match flips {
             (start, stop) if start == stop => true,
             (start, stop) if start < stop => start < p && p <= stop,
-            (start, stop) if start > stop => !(start < p && p <= stop),
+            (start, stop) if start > stop => !(stop < p && p <= start),
             _ => unreachable!(),
         };
         cluster[v] = in_cluster;
@@ -247,21 +222,20 @@ fn fill_bonds<EN, F>(
     vars: &[usize],
     cluster: &[bool],
     state: &mut [bool],
-    ferro: &mut BondContainer<usize>,
-    aferro: &mut BondContainer<usize>,
+    sat: &mut BondContainer<usize>,
+    unsat: &mut BondContainer<usize>,
 ) where
     EN: EdgeNavigator,
     F: Fn(usize, &[bool]) -> bool,
 {
-    vars.iter().cloned().for_each(|v| {
+    vars.iter().cloned().filter(|v| cluster[*v]).for_each(|v| {
         edges.bonds_for_var(v).iter().cloned().for_each(|bond| {
             let ov = edges.other_var_for_bond(v, bond).unwrap();
             if !cluster[ov] {
-                let sat = is_sat(bond, &state);
-                if sat {
-                    ferro.insert(bond);
+                if is_sat(bond, &state) {
+                    sat.insert(bond);
                 } else {
-                    aferro.insert(bond);
+                    unsat.insert(bond);
                 }
             }
         });
@@ -269,10 +243,8 @@ fn fill_bonds<EN, F>(
 }
 
 fn toggle_state(vars: &[usize], cluster: &[bool], state: &mut [bool]) {
-    vars.iter().cloned().for_each(|v| {
-        if cluster[v] {
-            state[v] = !state[v];
-        }
+    vars.iter().cloned().filter(|v| cluster[*v]).for_each(|v| {
+        state[v] = !state[v];
     })
 }
 
@@ -294,7 +266,9 @@ where
     F: Fn(usize, &[bool]) -> bool + Copy,
     G: Fn(usize) -> (usize, usize) + Copy,
 {
-    set_cluster(&vars_list, cluster, 0, bounds);
+    set_cluster(vars_list, cluster, 0, bounds);
+    sat_bonds.clear();
+    unsat_bonds.clear();
     fill_bonds(
         edges,
         is_sat,
@@ -316,22 +290,42 @@ where
         let (mut next_flip, bonds, op_counts, mut mult, state_clust) = acc;
         let (sat_bonds, unsat_bonds) = bonds;
         let (mut nf, mut na) = op_counts;
-        let (state, mut in_cluster) = state_clust;
+        let (state, cluster) = state_clust;
+
+        // Check consistency.
+        debug_assert!(op
+            .get_vars()
+            .iter()
+            .cloned()
+            .zip(op.get_inputs().iter().cloned())
+            .all(|(v, b)| { state[v] == b }));
+
+        // Set state
+        op.get_vars()
+            .iter()
+            .cloned()
+            .zip(op.get_outputs().iter().cloned())
+            .for_each(|(v, b)| {
+                state[v] = b;
+            });
+
         match relevant_spin_flips.get(next_flip) {
             Some(flip_p) if *flip_p == p => {
                 // Get new bonds and mult.
                 // TODO escape hatch if 0.
                 mult *= calculate_mult(sat_bonds, unsat_bonds, nf, na);
+                // Use p+1 since we measure from inputs not outputs.
+                set_cluster(vars_list, cluster, p + 1, bounds);
+
                 sat_bonds.clear();
                 unsat_bonds.clear();
-
-                // Use p+1 since we measure from inputs not outputs.
-                set_cluster(vars_list, &mut in_cluster, p + 1, bounds);
+                na = 0;
+                nf = 0;
                 fill_bonds(
                     edges,
                     is_sat,
                     vars_list,
-                    &in_cluster,
+                    cluster,
                     state,
                     sat_bonds,
                     unsat_bonds,
@@ -357,14 +351,13 @@ where
             (sat_bonds, unsat_bonds),
             (nf, na),
             mult,
-            (state, in_cluster),
+            (state, cluster),
         )
     });
     let (sat_bonds, unsat_bonds) = bonds;
+
     let (nf, na) = op_counts;
-    let p = mult * (sat_bonds.len() as f64 / unsat_bonds.len() as f64).powi(na - nf);
-    println!("P_accept: {}", p);
-    p
+    mult * calculate_mult(sat_bonds, unsat_bonds, nf, na)
 }
 
 fn perform_rvb_update<RVB, EN, F, G, R>(
@@ -385,14 +378,16 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
     // Flip state where appropriate.
     set_cluster(vars_list, cluster, 0, bounds);
     toggle_state(vars_list, cluster, state);
+    sat_bonds.clear();
+    unsat_bonds.clear();
     fill_bonds(
         edges,
         is_sat,
         vars_list,
         cluster,
         state,
-        sat_bonds,
         unsat_bonds,
+        sat_bonds,
     );
 
     let cutoff = rvb.get_cutoff();
@@ -455,19 +450,6 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                     }
                 };
 
-                // Now fill up the new sat and broken bonds.
-                sat_bonds.clear();
-                unsat_bonds.clear();
-                fill_bonds(
-                    edges,
-                    is_sat,
-                    vars_list,
-                    cluster,
-                    state,
-                    sat_bonds,
-                    unsat_bonds,
-                );
-
                 // To update state.
                 let (vars, outs) = new_op
                     .as_ref()
@@ -497,6 +479,19 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                     .for_each(|(v, b)| {
                         state[v] = b;
                     });
+
+                // Now fill up the new sat and broken bonds.
+                sat_bonds.clear();
+                unsat_bonds.clear();
+                fill_bonds(
+                    edges,
+                    is_sat,
+                    vars_list,
+                    cluster,
+                    state,
+                    unsat_bonds,
+                    sat_bonds,
+                );
 
                 new_op.map(Some)
             }
@@ -537,6 +532,7 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                     // We only move diagonal ops.
                     debug_assert!(op.is_diagonal());
                     let bond = op.get_bond();
+
                     let new_bond = if sat_bonds.contains(&bond) {
                         unsat_bonds.get_random(&mut rng).unwrap()
                     } else {
@@ -565,15 +561,15 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
 }
 
 fn calculate_mult(
-    ferro: &BondContainer<usize>,
-    antiferro: &BondContainer<usize>,
+    sat: &BondContainer<usize>,
+    unsat: &BondContainer<usize>,
     nf: i32,
     na: i32,
 ) -> f64 {
-    if nf == na {
+    if nf == na || sat.len() == unsat.len() {
         1.0
     } else {
-        (ferro.len() as f64 / antiferro.len() as f64).powi(na - nf)
+        (sat.len() as f64 / unsat.len() as f64).powi(na - nf)
     }
 }
 

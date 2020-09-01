@@ -24,6 +24,20 @@ fn two_d_periodic(l: usize) -> Vec<(Edge, f64)> {
     right_connects.chain(down_connects).collect()
 }
 
+fn two_unit_cell() -> Vec<(Edge, f64)> {
+    vec![
+        ((0, 1), -1.0),
+        ((1, 2), 1.0),
+        ((2, 3), 1.0),
+        ((3, 0), 1.0),
+        ((1, 7), 1.0),
+        ((4, 5), -1.0),
+        ((5, 6), 1.0),
+        ((6, 7), 1.0),
+        ((7, 4), 1.0),
+    ]
+}
+
 struct EN {
     bonds_for_var: Vec<Vec<usize>>,
     bonds: Vec<((usize, usize), bool)>,
@@ -136,7 +150,64 @@ fn run_two_joined_vars() {
             ),
             (
                 3,
-                FastOp::diagonal(smallvec![0, 1], 0, smallvec![false], false),
+                FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
+            ),
+        ]
+        .into_iter(),
+    );
+    let edges = EN {
+        bonds_for_var: vec![vec![0, 1], vec![0, 1]],
+        bonds: vec![((0, 1), true), ((0, 1), false)],
+    };
+    let mut state = vec![false, false];
+    let mut rng = SmallRng::seed_from_u64(0);
+    (0..100).for_each(|_| {
+        manager.rvb_update(&edges, &mut state, &mut rng);
+    });
+    println!("{:?}", state);
+    assert!(manager.verify(&state));
+}
+
+#[test]
+fn run_two_joined_vars_double() {
+    let mut manager = FastOps::new_from_ops(
+        2,
+        vec![
+            (
+                0,
+                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
+            ),
+            (
+                1,
+                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
+            ),
+            (
+                2,
+                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
+            ),
+            (
+                3,
+                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
+            ),
+            (
+                3,
+                FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
+            ),
+            (
+                4,
+                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
+            ),
+            (
+                5,
+                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
+            ),
+            (
+                6,
+                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
+            ),
+            (
+                7,
+                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
             ),
         ]
         .into_iter(),
@@ -190,4 +261,25 @@ fn run_four() {
         ising.timesteps(1000, 1.0);
         assert!(ising.verify());
     }
+}
+
+#[test]
+fn run_two_unit_cell() {
+    // for i in 0..16 {
+    let i = 0;
+    let edges = two_unit_cell();
+    let nvars = 8;
+    let rng = SmallRng::seed_from_u64(i);
+    let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        edges,
+        1.0,
+        nvars,
+        rng,
+        Some(vec![false; nvars]),
+    );
+    ising.timesteps(1000, 1.0);
+    ising.set_run_rvb(true);
+    ising.timesteps(1000, 1.0);
+    assert!(ising.verify());
+    // }
 }
