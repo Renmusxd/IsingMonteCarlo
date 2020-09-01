@@ -517,17 +517,26 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
         t
     }
 
-    fn iterate_ops<F, T>(&self, mut t: T, f: F) -> T
+    fn try_iterate_ps<F, T, V>(&self, t: T, f: F) -> Result<T, V>
     where
-        F: Fn(&Self, &Self::Op, usize, T) -> T,
+        F: Fn(&Self, Option<&Self::Op>, T) -> Result<T, V>,
+    {
+        self.ops
+            .iter()
+            .try_fold(t, |t, op| f(self, op.as_ref().map(|op| op.get_op_ref()), t))
+    }
+
+    fn try_iterate_ops<F, T, V>(&self, mut t: T, f: F) -> Result<T, V>
+    where
+        F: Fn(&Self, &Self::Op, usize, T) -> Result<T, V>,
     {
         let mut p = self.p_ends.map(|(start, _)| start);
         while let Some(node_p) = p {
             let node = self.ops[node_p].as_ref().unwrap();
-            t = f(self, node.get_op_ref(), node_p, t);
+            t = f(self, node.get_op_ref(), node_p, t)?;
             p = node.next_p;
         }
-        t
+        Ok(t)
     }
 }
 

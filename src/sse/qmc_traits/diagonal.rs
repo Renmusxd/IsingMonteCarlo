@@ -38,34 +38,6 @@ pub trait DiagonalUpdater: OpContainer {
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T);
 
-    /// Iterate through the ops and call f.
-    fn iterate_ps<F, T>(&self, t: T, f: F) -> T
-    where
-        F: Fn(&Self, Option<&Self::Op>, T) -> T,
-    {
-        let cutoff = self.get_cutoff();
-        (0..cutoff).fold(t, |t, p| {
-            let op = self.get_pth(p);
-            f(&self, op, t)
-        })
-    }
-
-    /// Iterate through ops only.
-    fn iterate_ops<F, T>(&self, t: T, f: F) -> T
-    where
-        // self, op, p, accumulator
-        F: Fn(&Self, &Self::Op, usize, T) -> T,
-    {
-        let cutoff = self.get_cutoff();
-        (0..cutoff).fold(t, |t, p| {
-            if let Some(op) = self.get_pth(p) {
-                f(&self, op, p, t)
-            } else {
-                t
-            }
-        })
-    }
-
     /// Mutate only the ops.
     fn mutate_ops<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
     where
@@ -80,6 +52,47 @@ pub trait DiagonalUpdater: OpContainer {
             (op, (p + 1, t))
         });
         t
+    }
+
+    /// Iterate through the ops and call f. Exit early with Err(v).
+    fn try_iterate_ps<F, T, V>(&self, t: T, f: F) -> Result<T, V>
+    where
+        F: Fn(&Self, Option<&Self::Op>, T) -> Result<T, V>;
+
+    /// Iterate through ops only.
+    fn try_iterate_ops<F, T, V>(&self, t: T, f: F) -> Result<T, V>
+    where
+        // self, op, p, accumulator
+        F: Fn(&Self, &Self::Op, usize, T) -> Result<T, V>,
+    {
+        self.try_iterate_ps((0, t), |s, op, (p, t)| {
+            let t = if let Some(op) = op {
+                f(s, op, p, t)?
+            } else {
+                t
+            };
+            Ok((p + 1, t))
+        })
+        .map(|(_, t)| t)
+    }
+
+    /// Iterate through the ops and call f.
+    fn iterate_ps<F, T>(&self, t: T, f: F) -> T
+    where
+        F: Fn(&Self, Option<&Self::Op>, T) -> T,
+    {
+        self.try_iterate_ps(t, |s, op, t| -> Result<T, ()> { Ok(f(s, op, t)) })
+            .unwrap()
+    }
+
+    /// Iterate through ops only.
+    fn iterate_ops<F, T>(&self, t: T, f: F) -> T
+    where
+        // self, op, p, accumulator
+        F: Fn(&Self, &Self::Op, usize, T) -> T,
+    {
+        self.try_iterate_ops(t, |s, op, p, t| -> Result<T, ()> { Ok(f(s, op, p, t)) })
+            .unwrap()
     }
 
     /// Perform a diagonal update step with thread rng.

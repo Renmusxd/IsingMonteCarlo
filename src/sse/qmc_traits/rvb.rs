@@ -102,16 +102,24 @@ pub trait RVBUpdater:
         let mut unsat_bonds: BondContainer<usize> = self.get_instance();
 
         let bounds = |relv: usize| (flip_positions[2 * relv], flip_positions[2 * relv + 1]);
+
+        // Using a copy is good for large (beta E)/(nvars)
+        let mut state_copy: Vec<bool> = self.get_instance();
+        state_copy.extend_from_slice(state);
         let p_to_succ = calculate_graph_flip_prob(
             self,
             (edges, is_sat),
             (&vars_list, bounds),
             &all_spin_flips,
             (&mut sat_bonds, &mut unsat_bonds),
-            (state, &mut in_cluster),
+            (&mut state_copy, &mut in_cluster),
         );
+        self.return_instance(state_copy);
+
         let perform_update = if p_to_succ > 1.0 {
             true
+        } else if p_to_succ <= std::f64::EPSILON {
+            false
         } else {
             rng.gen_bool(p_to_succ)
         };
@@ -250,8 +258,7 @@ fn toggle_state(vars: &[usize], cluster: &[bool], state: &mut [bool]) {
 
 /// Calculate the probability of performing an update on vars in `vars_list`, flips between p values
 /// defined by `bounds`.
-/// Leaves in_cluster and X_bonds in the state at p=0 / p=pmax
-/// Leaves state unchanged at the end.
+/// Could leave state modified.
 fn calculate_graph_flip_prob<RVB, EN, F, G>(
     rvb: &RVB,
     (edges, is_sat): (&EN, F),
@@ -286,12 +293,11 @@ where
         1.0f64,
         (state, cluster),
     );
-    let (_, bonds, op_counts, mult, _) = rvb.iterate_ops(t, |_, op, p, acc| {
+    let res = rvb.try_iterate_ops(t, |_, op, p, acc| {
         let (mut next_flip, bonds, op_counts, mut mult, state_clust) = acc;
         let (sat_bonds, unsat_bonds) = bonds;
         let (mut nf, mut na) = op_counts;
         let (state, cluster) = state_clust;
-
         // Check consistency.
         debug_assert!(op
             .get_vars()
@@ -312,8 +318,10 @@ where
         match relevant_spin_flips.get(next_flip) {
             Some(flip_p) if *flip_p == p => {
                 // Get new bonds and mult.
-                // TODO escape hatch if 0.
                 mult *= calculate_mult(sat_bonds, unsat_bonds, nf, na);
+                if mult <= std::f64::EPSILON {
+                    return Err(());
+                }
                 // Use p+1 since we measure from inputs not outputs.
                 set_cluster(vars_list, cluster, p + 1, bounds);
 
@@ -340,24 +348,41 @@ where
             _ => {
                 // See whether this op is nf or na.
                 if sat_bonds.contains(&op.get_bond()) {
+                    // (X/0)^(0 - Y) = 0
+                    if unsat_bonds.is_empty() {
+                        return Err(());
+                    }
                     nf += 1;
                 } else if unsat_bonds.contains(&op.get_bond()) {
+                    // (0/X)^(Y - 0) = 0
+                    if sat_bonds.is_empty() {
+                        return Err(());
+                    }
                     na += 1;
                 }
             }
         };
-        (
+
+        Ok((
             next_flip,
             (sat_bonds, unsat_bonds),
             (nf, na),
             mult,
             (state, cluster),
-        )
+        ))
     });
-    let (sat_bonds, unsat_bonds) = bonds;
+    if let Ok((_, bonds, op_counts, mult, _)) = res {
+        if mult > std::f64::EPSILON {
+            let (sat_bonds, unsat_bonds) = bonds;
 
-    let (nf, na) = op_counts;
-    mult * calculate_mult(sat_bonds, unsat_bonds, nf, na)
+            let (nf, na) = op_counts;
+            mult * calculate_mult(sat_bonds, unsat_bonds, nf, na)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    }
 }
 
 fn perform_rvb_update<RVB, EN, F, G, R>(
