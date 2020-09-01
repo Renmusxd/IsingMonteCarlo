@@ -43,7 +43,7 @@ impl<O: Op> DebugOps for FastOpsTemplate<O> {}
 impl<R, M, L> QMCDebug for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: ClassicalLoopUpdater + OpContainerConstructor + DebugOps + Into<L>,
+    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + DebugOps + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     type M = M;

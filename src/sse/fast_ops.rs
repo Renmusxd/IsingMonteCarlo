@@ -56,14 +56,15 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             p_ends: None,
             var_ends: vec![None; nvars],
             memoized_offdiagonal_ops: Some(vec![false; nvars]),
-            usize_alloc: Allocator::default(),
-            bool_alloc: Allocator::default(),
-            opside_alloc: Allocator::default(),
-            leg_alloc: Allocator::default(),
-            option_usize_alloc: Allocator::default(),
-            f64_alloc: Allocator::default(),
             bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
-            bond_container_alloc: Allocator::default(),
+            // Set bounds to make sure there are not "leaks"
+            usize_alloc: Allocator::new_with_max_in_flight(4),
+            bool_alloc: Allocator::new_with_max_in_flight(2),
+            opside_alloc: Allocator::new_with_max_in_flight(1),
+            leg_alloc: Allocator::new_with_max_in_flight(1),
+            option_usize_alloc: Allocator::new_with_max_in_flight(2),
+            f64_alloc: Allocator::new_with_max_in_flight(1),
+            bond_container_alloc: Allocator::new_with_max_in_flight(2),
         }
     }
 
@@ -518,12 +519,12 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
 
     fn iterate_ops<F, T>(&self, mut t: T, f: F) -> T
     where
-        F: Fn(&Self, &Self::Op, T) -> T,
+        F: Fn(&Self, &Self::Op, usize, T) -> T,
     {
         let mut p = self.p_ends.map(|(start, _)| start);
         while let Some(node_p) = p {
             let node = self.ops[node_p].as_ref().unwrap();
-            t = f(self, node.get_op_ref(), t);
+            t = f(self, node.get_op_ref(), node_p, t);
             p = node.next_p;
         }
         t
@@ -723,5 +724,15 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
         } else {
             count_using_iter_ops(self, sat_set, broken_set)
         }
+    }
+}
+
+impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
+    fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {
+        constant_ops_on_var(self, var, ps)
+    }
+
+    fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>) {
+        spin_flips_on_var(self, var, ps)
     }
 }

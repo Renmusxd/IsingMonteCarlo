@@ -126,77 +126,72 @@ pub trait ClassicalLoopUpdater:
             });
 
             // Move ops around the border.
-            self.mutate_ps(
+            self.mutate_ops(
                 self.get_cutoff(),
                 (state, rng),
-                |_, op, (state, mut rng)| {
-                    let new_op = if let Some(op) = op {
-                        // Check input.
-                        debug_assert!(op.get_vars().iter().zip(op.get_inputs().iter()).all(
-                            |(v, b)| {
-                                if in_cluster[*v] {
-                                    state[*v] != *b
-                                } else {
-                                    state[*v] == *b
-                                }
-                            }
-                        ));
-
-                        // Now, if the op has no vars in the cluster ignore it. If all are in the
-                        // cluster then just flip inputs and outputs, if mixed then see later.
-                        let (all_in, all_out) = check_borders(op, &in_cluster);
-                        if all_out {
-                            // Set the state. (could be offdiagonal)
-                            op.get_vars()
-                                .iter()
-                                .zip(op.get_outputs().iter())
-                                .for_each(|(v, b)| {
-                                    state[*v] = *b;
-                                });
-                            None
-                        } else if all_in {
-                            // Flip all inputs, otherwise the same.
-                            let mut new_op = op.clone();
-                            let (ins, outs) = new_op.get_mut_inputs_and_outputs();
-                            ins.iter_mut().for_each(|b| *b = !*b);
-                            outs.iter_mut().for_each(|b| *b = !*b);
-
-                            // Set the state. (could be offdiagonal)
-                            new_op
-                                .get_vars()
-                                .iter()
-                                .zip(new_op.get_outputs().iter())
-                                .for_each(|(v, b)| {
-                                    state[*v] = *b;
-                                });
-                            Some(Some(new_op))
-                        } else {
-                            // We are only covering 2-variable edges.
-                            debug_assert_eq!(op.get_vars().len(), 2);
-                            // We only move diagonal ops.
-                            debug_assert!(op.is_diagonal());
-                            let bond = op.get_bond();
-                            let new_bond = if sat_set.contains(&bond) {
-                                broken_set.get_random(&mut rng).unwrap()
+                |_, op, _, (state, mut rng)| {
+                    // Check input.
+                    debug_assert!(op.get_vars().iter().zip(op.get_inputs().iter()).all(
+                        |(v, b)| {
+                            if in_cluster[*v] {
+                                state[*v] != *b
                             } else {
-                                debug_assert!(
-                                    broken_set.contains(&bond),
-                                    "Bond failed to be broken or not broken: {}",
-                                    bond
-                                );
-                                sat_set.get_random(&mut rng).unwrap()
-                            };
-                            let (new_a, new_b) = edges.vars_for_bond(*new_bond);
-                            let vars = Self::Op::make_vars([new_a, new_b].iter().cloned());
-                            let state =
-                                Self::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
-                            let new_op =
-                                Self::Op::diagonal(vars, *new_bond, state, op.is_constant());
-
-                            Some(Some(new_op))
+                                state[*v] == *b
+                            }
                         }
-                    } else {
+                    ));
+
+                    // Now, if the op has no vars in the cluster ignore it. If all are in the
+                    // cluster then just flip inputs and outputs, if mixed then see later.
+                    let (all_in, all_out) = check_borders(op, &in_cluster);
+                    let new_op = if all_out {
+                        // Set the state. (could be offdiagonal)
+                        op.get_vars()
+                            .iter()
+                            .zip(op.get_outputs().iter())
+                            .for_each(|(v, b)| {
+                                state[*v] = *b;
+                            });
                         None
+                    } else if all_in {
+                        // Flip all inputs, otherwise the same.
+                        let mut new_op = op.clone();
+                        let (ins, outs) = new_op.get_mut_inputs_and_outputs();
+                        ins.iter_mut().for_each(|b| *b = !*b);
+                        outs.iter_mut().for_each(|b| *b = !*b);
+
+                        // Set the state. (could be offdiagonal)
+                        new_op
+                            .get_vars()
+                            .iter()
+                            .zip(new_op.get_outputs().iter())
+                            .for_each(|(v, b)| {
+                                state[*v] = *b;
+                            });
+                        Some(Some(new_op))
+                    } else {
+                        // We are only covering 2-variable edges.
+                        debug_assert_eq!(op.get_vars().len(), 2);
+                        // We only move diagonal ops.
+                        debug_assert!(op.is_diagonal());
+                        let bond = op.get_bond();
+                        let new_bond = if sat_set.contains(&bond) {
+                            broken_set.get_random(&mut rng).unwrap()
+                        } else {
+                            debug_assert!(
+                                broken_set.contains(&bond),
+                                "Bond failed to be broken or not broken: {}",
+                                bond
+                            );
+                            sat_set.get_random(&mut rng).unwrap()
+                        };
+                        let (new_a, new_b) = edges.vars_for_bond(*new_bond);
+                        let vars = Self::Op::make_vars([new_a, new_b].iter().cloned());
+                        let state =
+                            Self::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
+                        let new_op = Self::Op::diagonal(vars, *new_bond, state, op.is_constant());
+
+                        Some(Some(new_op))
                     };
                     (new_op, (state, rng))
                 },
@@ -218,50 +213,8 @@ pub trait ClassicalLoopUpdater:
         count_using_iter_ops(self, sat_set, broken_set)
     }
 
-    // /// Get the allocation.
-    // fn get_var_alloc(&mut self, nvars: usize) -> Vec<bool> {
-    //     let mut alloc = Vec::default();
-    //     alloc.resize(nvars, false);
-    //     alloc
-    // }
-    // /// Return the allocation.
-    // fn return_var_alloc(&mut self, _alloc: Vec<bool>) {}
-    //
-    // /// Get the allocation.
-    // fn get_boundary_alloc(&mut self) -> Vec<(usize, bool)> {
-    //     Vec::default()
-    // }
-    //
-    // /// Return the allocation.
-    // fn return_boundary_alloc(&mut self, _alloc: Vec<(usize, bool)>) {}
-    //
-    // /// Get the allocation
-    // fn get_sat_alloc(&mut self) -> BondContainer<usize> {
-    //     BondContainer::default()
-    // }
-    // /// Get the allocation
-    // fn get_broken_alloc(&mut self) -> BondContainer<usize> {
-    //     BondContainer::default()
-    // }
-    //
-    // /// Return the allocation.
-    // fn return_sat_alloc(&mut self, _alloc: BondContainer<usize>) {}
-    // /// Return the allocation.
-    // fn return_broken_alloc(&mut self, _alloc: BondContainer<usize>) {}
-
     /// Called after an update.
     fn post_semiclassical_update_hook(&mut self) {}
-}
-
-fn check_borders<O: Op>(op: &O, in_cluster: &[bool]) -> (bool, bool) {
-    op.get_vars().iter().cloned().map(|v| in_cluster[v]).fold(
-        (true, true),
-        |(all_true, all_false), b| {
-            let all_true = all_true & b;
-            let all_false = all_false & !b;
-            (all_true, all_false)
-        },
-    )
 }
 
 /// Count ops using the iter_ops call.
@@ -270,7 +223,7 @@ pub fn count_using_iter_ops<C: ClassicalLoopUpdater + ?Sized>(
     sat_set: &BondContainer<usize>,
     broken_set: &BondContainer<usize>,
 ) -> (usize, usize) {
-    c.iterate_ops((0, 0), |_, op, acc| {
+    c.iterate_ops((0, 0), |_, op, _, acc| {
         let (sat, broken) = acc;
         if sat_set.contains(&op.get_bond()) {
             (sat + 1, broken)

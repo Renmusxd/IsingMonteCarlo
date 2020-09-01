@@ -53,16 +53,33 @@ pub trait DiagonalUpdater: OpContainer {
     /// Iterate through ops only.
     fn iterate_ops<F, T>(&self, t: T, f: F) -> T
     where
-        F: Fn(&Self, &Self::Op, T) -> T,
+        // self, op, p, accumulator
+        F: Fn(&Self, &Self::Op, usize, T) -> T,
     {
         let cutoff = self.get_cutoff();
         (0..cutoff).fold(t, |t, p| {
             if let Some(op) = self.get_pth(p) {
-                f(&self, op, t)
+                f(&self, op, p, t)
             } else {
                 t
             }
         })
+    }
+
+    /// Mutate only the ops.
+    fn mutate_ops<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
+    where
+        F: Fn(&Self, &Self::Op, usize, T) -> (Option<Option<Self::Op>>, T),
+    {
+        let (_, t) = self.mutate_ps(cutoff, (0, t), |s, op, (p, t)| {
+            let (op, t) = if let Some(op) = op {
+                f(s, op, p, t)
+            } else {
+                (None, t)
+            };
+            (op, (p + 1, t))
+        });
+        t
     }
 
     /// Perform a diagonal update step with thread rng.

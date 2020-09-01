@@ -1,5 +1,5 @@
-use crate::parallel_tempering::tempering_traits::*;
 use crate::sse::fast_ops::FastOps;
+use crate::sse::parallel_tempering::tempering_traits::*;
 use crate::sse::qmc_ising::QMCIsingGraph;
 use crate::sse::qmc_traits::*;
 use itertools::Itertools;
@@ -703,20 +703,20 @@ pub mod serialization {
     /// A tempering container with no rng. Just for serialization.
     #[derive(Debug, Serialize, Deserialize)]
     pub struct SerializeTemperingContainer<
-        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > {
         graphs: Vec<SerializeGraphBeta<M, L>>,
         total_swaps: u64,
     }
 
-    impl<
-            R1: Rng,
-            R2: Rng,
-            M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
-            L: ClusterUpdater + Into<M>,
-        > Into<SerializeTemperingContainer<M, L>>
+    impl<R1, R2, M, L> Into<SerializeTemperingContainer<M, L>>
         for TemperingContainer<R1, QMCIsingGraph<R2, M, L>>
+    where
+        R1: Rng,
+        R2: Rng,
+        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
+        L: ClusterUpdater + Into<M>,
     {
         fn into(self) -> SerializeTemperingContainer<M, L> {
             SerializeTemperingContainer {
@@ -730,10 +730,10 @@ pub mod serialization {
         }
     }
 
-    impl<
-            M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
-            L: ClusterUpdater + Into<M>,
-        > SerializeTemperingContainer<M, L>
+    impl<M, L> SerializeTemperingContainer<M, L>
+    where
+        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
+        L: ClusterUpdater + Into<M>,
     {
         /// Convert into a tempering container using the set of rngs.
         pub fn into_tempering_container_from_vec<R1: Rng, R2: Rng>(

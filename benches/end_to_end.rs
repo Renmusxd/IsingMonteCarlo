@@ -44,39 +44,6 @@ mod tests {
     fn one_d(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g = QMCIsingGraph::<SmallRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
-            one_d_periodic(l),
-            1.0,
-            l,
-            rng,
-            None,
-        );
-        let beta = 1.0;
-        g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(1000, beta));
-    }
-
-    #[bench]
-    fn two_d(b: &mut Bencher) {
-        let l = 4;
-        let rng = SmallRng::seed_from_u64(1234);
-        let mut g = QMCIsingGraph::<SmallRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
-            two_d_periodic(l),
-            1.0,
-            l,
-            rng,
-            None,
-        );
-
-        let beta = 1.0;
-        g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(1000, beta));
-    }
-
-    #[bench]
-    fn one_d_new(b: &mut Bencher) {
-        let l = 16;
-        let rng = SmallRng::seed_from_u64(1234);
         let mut g = QMCIsingGraph::<SmallRng, FastOps, FastOps>::new_with_rng(
             one_d_periodic(l),
             1.0,
@@ -90,7 +57,7 @@ mod tests {
     }
 
     #[bench]
-    fn two_d_new(b: &mut Bencher) {
+    fn two_d(b: &mut Bencher) {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g = QMCIsingGraph::<SmallRng, FastOps, FastOps>::new_with_rng(
@@ -108,23 +75,6 @@ mod tests {
 
     #[bench]
     fn two_d_large(b: &mut Bencher) {
-        let l = 16;
-        let rng = SmallRng::seed_from_u64(1234);
-        let mut g = QMCIsingGraph::<SmallRng, SimpleOpDiagonal, SimpleOpLooper>::new_with_rng(
-            two_d_periodic(l),
-            1.0,
-            l,
-            rng,
-            None,
-        );
-
-        let beta = 1.0;
-        g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(100, beta));
-    }
-
-    #[bench]
-    fn two_d_large_new(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g = QMCIsingGraph::<SmallRng, FastOps, FastOps>::new_with_rng(

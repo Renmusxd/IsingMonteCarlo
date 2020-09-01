@@ -20,8 +20,5 @@
 pub mod classical;
 /// Memory management.
 pub mod memory;
-/// Utilities for parallel tempering.
-#[cfg(feature = "tempering")]
-pub mod parallel_tempering;
 /// QMC algorithms and traits.
 pub mod sse;

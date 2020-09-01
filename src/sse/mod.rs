@@ -3,6 +3,7 @@
 pub use qmc_debug::*;
 pub use qmc_ising::DefaultQMCIsingGraph;
 pub use qmc_runner::DefaultQMC;
+pub use qmc_traits::rvb::*;
 pub use qmc_traits::semi_classical::*;
 pub use qmc_traits::*;
 
@@ -25,11 +26,15 @@ pub mod qmc_traits;
 /// QMC utility classes.
 pub mod qmc_types;
 
-/// A simpler operator management.
-pub mod simple_ops;
+/// Utilities for parallel tempering.
+#[cfg(feature = "tempering")]
+pub mod parallel_tempering;
 
 /// Debugging stuff.
 pub mod qmc_debug;
 
 #[cfg(feature = "autocorrelations")]
 pub use autocorrelations::*;
+
+#[cfg(feature = "tempering")]
+pub use parallel_tempering::*;

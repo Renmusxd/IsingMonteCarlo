@@ -21,16 +21,42 @@ impl<T> Reset for Vec<T> {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub(crate) struct Allocator<T: Default + Reset> {
     instances: Vec<T>,
+    gen_more: bool,
+}
+
+impl<T: Default + Reset> Allocator<T> {
+    pub(crate) fn new() -> Self {
+        Self {
+            instances: Vec::default(),
+            gen_more: true,
+        }
+    }
+
+    pub(crate) fn new_with_max_in_flight(max_in_flight: usize) -> Self {
+        let mut instances = Vec::with_capacity(max_in_flight);
+        instances.resize_with(max_in_flight, T::default);
+        Self {
+            instances,
+            gen_more: false,
+        }
+    }
 }
 
 impl<T: Default + Reset> Factory<T> for Allocator<T> {
+    #[track_caller]
     fn get_instance(&mut self) -> T {
         match self.instances.pop() {
-            None => T::default(),
+            None => {
+                if self.gen_more {
+                    T::default()
+                } else {
+                    panic!("Out of instances.")
+                }
+            }
             Some(t) => t,
         }
     }

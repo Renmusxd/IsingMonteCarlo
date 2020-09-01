@@ -3,7 +3,6 @@ use crate::sse::qmc_ising::QMCIsingGraph;
 use crate::sse::qmc_runner::ManagerRef;
 use crate::sse::qmc_runner::QMC;
 use crate::sse::qmc_traits::*;
-use crate::sse::simple_ops::SimpleOpDiagonal;
 use crate::sse::ClassicalLoopUpdater;
 use rand::Rng;
 
@@ -97,7 +96,7 @@ where
 impl<R, M, L> SwapManagers for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
+    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
     L: ClusterUpdater + Into<M>,
 {
     fn can_swap_graphs(&self, other: &Self) -> bool {
@@ -120,7 +119,7 @@ where
 impl<R, M, L> OpWeights for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + Into<L> + OpWeights,
+    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
     L: ClusterUpdater + Into<M>,
 {
     fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
@@ -136,7 +135,7 @@ where
 impl<
         'a,
         R: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > OpHam for QMCIsingGraph<R, M, L>
 {
@@ -158,7 +157,7 @@ impl<
 
 impl<
         R: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + Into<L>,
+        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
         L: ClusterUpdater + Into<M>,
     > StateGetter for QMCIsingGraph<R, M, L>
 {
@@ -199,44 +198,5 @@ impl OpWeights for FastOps {
             op_p = op.next_p;
         }
         t
-    }
-}
-
-impl OpWeights for SimpleOpDiagonal {
-    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
-    where
-        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        let res = self
-            .ops
-            .iter()
-            .filter(|op| op.is_some())
-            .map(|op| op.as_ref().unwrap())
-            .try_fold(1.0, |t, op| -> Result<f64, f64> {
-                let w1 = h1(
-                    &op.get_vars(),
-                    op.get_bond(),
-                    &op.get_inputs(),
-                    &op.get_outputs(),
-                );
-                let w2 = h2(
-                    &op.get_vars(),
-                    op.get_bond(),
-                    &op.get_inputs(),
-                    &op.get_outputs(),
-                );
-                if w1 != 0.0 && w2 != 0.0 {
-                    Ok(t * w1 / w2)
-                } else if w1 == 0.0 {
-                    Err(0.0)
-                } else {
-                    Err(std::f64::INFINITY)
-                }
-            });
-        match res {
-            Ok(f) => f,
-            Err(f) => f,
-        }
     }
 }

@@ -1,13 +1,14 @@
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use std::iter::FromIterator;
 
 /// Ops for holding SSE graph state.
-pub trait Op: Clone {
+pub trait Op: Clone + Debug {
     /// The list of op variables.
-    type Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]>;
+    type Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Debug;
     /// The list of op input and output states.
-    type SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]>;
+    type SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Debug;
 
     /// Make a diagonal op.
     fn diagonal<A, B>(vars: A, bond: usize, state: B, constant: bool) -> Self
@@ -136,8 +137,8 @@ pub trait OpContainer {
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct BasicOp<Vars, SubState>
 where
-    Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Clone,
-    SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Clone,
+    Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Clone + Debug,
+    SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Clone + Debug,
 {
     /// Variables involved in op
     vars: Vars,
@@ -153,8 +154,8 @@ where
 
 impl<Vars, SubState> Op for BasicOp<Vars, SubState>
 where
-    Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Clone,
-    SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Clone,
+    Vars: FromIterator<usize> + AsRef<[usize]> + AsMut<[usize]> + Clone + Debug,
+    SubState: FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]> + Clone + Debug,
 {
     type Vars = Vars;
     type SubState = SubState;
