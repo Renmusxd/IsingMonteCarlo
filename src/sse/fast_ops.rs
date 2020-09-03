@@ -538,6 +538,28 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
         }
         Ok(t)
     }
+
+    fn iterate_ps<F, T>(&self, t: T, f: F) -> T
+    where
+        F: Fn(&Self, Option<&Self::Op>, T) -> T,
+    {
+        self.ops
+            .iter()
+            .fold(t, |t, op| f(self, op.as_ref().map(|op| op.get_op_ref()), t))
+    }
+
+    fn iterate_ops<F, T>(&self, mut t: T, f: F) -> T
+    where
+        F: Fn(&Self, &Self::Op, usize, T) -> T,
+    {
+        let mut p = self.p_ends.map(|(start, _)| start);
+        while let Some(node_p) = p {
+            let node = self.ops[node_p].as_ref().unwrap();
+            t = f(self, node.get_op_ref(), node_p, t);
+            p = node.next_p;
+        }
+        t
+    }
 }
 
 impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
