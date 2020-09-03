@@ -34,7 +34,6 @@ mod tests {
     use super::*;
     use qmc::sse::fast_ops::*;
     use qmc::sse::qmc_ising::QMCIsingGraph;
-    use qmc::sse::simple_ops::*;
     use qmc::sse::*;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
