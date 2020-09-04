@@ -334,11 +334,10 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                             let vars = node_ref.op.get_vars();
                             vars.iter().cloned().enumerate().for_each(|(relv, v)| {
                                 // Check the previous node using this variable.
-                                if let Some(prev_p_for_v) = last_vars[v] {
+                                if let Some((prev_p_for_v, prev_rel_indx)) =
+                                    last_vars[v].zip(last_rels[v])
+                                {
                                     let prev_p_for_v_ref = self.ops[prev_p_for_v].as_mut().unwrap();
-                                    let prev_rel_indx =
-                                        prev_p_for_v_ref.op.index_of_var(v).unwrap();
-
                                     prev_p_for_v_ref.next_for_vars[prev_rel_indx] =
                                         node_ref.next_for_vars[relv];
                                 } else {
