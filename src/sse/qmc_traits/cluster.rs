@@ -165,17 +165,17 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
         let ((next_p, next_node), next_leg) = match leg.1 {
             OpSide::Inputs => {
                 let prev_p = c.get_previous_p_for_rel_var(relvar, node);
-                let prev_p = prev_p.unwrap_or_else(|| c.get_last_p_for_var(var).unwrap());
+                let (prev_p, prev_relv) =
+                    prev_p.unwrap_or_else(|| c.get_last_p_for_var(var).unwrap());
                 let prev_node = c.get_node_ref(prev_p).unwrap();
-                let new_rel_var = prev_node.get_op_ref().index_of_var(var).unwrap();
-                ((prev_p, prev_node), (new_rel_var, OpSide::Outputs))
+                ((prev_p, prev_node), (prev_relv, OpSide::Outputs))
             }
             OpSide::Outputs => {
                 let next_p = c.get_next_p_for_rel_var(relvar, node);
-                let next_p = next_p.unwrap_or_else(|| c.get_first_p_for_var(var).unwrap());
+                let (next_p, next_relv) =
+                    next_p.unwrap_or_else(|| c.get_first_p_for_var(var).unwrap());
                 let next_node = c.get_node_ref(next_p).unwrap();
-                let new_rel_var = next_node.get_op_ref().index_of_var(var).unwrap();
-                ((next_p, next_node), (new_rel_var, OpSide::Inputs))
+                ((next_p, next_node), (next_relv, OpSide::Inputs))
             }
         };
 

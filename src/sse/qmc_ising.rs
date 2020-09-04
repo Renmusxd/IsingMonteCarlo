@@ -582,8 +582,8 @@ where
     fn verify(&self) -> bool {
         self.op_manager
             .as_ref()
-            .and_then(|op| self.state.as_ref().map(|state| (op, state)))
-            .map(|(op, state)| op.verify(state))
+            .zip(self.state.as_ref())
+            .map(|(m, state)| m.verify(state))
             .unwrap_or(false)
     }
 }

@@ -4,6 +4,9 @@ use crate::sse::qmc_types::*;
 use rand::Rng;
 use std::cmp::min;
 
+/// The location in imaginary time (p) and the relative index of the variable.
+pub type PRel = (usize, usize);
+
 /// Add loop updates to OpContainer.
 pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     /// The type used to contain the Op and handle movement around the worldlines.
@@ -18,23 +21,29 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     fn get_first_p(&self) -> Option<usize>;
     /// Get the last occupied p if it exists.
     fn get_last_p(&self) -> Option<usize>;
-    /// Get the first p occupied which covers variable `var`.
-    fn get_first_p_for_var(&self, var: usize) -> Option<usize>;
-    /// Get the last p occupied which covers variable `var`.
-    fn get_last_p_for_var(&self, var: usize) -> Option<usize>;
+    /// Get the first p occupied which covers variable `var`, also returns the relative index.
+    fn get_first_p_for_var(&self, var: usize) -> Option<PRel>;
+    /// Get the last p occupied which covers variable `var`, also returns the relative index.
+    fn get_last_p_for_var(&self, var: usize) -> Option<PRel>;
 
     /// Get the previous occupied p compared to `node`.
     fn get_previous_p(&self, node: &Self::Node) -> Option<usize>;
     /// Get the next occupied p compared to `node`.
     fn get_next_p(&self, node: &Self::Node) -> Option<usize>;
 
-    /// Get the previous p for a given var, takes the relative var index in node.
-    fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<usize>;
-    /// Get the next p for a given var, takes the relative var index in node.
-    fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<usize>;
+    /// Get the previous p for a given var, takes the relative var index in node. Also returns the
+    /// new relative var index.
+    fn get_previous_p_for_rel_var(
+        &self,
+        relvar: usize,
+        node: &Self::Node,
+    ) -> Option<(usize, usize)>;
+    /// Get the next p for a given var, takes the relative var index in node. Also returns the new
+    /// relative var index.
+    fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
 
     /// Get the previous p for a given var.
-    fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<usize>, ()> {
+    fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, ()> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_previous_p_for_rel_var(relvar, node))
@@ -43,7 +52,7 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
         }
     }
     /// Get the next p for a given var.
-    fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<usize>, ()> {
+    fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, ()> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_next_p_for_rel_var(relvar, node))
@@ -231,38 +240,33 @@ where
         LoopResult::Return
     } else {
         // Get the next opnode and entrance leg, let us know if it changes the initial/final.
-        let (next_op_pos, var_to_match) = match exit_leg {
+        let (next_p, next_rel) = match exit_leg {
             (var, OpSide::Outputs) => {
                 let next_var_op = l.get_next_p_for_rel_var(var, sel_opnode);
-                let next = next_var_op.unwrap_or_else(|| {
+                next_var_op.unwrap_or_else(|| {
                     // Adjust the state to reflect new output.
                     state[sel_op.get_vars()[var]] = sel_op.get_outputs()[var];
                     l.get_first_p_for_var(sel_op.get_vars()[var]).unwrap()
-                });
-                (next, sel_op.get_vars()[var])
+                })
             }
             (var, OpSide::Inputs) => {
                 let prev_var_op = l.get_previous_p_for_rel_var(var, sel_opnode);
-                let next = prev_var_op.unwrap_or_else(|| {
+                prev_var_op.unwrap_or_else(|| {
                     // Adjust the state to reflect new input.
                     state[sel_op.get_vars()[var]] = sel_op.get_inputs()[var];
                     l.get_last_p_for_var(sel_op.get_vars()[var]).unwrap()
-                });
-                (next, sel_op.get_vars()[var])
+                })
             }
         };
-
-        let next_node = l.get_node_ref(next_op_pos).unwrap();
-        let next_var_index = next_node.get_op_ref().index_of_var(var_to_match).unwrap();
-        let new_entrance_leg = (next_var_index, exit_leg.1.reverse());
+        let new_entrance_leg = (next_rel, exit_leg.1.reverse());
 
         legs.dissolve(l);
 
         // If back where we started, close loop and return state changes.
-        if (next_op_pos, new_entrance_leg) == initial_op_and_leg {
+        if (next_p, new_entrance_leg) == initial_op_and_leg {
             LoopResult::Return
         } else {
-            LoopResult::Iterate(next_op_pos, new_entrance_leg)
+            LoopResult::Iterate(next_p, new_entrance_leg)
         }
     }
 }

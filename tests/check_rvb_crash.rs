@@ -149,7 +149,7 @@ fn run_two_joined_vars() {
                 FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
             ),
             (
-                3,
+                4,
                 FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
             ),
         ]
@@ -190,23 +190,23 @@ fn run_two_joined_vars_double() {
                 FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
             ),
             (
-                3,
+                4,
                 FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
             ),
             (
-                4,
-                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
-            ),
-            (
                 5,
-                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
+                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
             ),
             (
                 6,
-                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
+                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
             ),
             (
                 7,
+                FastOp::offdiagonal(smallvec![0], 2, smallvec![false], smallvec![false], true),
+            ),
+            (
+                8,
                 FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
             ),
         ]
