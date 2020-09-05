@@ -28,7 +28,7 @@ pub type FastOpNodeN<const N: usize> = FastOpNodeTemplate<FastOpN<N>>;
 pub struct FastOpsTemplate<O: Op> {
     pub(crate) ops: Vec<Option<FastOpNodeTemplate<O>>>,
     pub(crate) n: usize,
-    pub(crate) p_ends: Option<PRel>,
+    pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(PRel, PRel)>>,
 
     // For each variable check if flipped by an offdiagonal op.
@@ -119,13 +119,14 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
                         let last_tup = last_vars[v].zip(last_rels[v]);
                         if let Some((last_p, last_rel)) = last_tup {
                             let node = self.ops[last_p].as_mut().unwrap();
-                            node.next_for_vars[last_rel] = Some((p, relv));
+                            node.next_for_vars[last_rel] = Some(PRel { p, relv });
                         } else {
-                            self.var_ends[v] = Some(((p, relv), (p, relv)));
+                            let end = PRel { p, relv };
+                            self.var_ends[v] = Some((end, end));
                         }
                         last_vars[v] = Some(p);
                         last_rels[v] = Some(relv);
-                        last_tup
+                        last_tup.map(PRel::from)
                     })
                     .collect();
                 let n_opvars = op.get_vars().len();
@@ -152,7 +153,9 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             )
             .for_each(|(ends, last_v)| {
                 if let Some((_, v_end)) = ends {
-                    *v_end = last_v.unwrap();
+                    let (last_p, last_relv) = last_v.unwrap();
+                    v_end.p = last_p;
+                    v_end.relv = last_relv;
                 }
             });
         self.return_instance(last_vars);
@@ -344,10 +347,10 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                     // This was the first one, need to edit vars list.
                                     self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v]
                                     {
-                                        debug_assert_eq!(head, (p, relv));
+                                        debug_assert_eq!(head, PRel { p, relv });
                                         // If None then we are removing the head and the tail.
                                         node_ref.next_for_vars[relv].map(|new_head| {
-                                            debug_assert_ne!(tail, (p, relv));
+                                            debug_assert_ne!(tail, PRel { p, relv });
                                             (new_head, tail)
                                         })
                                     } else {
@@ -356,19 +359,21 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 }
 
                                 // Check the next nodes using this variable.
-                                if let Some((next_p_for_v, next_rel_index)) =
-                                    node_ref.next_for_vars[relv]
+                                if let Some(PRel {
+                                    p: next_p_for_v,
+                                    relv: next_rel_index,
+                                }) = node_ref.next_for_vars[relv]
                                 {
                                     let next_p_for_v_ref = self.ops[next_p_for_v].as_mut().unwrap();
                                     next_p_for_v_ref.previous_for_vars[next_rel_index] =
-                                        last_vars[v].zip(last_rels[v]);
+                                        last_vars[v].zip(last_rels[v]).map(PRel::from);
                                 } else {
                                     self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v]
                                     {
-                                        debug_assert_eq!(tail, (p, relv));
+                                        debug_assert_eq!(tail, PRel { p, relv });
                                         // If None then we are removing the head and the tail.
                                         node_ref.previous_for_vars[relv].map(|new_tail| {
-                                            debug_assert_ne!(head, (p, relv));
+                                            debug_assert_ne!(head, PRel { p, relv });
                                             (head, new_tail)
                                         })
                                     } else {
@@ -391,7 +396,8 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 .iter()
                                 .cloned()
                                 .map(|v| -> (Option<PRel>, Option<PRel>) {
-                                    let prev_p_and_rel = last_vars[v].zip(last_rels[v]);
+                                    let prev_p_and_rel =
+                                        last_vars[v].zip(last_rels[v]).map(PRel::from);
 
                                     let next_p_and_rel = if let Some(prev_p_for_v) = last_vars[v] {
                                         // If there's a previous node for the var, check its next entry.
@@ -418,20 +424,25 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 .zip(new_op.get_vars().iter())
                                 .enumerate()
                                 .for_each(|(relv, (prev, v))| {
-                                    if let Some((prev_p, prev_rel)) = prev {
+                                    if let Some(PRel {
+                                        p: prev_p,
+                                        relv: prev_rel,
+                                    }) = prev
+                                    {
                                         let prev_node = self.ops[*prev_p].as_mut().unwrap();
                                         debug_assert_eq!(
                                             prev_node.get_op_ref().get_vars()[*prev_rel],
                                             *v
                                         );
-                                        prev_node.next_for_vars[*prev_rel] = Some((p, relv));
+                                        prev_node.next_for_vars[*prev_rel] =
+                                            Some(PRel::from((p, relv)));
                                     } else {
                                         self.var_ends[*v] =
                                             if let Some((head, tail)) = self.var_ends[*v] {
-                                                debug_assert!(head.0 >= p);
-                                                Some(((p, relv), tail))
+                                                debug_assert!(head.p >= p);
+                                                Some((PRel { p, relv }, tail))
                                             } else {
-                                                Some(((p, relv), (p, relv)))
+                                                Some((PRel { p, relv }, PRel { p, relv }))
                                             }
                                     }
                                 });
@@ -441,20 +452,25 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
                                 .zip(new_op.get_vars().iter())
                                 .enumerate()
                                 .for_each(|(relv, (next, v))| {
-                                    if let Some((next_p, next_rel)) = next {
+                                    if let Some(PRel {
+                                        p: next_p,
+                                        relv: next_rel,
+                                    }) = next
+                                    {
                                         let next_node = self.ops[*next_p].as_mut().unwrap();
                                         debug_assert_eq!(
                                             next_node.get_op_ref().get_vars()[*next_rel],
                                             *v
                                         );
-                                        next_node.previous_for_vars[*next_rel] = Some((p, relv));
+                                        next_node.previous_for_vars[*next_rel] =
+                                            Some(PRel { p, relv });
                                     } else {
                                         self.var_ends[*v] =
                                             if let Some((head, tail)) = self.var_ends[*v] {
-                                                debug_assert!(tail.0 <= p);
-                                                Some((head, (p, relv)))
+                                                debug_assert!(tail.p <= p);
+                                                Some((head, PRel { p, relv }))
                                             } else {
-                                                Some(((p, relv), (p, relv)))
+                                                Some((PRel { p, relv }, PRel { p, relv }))
                                             }
                                     }
                                 });
@@ -768,7 +784,11 @@ impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
 impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {
         let mut p_and_rel = self.get_first_p_for_var(var);
-        while let Some((node_p, node_relv)) = p_and_rel {
+        while let Some(PRel {
+            p: node_p,
+            relv: node_relv,
+        }) = p_and_rel
+        {
             let node = self.get_node_ref(node_p).unwrap();
             debug_assert_eq!(node.get_op_ref().get_vars()[node_relv], var);
             if node.get_op_ref().is_constant() {
@@ -780,7 +800,11 @@ impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
 
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>) {
         let mut p_and_rel = self.get_first_p_for_var(var);
-        while let Some((node_p, node_relv)) = p_and_rel {
+        while let Some(PRel {
+            p: node_p,
+            relv: node_relv,
+        }) = p_and_rel
+        {
             let node = self.get_node_ref(node_p).unwrap();
             let op = node.get_op_ref();
             debug_assert_eq!(op.get_vars()[node_relv], var);

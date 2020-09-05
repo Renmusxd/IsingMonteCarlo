@@ -2,10 +2,25 @@ use crate::memory::allocator::{Factory, StackTuplizer};
 use crate::sse::qmc_traits::op_container::*;
 use crate::sse::qmc_types::*;
 use rand::Rng;
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
 /// The location in imaginary time (p) and the relative index of the variable.
-pub type PRel = (usize, usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+pub struct PRel {
+    /// Position in imaginary time.
+    pub p: usize,
+    /// Reltive index of variable.
+    pub relv: usize,
+}
+
+impl From<(usize, usize)> for PRel {
+    fn from((p, relv): (usize, usize)) -> Self {
+        Self { p, relv }
+    }
+}
 
 /// Add loop updates to OpContainer.
 pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
@@ -33,11 +48,7 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
 
     /// Get the previous p for a given var, takes the relative var index in node. Also returns the
     /// new relative var index.
-    fn get_previous_p_for_rel_var(
-        &self,
-        relvar: usize,
-        node: &Self::Node,
-    ) -> Option<(usize, usize)>;
+    fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
     /// Get the next p for a given var, takes the relative var index in node. Also returns the new
     /// relative var index.
     fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
@@ -240,7 +251,10 @@ where
         LoopResult::Return
     } else {
         // Get the next opnode and entrance leg, let us know if it changes the initial/final.
-        let (next_p, next_rel) = match exit_leg {
+        let PRel {
+            p: next_p,
+            relv: next_rel,
+        } = match exit_leg {
             (var, OpSide::Outputs) => {
                 let next_var_op = l.get_next_p_for_rel_var(var, sel_opnode);
                 next_var_op.unwrap_or_else(|| {

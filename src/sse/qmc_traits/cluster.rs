@@ -165,15 +165,19 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
         let ((next_p, next_node), next_leg) = match leg.1 {
             OpSide::Inputs => {
                 let prev_p = c.get_previous_p_for_rel_var(relvar, node);
-                let (prev_p, prev_relv) =
-                    prev_p.unwrap_or_else(|| c.get_last_p_for_var(var).unwrap());
+                let PRel {
+                    p: prev_p,
+                    relv: prev_relv,
+                } = prev_p.unwrap_or_else(|| c.get_last_p_for_var(var).unwrap());
                 let prev_node = c.get_node_ref(prev_p).unwrap();
                 ((prev_p, prev_node), (prev_relv, OpSide::Outputs))
             }
             OpSide::Outputs => {
                 let next_p = c.get_next_p_for_rel_var(relvar, node);
-                let (next_p, next_relv) =
-                    next_p.unwrap_or_else(|| c.get_first_p_for_var(var).unwrap());
+                let PRel {
+                    p: next_p,
+                    relv: next_relv,
+                } = next_p.unwrap_or_else(|| c.get_first_p_for_var(var).unwrap());
                 let next_node = c.get_node_ref(next_p).unwrap();
                 ((next_p, next_node), (next_relv, OpSide::Inputs))
             }
