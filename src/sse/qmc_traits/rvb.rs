@@ -450,7 +450,6 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                         cluster[v] = !cluster[v];
                     }
                     if stop == p {
-                        debug_assert_eq!(stop, p);
                         let ins = new_op.get_inputs_mut();
                         ins[relv] = !ins[relv];
                         cluster[v] = !cluster[v];

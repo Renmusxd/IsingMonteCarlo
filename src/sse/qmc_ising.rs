@@ -276,10 +276,13 @@ impl<
         self.state = Some(state);
     }
 
-    fn make_semiclassical_bonds(&mut self, nvars: usize) {
+    /// Make semiclassical bonds out of all edges with |j| == abs_j
+    fn make_semiclassical_bonds_with_abs(&mut self, nvars: usize, abs_j: f64) {
+        let abs_j = abs_j.abs();
         let mut edge_lookup = vec![vec![]; nvars];
         self.edges
             .iter()
+            .filter(|(_, j)| (j.abs() - abs_j).abs() <= std::f64::EPSILON)
             .map(|(edge, _)| (edge[0], edge[1]))
             .enumerate()
             .for_each(|(bond, (a, b))| {
@@ -287,6 +290,11 @@ impl<
                 edge_lookup[b].push(bond);
             });
         self.semiclassical_bonds = Some(edge_lookup);
+    }
+
+    /// Pick the first edge and assume all js are exactly that.
+    fn make_semiclassical_bonds(&mut self, nvars: usize) {
+        self.make_semiclassical_bonds_with_abs(nvars, self.edges[0].1)
     }
 
     /// Enable or disable automatic semiclassical steps.
