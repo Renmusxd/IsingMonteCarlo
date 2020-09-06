@@ -20,7 +20,7 @@ pub type DefaultTemperingContainer<R1, R2> =
 pub struct TemperingContainer<R, Q>
 where
     R: Rng,
-    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+    Q: QMCStepper + GraphWeights + SwapManagers,
 {
     // Graph and beta
     graphs: Vec<(Q, f64)>,
@@ -47,7 +47,7 @@ pub fn new_thread_rng() -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
 impl<R, Q> TemperingContainer<R, Q>
 where
     R: Rng,
-    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+    Q: QMCStepper + GraphWeights + SwapManagers,
 {
     /// Make a new tempering container. All graphs will share this set of edges
     /// and start with this cutoff.
@@ -237,7 +237,7 @@ where
 fn perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64
 where
     R: Rng,
-    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+    Q: QMCStepper + GraphWeights + SwapManagers,
 {
     assert_eq!(graphs.len() % 2, 0);
     if graphs.is_empty() {
@@ -271,7 +271,7 @@ fn swap_on_chunks<'a, Q>(
     evaluate_hamiltonians: bool,
 ) -> bool
 where
-    Q: QMCStepper + OpHam + OpWeights + SwapManagers,
+    Q: QMCStepper + GraphWeights + SwapManagers,
 {
     let (ga, ba) = graph_beta_a;
     let (gb, bb) = graph_beta_b;
@@ -279,16 +279,8 @@ where
     let rel_h_weight = if !evaluate_hamiltonians {
         1.0
     } else {
-        let ha = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            ga.hamiltonian(vars, bond, input_state, output_state)
-        };
-        let hb = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
-            gb.hamiltonian(vars, bond, input_state, output_state)
-        };
-
-        // QMCGraph can only ever have 2 vars since it represents a TFIM.
-        let rel_bstate = ga.relative_weight_for_hamiltonians(hb, ha);
-        let rel_astate = gb.relative_weight_for_hamiltonians(ha, hb);
+        let rel_bstate = ga.relative_weight(gb);
+        let rel_astate = gb.relative_weight(ga);
         rel_bstate * rel_astate
     };
 
@@ -305,7 +297,7 @@ where
 impl<R, Q> Verify for TemperingContainer<R, Q>
 where
     R: Rng,
-    Q: QMCStepper + OpHam + OpWeights + SwapManagers + Verify,
+    Q: QMCStepper + GraphWeights + SwapManagers + Verify,
 {
     fn verify(&self) -> bool {
         self.graphs.iter().all(|(q, _)| q.verify())
@@ -342,7 +334,7 @@ pub mod rayon_tempering {
 
     fn parallel_tempering_a<R: Rng, Q, R1: Rng>(tc: &mut TemperingContainer<R, Q>, rng: R1)
     where
-        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         let hameqs = tc.graph_ham_eq_a.take().unwrap();
         let graphs = tc.make_first_subgraphs();
@@ -352,7 +344,7 @@ pub mod rayon_tempering {
 
     fn parallel_tempering_b<R: Rng, Q, R1: Rng>(tc: &mut TemperingContainer<R, Q>, rng: R1)
     where
-        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         let hameqs = tc.graph_ham_eq_b.take().unwrap();
         let graphs = tc.make_second_subgraphs();
@@ -363,7 +355,7 @@ pub mod rayon_tempering {
     impl<R, Q> ParallelQMCTimeSteps for TemperingContainer<R, Q>
     where
         R: Rng,
-        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         fn parallel_timesteps(&mut self, t: usize) {
             self.graphs.par_iter_mut().for_each(|(g, beta)| {
@@ -457,7 +449,7 @@ pub mod rayon_tempering {
     fn parallel_perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64
     where
         R: Rng,
-        Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
@@ -536,7 +528,7 @@ pub mod rayon_tempering {
         impl<R, Q> ParallelTemperingAutocorrelations<Q> for TemperingContainer<R, Q>
         where
             R: Rng,
-            Q: QMCStepper + OpHam + OpWeights + SwapManagers + Send + Sync,
+            Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
         {
             fn calculate_variable_autocorrelation(
                 &mut self,
@@ -624,13 +616,7 @@ pub mod rayon_tempering {
         impl<R, Q> ParallelTemperingBondAutoCorrelations<Q> for TemperingContainer<R, Q>
         where
             R: Rng,
-            Q: QMCStepper
-                + OpHam
-                + OpWeights
-                + QMCBondAutoCorrelations
-                + SwapManagers
-                + Send
-                + Sync,
+            Q: QMCStepper + GraphWeights + QMCBondAutoCorrelations + SwapManagers + Send + Sync,
         {
             fn calculate_bond_autocorrelation(
                 &mut self,

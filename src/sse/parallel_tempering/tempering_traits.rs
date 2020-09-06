@@ -28,6 +28,16 @@ pub trait StateGetter {
 }
 
 /// Allow getting the relative weight for a state compared to default.
+pub trait GraphWeights {
+    /// Whether the hams are equal. ham_eq => relative_weight=1.0
+    fn ham_eq(&self, other: &Self) -> bool;
+
+    /// Returns the relative total graph weight of evaluating the hamiltonian from the other graph
+    /// compared to the default one.
+    fn relative_weight(&self, h: &Self) -> f64;
+}
+
+/// Allow getting the relative weight for a state compared to default.
 pub trait OpWeights {
     /// Returns the relative total graph weight of evaluating H1 versus H2: W(H1)/W(H2)
     fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
@@ -36,36 +46,30 @@ pub trait OpWeights {
         H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
 }
 
-/// Operator with a hamiltonian.
-pub trait OpHam {
-    /// Return true if the hamiltonians are equal.
-    fn ham_eq(&self, other: &Self) -> bool;
-
-    /// Take an input state and output state for a given set of variables and bond, output the
-    /// value of <a|H|b>.
-    fn hamiltonian(
-        &self,
-        vars: &[usize],
-        bond: usize,
-        input_state: &[bool],
-        output_state: &[bool],
-    ) -> f64;
-}
-
-impl<R, M, L> OpWeights for QMC<R, M, L>
+impl<'a, R, M, L> GraphWeights for QMC<R, M, L>
 where
     R: Rng,
     M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
     L: ClusterUpdater + Into<M> + OpWeights,
 {
-    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
-    where
-        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
+    fn ham_eq(&self, other: &Self) -> bool {
+        self.get_bonds() == other.get_bonds()
+    }
+
+    fn relative_weight(&self, h: &Self) -> f64 {
+        let ha = |_vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            h.get_bonds()[bond].at(input_state, output_state).unwrap()
+        };
+
+        let hb = |_vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            self.get_bonds()[bond]
+                .at(input_state, output_state)
+                .unwrap()
+        };
+
         match self.get_manager_ref() {
-            ManagerRef::DIAGONAL(a) => a.relative_weight_for_hamiltonians(h1, h2),
-            ManagerRef::LOOPER(b) => b.relative_weight_for_hamiltonians(h1, h2),
+            ManagerRef::DIAGONAL(m) => m.relative_weight_for_hamiltonians(ha, hb),
+            ManagerRef::LOOPER(l) => l.relative_weight_for_hamiltonians(ha, hb),
         }
     }
 }
@@ -73,7 +77,7 @@ where
 impl<R, M, L> SwapManagers for QMC<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
+    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     fn can_swap_graphs(&self, other: &Self) -> bool {
@@ -96,7 +100,7 @@ where
 impl<R, M, L> SwapManagers for QMCIsingGraph<R, M, L>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
+    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
     L: ClusterUpdater + Into<M>,
 {
     fn can_swap_graphs(&self, other: &Self) -> bool {
@@ -116,42 +120,34 @@ where
     }
 }
 
-impl<R, M, L> OpWeights for QMCIsingGraph<R, M, L>
+impl<R, M, L> GraphWeights for QMCIsingGraph<R, M, L>
 where
     R: Rng,
     M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
     L: ClusterUpdater + Into<M>,
 {
-    fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
-    where
-        H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    {
-        self.get_manager_ref()
-            .relative_weight_for_hamiltonians(h1, h2)
-    }
-}
-
-impl<
-        'a,
-        R: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
-    > OpHam for QMCIsingGraph<R, M, L>
-{
     fn ham_eq(&self, other: &Self) -> bool {
         self.make_haminfo() == other.make_haminfo()
     }
 
-    fn hamiltonian(
-        &self,
-        vars: &[usize],
-        bond: usize,
-        input_state: &[bool],
-        output_state: &[bool],
-    ) -> f64 {
-        let haminfo = self.make_haminfo();
-        Self::hamiltonian(&haminfo, vars, bond, input_state, output_state)
+    fn relative_weight(&self, h: &Self) -> f64 {
+        let bond_ratio = h
+            .get_edges()
+            .iter()
+            .zip(self.get_edges().iter())
+            .enumerate()
+            .map(|(bond, ((_, ja), (_, jb)))| {
+                (ja / jb).powi(self.get_manager_ref().get_count(bond) as i32)
+            })
+            .product::<f64>();
+        let nedges = self.get_edges().len();
+        let t_count = (0..self.get_nvars())
+            .map(|v| self.get_manager_ref().get_count(v + nedges))
+            .sum::<usize>() as i32;
+        let transverse_ratio =
+            (h.get_transverse_field() / self.get_transverse_field()).powi(t_count);
+
+        bond_ratio * transverse_ratio
     }
 }
 

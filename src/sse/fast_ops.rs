@@ -623,6 +623,21 @@ impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
             None
         }
     }
+
+    fn get_count(&self, bond: usize) -> usize {
+        self.bond_counters
+            .as_ref()
+            .map(|bc| bc.get(bond).copied().unwrap_or(0))
+            .unwrap_or_else(|| {
+                self.iterate_ops(0, |_, op, _, count| {
+                    if op.get_bond() == bond {
+                        count + 1
+                    } else {
+                        count
+                    }
+                })
+            })
+    }
 }
 
 impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {

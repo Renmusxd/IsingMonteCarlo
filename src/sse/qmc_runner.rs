@@ -91,6 +91,11 @@ impl<
         self.bonds.push(interaction);
     }
 
+    /// Get interactions.
+    pub fn get_bonds(&self) -> &[Interaction] {
+        &self.bonds
+    }
+
     /// Add an interaction to the QMC instance.
     pub fn make_interaction<MAT: Into<Vec<f64>>, VAR: Into<Vec<usize>>>(
         &mut self,
@@ -398,9 +403,10 @@ enum InteractionType {
     DIAGONAL,
 }
 
+/// Interactions in QMC.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-struct Interaction {
+pub struct Interaction {
     interaction_type: InteractionType,
     mat: Vec<f64>,
     n: usize,
@@ -547,18 +553,18 @@ impl Interaction {
     }
 
     /// Check if interaction is constant.
-    fn is_constant(&self) -> bool {
+    pub fn is_constant(&self) -> bool {
         self.interaction_type == InteractionType::FULL(true)
     }
 
     /// Check if constant along diagonal.
-    fn is_constant_diag(&self) -> bool {
+    pub fn is_constant_diag(&self) -> bool {
         self.constant_along_diagonal
     }
 
     /// Index into the interaction matrix using inputs and outputs.
     /// Last bit is least significant, inputs are less significant than outputs.
-    fn at(&self, inputs: &[bool], outputs: &[bool]) -> Result<f64, String> {
+    pub fn at(&self, inputs: &[bool], outputs: &[bool]) -> Result<f64, String> {
         if inputs.len() != self.n || outputs.len() != self.n {
             Err(format!(
                 "Interaction covers {} vars, given ({}/{})",
@@ -625,7 +631,7 @@ impl Interaction {
     }
 
     /// Check if all entries are symmetric under global flip.
-    fn sym_under_ising(&self) -> bool {
+    pub fn sym_under_ising(&self) -> bool {
         match &self.interaction_type {
             InteractionType::FULL(true) => true,
             InteractionType::DIAGONAL if self.constant_along_diagonal => true,

@@ -343,6 +343,16 @@ impl<
         self.vars.len()
     }
 
+    /// Get the edges on the graph
+    pub fn get_edges(&self) -> &[(VecEdge, f64)] {
+        &self.edges
+    }
+
+    /// Get the transverse field on the system.
+    pub fn get_transverse_field(&self) -> f64 {
+        self.transverse
+    }
+
     /// Get the cutoff used for qmc calculations (pmax).
     pub fn get_cutoff(&self) -> usize {
         self.cutoff
