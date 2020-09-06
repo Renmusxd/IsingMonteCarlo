@@ -21,7 +21,7 @@ fn convert_and_run() -> Result<(), ()> {
     for _ in 0..10 {
         println!("Ising: {:?}", ising.get_manager_ref());
         ising.timestep(1.0);
-        println!("QMC: {:?}", qmc.get_diagonal_manager_ref());
+        println!("QMC: {:?}", qmc.get_manager_ref());
         qmc.timestep(1.0);
         println!("===================");
     }

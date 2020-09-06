@@ -1,8 +1,8 @@
 //! A module with various QMC algorithms and traits.
 
 pub use qmc_debug::*;
-pub use qmc_ising::DefaultQMCIsingGraph;
-pub use qmc_runner::DefaultQMC;
+pub use qmc_ising::*;
+pub use qmc_runner::*;
 pub use qmc_traits::rvb::*;
 pub use qmc_traits::semi_classical::*;
 pub use qmc_traits::*;

@@ -1,9 +1,8 @@
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_ising::QMCIsingGraph;
-use crate::sse::qmc_runner::ManagerRef;
+use crate::sse::qmc_ising::{IsingManager, QMCIsingGraph};
+use crate::sse::qmc_runner::QMCManager;
 use crate::sse::qmc_runner::QMC;
 use crate::sse::qmc_traits::*;
-use crate::sse::ClassicalLoopUpdater;
 use rand::Rng;
 
 /// Allows QMC objects to swap internal state and op managers
@@ -46,11 +45,10 @@ pub trait OpWeights {
         H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
 }
 
-impl<'a, R, M, L> GraphWeights for QMC<R, M, L>
+impl<'a, R, M> GraphWeights for QMC<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L> + OpWeights,
-    L: ClusterUpdater + Into<M> + OpWeights,
+    M: QMCManager + OpWeights,
 {
     fn ham_eq(&self, other: &Self) -> bool {
         self.get_bonds() == other.get_bonds()
@@ -67,18 +65,15 @@ where
                 .unwrap()
         };
 
-        match self.get_manager_ref() {
-            ManagerRef::DIAGONAL(m) => m.relative_weight_for_hamiltonians(ha, hb),
-            ManagerRef::LOOPER(l) => l.relative_weight_for_hamiltonians(ha, hb),
-        }
+        self.get_manager_ref()
+            .relative_weight_for_hamiltonians(ha, hb)
     }
 }
 
-impl<R, M, L> SwapManagers for QMC<R, M, L>
+impl<R, M> SwapManagers for QMC<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: QMCManager,
 {
     fn can_swap_graphs(&self, other: &Self) -> bool {
         self.can_swap_managers(other)
@@ -97,11 +92,10 @@ where
     }
 }
 
-impl<R, M, L> SwapManagers for QMCIsingGraph<R, M, L>
+impl<R, M> SwapManagers for QMCIsingGraph<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: IsingManager,
 {
     fn can_swap_graphs(&self, other: &Self) -> bool {
         self.can_swap_managers(other)
@@ -120,11 +114,10 @@ where
     }
 }
 
-impl<R, M, L> GraphWeights for QMCIsingGraph<R, M, L>
+impl<R, M> GraphWeights for QMCIsingGraph<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
-    L: ClusterUpdater + Into<M>,
+    M: IsingManager,
 {
     fn ham_eq(&self, other: &Self) -> bool {
         self.make_haminfo() == other.make_haminfo()
@@ -151,12 +144,7 @@ where
     }
 }
 
-impl<
-        R: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
-    > StateGetter for QMCIsingGraph<R, M, L>
-{
+impl<R: Rng, M: IsingManager> StateGetter for QMCIsingGraph<R, M> {
     fn get_state_ref(&self) -> &[bool] {
         self.state_ref()
     }

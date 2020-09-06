@@ -2,28 +2,29 @@ use crate::classical::graph::{Edge, GraphState};
 #[cfg(feature = "autocorrelations")]
 pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_runner::QMC;
+use crate::sse::qmc_runner::{QMCManager, QMC};
 pub use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
-use std::marker::PhantomData;
 
 /// Default QMC graph implementation.
-pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps, FastOps>;
+pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps>;
 
 type VecEdge = Vec<usize>;
+
+/// Trait encompassing all requirements for op managers in QMCIsingGraph.
+pub trait IsingManager:
+    OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + ClusterUpdater
+{
+}
 
 /// A container to run QMC simulations.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct QMCIsingGraph<
-    R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
-> {
+pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     edges: Vec<(VecEdge, f64)>,
     transverse: f64,
     state: Option<Vec<bool>>,
@@ -32,7 +33,6 @@ pub struct QMCIsingGraph<
     twosite_energy_offset: f64,
     singlesite_energy_offset: f64,
     rng: Option<R>,
-    phantom: PhantomData<L>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
     // Optional semiclassical update, for each var a: [(b, ferro/antiferro, bond)...]
@@ -66,12 +66,7 @@ pub fn new_qmc_from_graph(
     DefaultQMCIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, cutoff, rng)
 }
 
-impl<
-        R: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
-    > QMCIsingGraph<R, M, L>
-{
+impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     /// Make a new QMC graph with an rng instance.
     pub fn new_with_rng<Rg: Rng>(
         edges: Vec<(Edge, f64)>,
@@ -79,7 +74,7 @@ impl<
         cutoff: usize,
         rng: Rg,
         state: Option<Vec<bool>>,
-    ) -> QMCIsingGraph<Rg, M, L> {
+    ) -> QMCIsingGraph<Rg, M> {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         let edges = edges
             .into_iter()
@@ -103,7 +98,7 @@ impl<
         };
         let state = Some(state);
 
-        QMCIsingGraph::<Rg, M, L> {
+        QMCIsingGraph::<Rg, M> {
             edges,
             transverse,
             state,
@@ -112,7 +107,6 @@ impl<
             twosite_energy_offset,
             singlesite_energy_offset,
             rng: Some(rng),
-            phantom: PhantomData,
             vars: (0..nvars).collect(),
             run_semiclassical_steps: false,
             run_rvb_steps: false,
@@ -130,7 +124,7 @@ impl<
         transverse: f64,
         cutoff: usize,
         rng: Rg,
-    ) -> QMCIsingGraph<Rg, M, L> {
+    ) -> QMCIsingGraph<Rg, M> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
     }
@@ -219,11 +213,10 @@ impl<
     /// Take a single offdiagonal step.
     pub fn single_offdiagonal_step(&mut self) {
         let mut state = self.state.take().unwrap();
-        let manager = self.op_manager.take().unwrap();
+        let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
 
         // Start by editing the ops list
-        let mut manager = manager.into();
         manager.flip_each_cluster_rng(0.5, rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
@@ -232,7 +225,7 @@ impl<
             }
         });
 
-        self.op_manager = Some(manager.into());
+        self.op_manager = Some(manager);
         self.state = Some(state);
     }
 
@@ -405,29 +398,6 @@ impl<
         other.state = Some(s);
     }
 
-    /// Convert to a generic QMC instance.
-    pub fn into_qmc(self) -> QMC<R, M, L> {
-        let nvars = self.get_nvars();
-        let rng = self.rng.unwrap();
-        let state = self.state.as_ref().unwrap().to_vec();
-        let mut qmc = QMC::<R, M, L>::new_with_state(nvars, rng, state, false);
-        let transverse = self.transverse;
-        self.edges.into_iter().for_each(|(vars, j)| {
-            qmc.make_diagonal_interaction_and_offset(vec![-j, j, j, -j], vars)
-                .unwrap()
-        });
-        (0..nvars).for_each(|var| {
-            qmc.make_interaction(
-                vec![transverse, transverse, transverse, transverse],
-                vec![var],
-            )
-            .unwrap()
-        });
-        qmc.increase_cutoff_to(self.cutoff);
-        qmc.set_diagonal_manager(self.op_manager.unwrap());
-        qmc
-    }
-
     /// Average semiclassical cluster size.
     pub fn average_semiclassical_cluster_size(&self) -> f64 {
         self.total_semiclassical_cluster_size / self.semiclassical_clusters_counted as f64
@@ -463,11 +433,10 @@ impl<'a, 'b> EdgeNavigator for EdgeNav<'a, 'b> {
     }
 }
 
-impl<R, M, L> QMCStepper for QMCIsingGraph<R, M, L>
+impl<R, M> QMCStepper for QMCIsingGraph<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: IsingManager,
 {
     /// Perform a single step of qmc.
     fn timestep(&mut self, beta: f64) -> &[bool] {
@@ -558,7 +527,6 @@ where
             self.rvb_clusters_counted += steps_to_run;
         }
 
-        let mut manager = manager.into();
         manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
@@ -568,7 +536,7 @@ where
         });
 
         self.rng = Some(rng);
-        self.op_manager = Some(manager.into());
+        self.op_manager = Some(manager);
         self.state = Some(state);
 
         debug_assert!(self.verify());
@@ -591,11 +559,10 @@ where
     }
 }
 
-impl<R, M, L> Verify for QMCIsingGraph<R, M, L>
+impl<R, M> Verify for QMCIsingGraph<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: IsingManager,
 {
     fn verify(&self) -> bool {
         self.op_manager
@@ -660,11 +627,10 @@ impl<'a> PartialEq for HamInfo<'a> {
 impl<'a> Eq for HamInfo<'a> {}
 
 // Implement clone where available.
-impl<R, M, L> Clone for QMCIsingGraph<R, M, L>
+impl<R, M> Clone for QMCIsingGraph<R, M>
 where
     R: Rng + Clone,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + Clone,
-    L: ClusterUpdater + Into<M> + Clone,
+    M: IsingManager + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -676,7 +642,6 @@ where
             twosite_energy_offset: self.twosite_energy_offset,
             singlesite_energy_offset: self.singlesite_energy_offset,
             rng: self.rng.clone(),
-            phantom: self.phantom,
             vars: self.vars.clone(),
             run_semiclassical_steps: self.run_semiclassical_steps,
             run_rvb_steps: self.run_rvb_steps,
@@ -689,25 +654,61 @@ where
     }
 }
 
-// Allow for conversion to generic QMC type. Clears the internal state, converts edges and field
-// into interactions.
-impl<R, M, L> Into<QMC<R, M, L>> for QMCIsingGraph<R, M, L>
+/// Convertable into QMC, helps since calling .into() runs into type inference problems.
+pub trait IntoQMC<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: QMCManager,
 {
-    fn into(self) -> QMC<R, M, L> {
+    /// Convert into QMC.
+    fn into_qmc(self) -> QMC<R, M>;
+}
+
+impl<R, M> IntoQMC<R, M> for QMCIsingGraph<R, M>
+where
+    R: Rng,
+    M: IsingManager + QMCManager,
+{
+    fn into_qmc(self) -> QMC<R, M> {
+        let nvars = self.get_nvars();
+        let rng = self.rng.unwrap();
+        let state = self.state.as_ref().unwrap().to_vec();
+        let mut qmc = QMC::<R, M>::new_with_state(nvars, rng, state, false);
+        let transverse = self.transverse;
+        self.edges.into_iter().for_each(|(vars, j)| {
+            qmc.make_diagonal_interaction_and_offset(vec![-j, j, j, -j], vars)
+                .unwrap()
+        });
+        (0..nvars).for_each(|var| {
+            qmc.make_interaction(
+                vec![transverse, transverse, transverse, transverse],
+                vec![var],
+            )
+            .unwrap()
+        });
+        qmc.increase_cutoff_to(self.cutoff);
+        qmc.set_manager(self.op_manager.unwrap());
+        qmc
+    }
+}
+
+// Allow for conversion to generic QMC type. Clears the internal state, converts edges and field
+// into interactions.
+impl<R, M> Into<QMC<R, M>> for QMCIsingGraph<R, M>
+where
+    R: Rng,
+    M: IsingManager + QMCManager,
+{
+    fn into(self) -> QMC<R, M> {
         self.into_qmc()
     }
 }
 
 #[cfg(feature = "autocorrelations")]
-impl<R, M, L> QMCBondAutoCorrelations for QMCIsingGraph<R, M, L>
+impl<R, M> QMCBondAutoCorrelations for QMCIsingGraph<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: IsingManager,
 {
     fn n_bonds(&self) -> usize {
         self.edges.len()
@@ -731,14 +732,11 @@ pub mod serialization {
     use super::*;
 
     /// The serializable version of the default QMC graph.
-    pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOps, FastOps>;
+    pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOps>;
 
     /// A QMC graph without rng for easy serialization.
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct SerializeQMCGraph<
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
-    > {
+    pub struct SerializeQMCGraph<M: IsingManager> {
         edges: Vec<(VecEdge, f64)>,
         transverse: f64,
         state: Option<Vec<bool>>,
@@ -746,7 +744,6 @@ pub mod serialization {
         op_manager: Option<M>,
         twosite_energy_offset: f64,
         singlesite_energy_offset: f64,
-        phantom: PhantomData<L>,
         // Can be easily reconstructed
         nvars: usize,
         run_semiclassical_steps: bool,
@@ -758,13 +755,12 @@ pub mod serialization {
         rvb_clusters_counted: usize,
     }
 
-    impl<M, L> SerializeQMCGraph<M, L>
+    impl<M> SerializeQMCGraph<M>
     where
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
+        M: IsingManager,
     {
         /// Convert into a proper QMC graph using a new rng instance.
-        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCIsingGraph<R, M, L> {
+        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCIsingGraph<R, M> {
             QMCIsingGraph {
                 edges: self.edges,
                 transverse: self.transverse,
@@ -774,7 +770,6 @@ pub mod serialization {
                 twosite_energy_offset: self.twosite_energy_offset,
                 singlesite_energy_offset: self.singlesite_energy_offset,
                 rng: Some(rng),
-                phantom: self.phantom,
                 vars: (0..self.nvars).collect(),
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
@@ -787,13 +782,12 @@ pub mod serialization {
         }
     }
 
-    impl<R, M, L> Into<SerializeQMCGraph<M, L>> for QMCIsingGraph<R, M, L>
+    impl<R, M> Into<SerializeQMCGraph<M>> for QMCIsingGraph<R, M>
     where
         R: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
+        M: IsingManager,
     {
-        fn into(self) -> SerializeQMCGraph<M, L> {
+        fn into(self) -> SerializeQMCGraph<M> {
             SerializeQMCGraph {
                 edges: self.edges,
                 transverse: self.transverse,
@@ -802,7 +796,6 @@ pub mod serialization {
                 op_manager: self.op_manager,
                 twosite_energy_offset: self.twosite_energy_offset,
                 singlesite_energy_offset: self.singlesite_energy_offset,
-                phantom: self.phantom,
                 nvars: self.vars.len(),
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,

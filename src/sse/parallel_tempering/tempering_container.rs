@@ -11,8 +11,7 @@ use smallvec::SmallVec;
 use std::cmp::min;
 
 /// A tempering container using FastOps and FastOpNodes.
-pub type DefaultTemperingContainer<R1, R2> =
-    TemperingContainer<R1, QMCIsingGraph<R2, FastOps, FastOps>>;
+pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, QMCIsingGraph<R2, FastOps>>;
 
 /// A container to perform parallel tempering.
 #[derive(Debug, Clone)]
@@ -680,31 +679,27 @@ pub mod rayon_tempering {
 pub mod serialization {
     use super::*;
     use crate::sse::qmc_ising::serialization::*;
-    // use crate::sse::qmc_traits::semi_classical::*;
+    use crate::sse::qmc_ising::*;
 
     /// Default serializable tempering container.
-    pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps, FastOps>;
-    type SerializeGraphBeta<M, L> = (SerializeQMCGraph<M, L>, f64);
+    pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps>;
+    type SerializeGraphBeta<M> = (SerializeQMCGraph<M>, f64);
 
     /// A tempering container with no rng. Just for serialization.
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct SerializeTemperingContainer<
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
-    > {
-        graphs: Vec<SerializeGraphBeta<M, L>>,
+    pub struct SerializeTemperingContainer<M: IsingManager> {
+        graphs: Vec<SerializeGraphBeta<M>>,
         total_swaps: u64,
     }
 
-    impl<R1, R2, M, L> Into<SerializeTemperingContainer<M, L>>
-        for TemperingContainer<R1, QMCIsingGraph<R2, M, L>>
+    impl<R1, R2, M> Into<SerializeTemperingContainer<M>>
+        for TemperingContainer<R1, QMCIsingGraph<R2, M>>
     where
         R1: Rng,
         R2: Rng,
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
-        L: ClusterUpdater + Into<M>,
+        M: IsingManager + GraphWeights,
     {
-        fn into(self) -> SerializeTemperingContainer<M, L> {
+        fn into(self) -> SerializeTemperingContainer<M> {
             SerializeTemperingContainer {
                 graphs: self
                     .graphs
@@ -716,17 +711,16 @@ pub mod serialization {
         }
     }
 
-    impl<M, L> SerializeTemperingContainer<M, L>
+    impl<M> SerializeTemperingContainer<M>
     where
-        M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + Into<L> + OpWeights,
-        L: ClusterUpdater + Into<M>,
+        M: IsingManager,
     {
         /// Convert into a tempering container using the set of rngs.
         pub fn into_tempering_container_from_vec<R1: Rng, R2: Rng>(
             self,
             container_rng: R1,
             graph_rngs: Vec<R2>,
-        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M, L>> {
+        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M>> {
             assert_eq!(self.graphs.len(), graph_rngs.len());
             self.into_tempering_container(container_rng, graph_rngs.into_iter())
         }
@@ -736,7 +730,7 @@ pub mod serialization {
             self,
             container_rng: R1,
             graph_rngs: It,
-        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M, L>> {
+        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M>> {
             TemperingContainer {
                 graphs: self
                     .graphs

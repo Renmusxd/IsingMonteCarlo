@@ -9,24 +9,25 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 /// Default QMC implementation.
-pub type DefaultQMC<R> = QMC<R, FastOps, FastOps>;
+pub type DefaultQMC<R> = QMC<R, FastOps>;
 
 /// QMC with adjustable variables..
 #[cfg(feature = "const_generics")]
-pub type DefaultQMCN<R, const N: usize> = QMC<R, FastOpsN<N>, FastOpsN<N>>;
+pub type DefaultQMCN<R, const N: usize> = QMC<R, FastOpsN<N>>;
+
+/// Trait encompassing requirements for QMC.
+pub trait QMCManager: OpContainerConstructor + DiagonalUpdater + ClusterUpdater {}
 
 /// A manager for QMC and interactions.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct QMC<R, M, L>
+pub struct QMC<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: QMCManager,
 {
     bonds: Vec<Interaction>,
-    diagonal_updater: Option<M>,
-    loop_updater: Option<L>,
+    manager: Option<M>,
     cutoff: usize,
     state: Option<Vec<bool>>,
     rng: Option<R>,
@@ -37,12 +38,7 @@ where
     non_const_diags: Vec<usize>,
 }
 
-impl<
-        R: Rng,
-        M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-        L: ClusterUpdater + Into<M>,
-    > QMC<R, M, L>
-{
+impl<R: Rng, M: QMCManager> QMC<R, M> {
     /// Make a new QMC instance with nvars.
     pub fn new(nvars: usize, rng: R, do_loop_updates: bool) -> Self {
         Self::new_with_state(
@@ -62,8 +58,7 @@ impl<
     ) -> Self {
         Self {
             bonds: Vec::default(),
-            diagonal_updater: Some(M::new(nvars)),
-            loop_updater: None,
+            manager: Some(M::new(nvars)),
             cutoff: nvars,
             state: Some(state.into()),
             rng: Some(rng),
@@ -144,11 +139,7 @@ impl<
 
     /// Perform a single diagonal update.
     pub fn diagonal_update(&mut self, beta: f64) {
-        let mut m = match (self.diagonal_updater.take(), self.loop_updater.take()) {
-            (Some(m), None) => m,
-            (None, Some(l)) => l.into(),
-            _ => unreachable!(),
-        };
+        let mut m = self.manager.take().unwrap();
         let mut state = self.state.take().unwrap();
         let mut rng = self.rng.take().unwrap();
 
@@ -174,16 +165,12 @@ impl<
 
         self.state = Some(state);
         self.rng = Some(rng);
-        self.diagonal_updater = Some(m);
+        self.manager = Some(m);
     }
 
     /// Perform a single loop update. Will be inefficient without XX terms.
     pub fn loop_update(&mut self) {
-        let mut l = match (self.diagonal_updater.take(), self.loop_updater.take()) {
-            (Some(m), None) => m.into(),
-            (None, Some(l)) => l,
-            _ => unreachable!(),
-        };
+        let mut m = self.manager.take().unwrap();
         let mut state = self.state.take().unwrap();
         let mut rng = self.rng.take().unwrap();
 
@@ -192,9 +179,9 @@ impl<
         let h = |_vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             bonds[bond].at(input_state, output_state).unwrap()
         };
-        l.make_loop_update_with_rng(None, &h, &mut state, &mut rng);
+        m.make_loop_update_with_rng(None, &h, &mut state, &mut rng);
 
-        self.loop_updater = Some(l);
+        self.manager = Some(m);
         self.state = Some(state);
         self.rng = Some(rng);
     }
@@ -204,16 +191,12 @@ impl<
         if self.breaks_ising_symmetry {
             Err(())
         } else {
-            let mut l = match (self.diagonal_updater.take(), self.loop_updater.take()) {
-                (Some(m), None) => m.into(),
-                (None, Some(l)) => l,
-                _ => unreachable!(),
-            };
+            let mut m = self.manager.take().unwrap();
             let mut state = self.state.take().unwrap();
             let mut rng = self.rng.take().unwrap();
-            l.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+            m.flip_each_cluster_rng(0.5, &mut rng, &mut state);
 
-            self.loop_updater = Some(l);
+            self.manager = Some(m);
             self.state = Some(state);
             self.rng = Some(rng);
             Ok(())
@@ -222,21 +205,17 @@ impl<
 
     /// Flip spins using thermal fluctuations.
     pub fn flip_free_bits(&mut self) {
-        let l = match (self.diagonal_updater.take(), self.loop_updater.take()) {
-            (Some(m), None) => m.into(),
-            (None, Some(l)) => l,
-            _ => unreachable!(),
-        };
+        let m = self.manager.take().unwrap();
 
         let mut state = self.state.take().unwrap();
         let mut rng = self.rng.take().unwrap();
         state.iter_mut().enumerate().for_each(|(var, state)| {
-            if !l.does_var_have_ops(var) {
+            if !m.does_var_have_ops(var) {
                 *state = rng.gen_bool(0.5);
             }
         });
 
-        self.loop_updater = Some(l);
+        self.manager = Some(m);
         self.state = Some(state);
         self.rng = Some(rng);
     }
@@ -267,34 +246,8 @@ impl<
     }
 
     /// Get a reference to the diagonal op manager.
-    pub fn get_diagonal_manager_ref(&mut self) -> &M {
-        let m = match (self.diagonal_updater.take(), self.loop_updater.take()) {
-            (Some(m), None) => m,
-            (None, Some(l)) => l.into(),
-            _ => unreachable!(),
-        };
-        self.diagonal_updater = Some(m);
-        self.diagonal_updater.as_ref().unwrap()
-    }
-
-    /// Get a reference to the loop op manager.
-    pub fn get_loop_manager_ref(&mut self) -> &L {
-        let l = match (self.diagonal_updater.take(), self.loop_updater.take()) {
-            (Some(m), None) => m.into(),
-            (None, Some(l)) => l,
-            _ => unreachable!(),
-        };
-        self.loop_updater = Some(l);
-        self.loop_updater.as_ref().unwrap()
-    }
-
-    /// Get whichever manager ref is convenient.
-    pub fn get_manager_ref(&self) -> ManagerRef<M, L> {
-        match (self.diagonal_updater.as_ref(), self.loop_updater.as_ref()) {
-            (Some(a), None) => ManagerRef::DIAGONAL(a),
-            (None, Some(b)) => ManagerRef::LOOPER(b),
-            _ => unreachable!(),
-        }
+    pub fn get_manager_ref(&self) -> &M {
+        self.manager.as_ref().unwrap()
     }
 
     /// Get the cutoff.
@@ -305,11 +258,7 @@ impl<
     /// Set the cutoff to a new value
     pub fn set_cutoff(&mut self, cutoff: usize) {
         self.cutoff = cutoff;
-        match (self.diagonal_updater.as_mut(), self.loop_updater.as_mut()) {
-            (Some(a), None) => a.set_cutoff(cutoff),
-            (None, Some(b)) => b.set_cutoff(cutoff),
-            _ => unreachable!(),
-        }
+        self.manager.as_mut().unwrap().set_cutoff(cutoff)
     }
 
     /// Set the cutoff to a new value so long as that new value is larger than the old one.
@@ -317,9 +266,8 @@ impl<
         self.set_cutoff(max(self.cutoff, cutoff));
     }
 
-    pub(crate) fn set_diagonal_manager(&mut self, manager: M) {
-        self.loop_updater = None;
-        self.diagonal_updater = Some(manager);
+    pub(crate) fn set_manager(&mut self, manager: M) {
+        self.manager = Some(manager);
     }
 
     /// Check if two instances can safely swap managers and initial states
@@ -329,20 +277,16 @@ impl<
 
     /// Swap managers and initial states
     pub fn swap_manager_and_state(&mut self, other: &mut Self) {
-        let m = self.diagonal_updater.take();
-        let l = self.loop_updater.take();
+        let m = self.manager.take();
         let s = self.state.take();
 
-        let om = other.diagonal_updater.take();
-        let ol = other.loop_updater.take();
+        let om = other.manager.take();
         let os = other.state.take();
 
-        self.diagonal_updater = om;
-        self.loop_updater = ol;
+        self.manager = om;
         self.state = os;
 
-        other.diagonal_updater = m;
-        other.loop_updater = l;
+        other.manager = m;
         other.state = s;
     }
 }
@@ -356,11 +300,10 @@ pub enum ManagerRef<'a, 'b, M, L> {
     LOOPER(&'b L),
 }
 
-impl<R, M, L> QMCStepper for QMC<R, M, L>
+impl<R, M> QMCStepper for QMC<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: QMCManager,
 {
     fn timestep(&mut self, beta: f64) -> &[bool] {
         self.diagonal_update(beta);
@@ -383,11 +326,7 @@ where
     }
 
     fn get_n(&self) -> usize {
-        match (self.diagonal_updater.as_ref(), self.loop_updater.as_ref()) {
-            (Some(m), None) => m.get_n(),
-            (None, Some(l)) => l.get_n(),
-            _ => unreachable!(),
-        }
+        self.manager.as_ref().unwrap().get_n()
     }
 
     fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64 {
@@ -687,11 +626,10 @@ fn get_power_of_two(n: usize) -> Result<usize, ()> {
 }
 
 #[cfg(feature = "autocorrelations")]
-impl<R, M, L> QMCBondAutoCorrelations for QMC<R, M, L>
+impl<R, M> QMCBondAutoCorrelations for QMC<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + DiagonalUpdater + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: QMCManager,
 {
     fn n_bonds(&self) -> usize {
         self.non_const_diags.len()

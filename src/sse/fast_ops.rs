@@ -1,4 +1,6 @@
 use crate::memory::allocator::{Allocator, Factory};
+use crate::sse::qmc_ising::IsingManager;
+use crate::sse::qmc_runner::QMCManager;
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
 #[cfg(feature = "serialize")]
@@ -830,3 +832,6 @@ impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
         }
     }
 }
+
+impl<O: Op> IsingManager for FastOpsTemplate<O> {}
+impl<O: Op> QMCManager for FastOpsTemplate<O> {}

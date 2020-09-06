@@ -1,5 +1,5 @@
 use crate::sse::fast_ops::FastOpsTemplate;
-use crate::sse::qmc_ising::QMCIsingGraph;
+use crate::sse::qmc_ising::{IsingManager, QMCIsingGraph};
 use crate::sse::*;
 use rand::Rng;
 
@@ -59,11 +59,10 @@ pub trait QMCDebug {
 
 impl<O: Op> DebugOps for FastOpsTemplate<O> {}
 
-impl<R, M, L> QMCDebug for QMCIsingGraph<R, M, L>
+impl<R, M> QMCDebug for QMCIsingGraph<R, M>
 where
     R: Rng,
-    M: OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + DebugOps + Into<L>,
-    L: ClusterUpdater + Into<M>,
+    M: IsingManager + DebugOps,
 {
     type M = M;
 
