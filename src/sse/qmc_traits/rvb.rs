@@ -125,7 +125,6 @@ pub trait RVBUpdater:
         };
 
         if perform_update {
-            // sat_bonds, unsat_bonds, and in_cluster should be set up already.
             perform_rvb_update(
                 self,
                 (edges, is_sat),
