@@ -10,8 +10,6 @@ pub mod op_container;
 pub mod qmc_stepper;
 /// Resonating bonds
 pub mod rvb;
-/// Semi-classical SSE algorithms
-pub mod semi_classical;
 
 pub use cluster::*;
 pub use diagonal::*;
@@ -19,7 +17,6 @@ pub use directed_loop::*;
 pub use op_container::*;
 pub use qmc_stepper::*;
 pub use rvb::*;
-pub use semi_classical::*;
 
 /// Check integrity of a struct.
 pub trait Verify {

@@ -33,10 +33,6 @@ pub struct FastOpsTemplate<O: Op> {
     pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(PRel, PRel)>>,
 
-    // For each variable check if flipped by an offdiagonal op.
-    // for use with semiclassical updates.
-    memoized_offdiagonal_ops: Option<Vec<bool>>,
-
     // Optional bond counting.
     bond_counters: Option<Vec<usize>>,
 
@@ -57,7 +53,6 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             n: 0,
             p_ends: None,
             var_ends: vec![None; nvars],
-            memoized_offdiagonal_ops: Some(vec![false; nvars]),
             bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
             // Set bounds to make sure there are not "leaks"
             usize_alloc: Allocator::new_with_max_in_flight(4),
@@ -162,43 +157,6 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             });
         self.return_instance(last_vars);
         self.return_instance(last_rels);
-    }
-
-    fn update_offdiagonal_lookup(&mut self) {
-        let mut has_flips = self.memoized_offdiagonal_ops.take().unwrap();
-        has_flips.iter_mut().for_each(|b| *b = false);
-        let mut vars_left = self.get_nvars();
-        let mut p = self.p_ends.map(|(start, _)| start);
-        while let Some(node_p) = p {
-            let node = self.ops[node_p].as_ref().unwrap();
-            let op = node.get_op_ref();
-            if !op.is_diagonal() {
-                let eqs = op
-                    .get_inputs()
-                    .iter()
-                    .zip(op.get_outputs().iter())
-                    .map(|(input, output)| input == output);
-                let _ = op
-                    .get_vars()
-                    .iter()
-                    .cloned()
-                    .zip(eqs)
-                    .filter(|(_, eq)| !*eq)
-                    .try_for_each(|(var, _)| {
-                        if !has_flips[var] {
-                            vars_left -= 1;
-                            has_flips[var] = true;
-                        }
-                        if vars_left == 0 {
-                            Err(())
-                        } else {
-                            Ok(())
-                        }
-                    });
-            }
-            p = node.next_p;
-        }
-        self.memoized_offdiagonal_ops = Some(has_flips);
     }
 }
 
@@ -690,10 +648,6 @@ impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {
         let init = self.p_ends.map(|(head, _)| head).unwrap();
         (0..n).fold(init, |p, _| self.ops[p].as_ref().unwrap().next_p.unwrap())
     }
-
-    fn post_loop_update_hook(&mut self) {
-        self.update_offdiagonal_lookup()
-    }
 }
 
 impl<O: Op + Clone> Factory<Vec<bool>> for FastOpsTemplate<O> {
@@ -764,39 +718,7 @@ impl<O: Op + Clone> Factory<BondContainer<usize>> for FastOpsTemplate<O> {
     }
 }
 
-impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {
-    fn post_cluster_update_hook(&mut self) {
-        self.update_offdiagonal_lookup()
-    }
-}
-
-impl<O: Op + Clone> ClassicalLoopUpdater for FastOpsTemplate<O> {
-    fn var_ever_flips(&self, var: usize) -> bool {
-        self.memoized_offdiagonal_ops.as_ref().unwrap()[var]
-    }
-
-    fn count_ops_on_border(
-        &self,
-        sat_set: &BondContainer<usize>,
-        broken_set: &BondContainer<usize>,
-    ) -> (usize, usize) {
-        if let Some(bond_counters) = self.bond_counters.as_ref() {
-            let sats = sat_set
-                .iter()
-                .cloned()
-                .map(|bond| bond_counters[bond])
-                .sum();
-            let brokens = broken_set
-                .iter()
-                .cloned()
-                .map(|bond| bond_counters[bond])
-                .sum();
-            (sats, brokens)
-        } else {
-            count_using_iter_ops(self, sat_set, broken_set)
-        }
-    }
-}
+impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {}
 
 impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {

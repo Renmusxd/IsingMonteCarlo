@@ -16,10 +16,7 @@ pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps>;
 type VecEdge = Vec<usize>;
 
 /// Trait encompassing all requirements for op managers in QMCIsingGraph.
-pub trait IsingManager:
-    OpContainerConstructor + ClassicalLoopUpdater + RVBUpdater + ClusterUpdater
-{
-}
+pub trait IsingManager: OpContainerConstructor + RVBUpdater + ClusterUpdater {}
 
 /// A container to run QMC simulations.
 #[derive(Debug)]
@@ -39,8 +36,6 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     run_semiclassical_steps: bool,
     run_rvb_steps: bool,
     semiclassical_bonds: Option<Vec<Vec<usize>>>,
-    total_semiclassical_cluster_size: f64,
-    semiclassical_clusters_counted: usize,
     total_rvb_successes: usize,
     rvb_clusters_counted: usize,
 }
@@ -111,8 +106,6 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             run_semiclassical_steps: false,
             run_rvb_steps: false,
             semiclassical_bonds: None,
-            total_semiclassical_cluster_size: 2.0,
-            semiclassical_clusters_counted: 0,
             total_rvb_successes: 0,
             rvb_clusters_counted: 0,
         }
@@ -224,26 +217,6 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
                 *state = rng.gen_bool(0.5);
             }
         });
-
-        self.op_manager = Some(manager);
-        self.state = Some(state);
-    }
-
-    /// Perform a single semiclassical step.
-    pub fn single_semiclassical_step(&mut self) {
-        let mut state = self.state.take().unwrap();
-        if self.semiclassical_bonds.is_none() {
-            self.make_semiclassical_bonds(state.len());
-        }
-        let mut manager = self.op_manager.take().unwrap();
-        let rng = self.rng.as_mut().unwrap();
-
-        let edges = EdgeNav {
-            var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
-            edges: &self.edges,
-        };
-
-        manager.run_semiclassical_edge_update(&edges, &mut state, rng);
 
         self.op_manager = Some(manager);
         self.state = Some(state);
@@ -399,11 +372,6 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     }
 
     /// Average semiclassical cluster size.
-    pub fn average_semiclassical_cluster_size(&self) -> f64 {
-        self.total_semiclassical_cluster_size / self.semiclassical_clusters_counted as f64
-    }
-
-    /// Average semiclassical cluster size.
     pub fn rvb_success_rate(&self) -> f64 {
         self.total_rvb_successes as f64 / self.rvb_clusters_counted as f64
     }
@@ -480,36 +448,6 @@ where
             &mut rng,
         );
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
-
-        // Perform semiclassical steps if requested.
-        if self.run_semiclassical_steps {
-            let edges = EdgeNav {
-                var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
-                edges: &self.edges,
-            };
-            // Each semi-classic update only hits a few variables so should be repeated.
-            let average_cluster_size =
-                self.total_semiclassical_cluster_size / self.semiclassical_clusters_counted as f64;
-            let average_cluster_size = if average_cluster_size < 2.0 {
-                2.0
-            } else {
-                average_cluster_size
-            };
-            let steps_to_run = (state.len() as f64 / average_cluster_size).ceil();
-            let steps_to_run = if steps_to_run < 1.0 {
-                1
-            } else {
-                steps_to_run as usize
-            };
-            self.total_semiclassical_cluster_size += (0..steps_to_run)
-                .map(|_| {
-                    let (size, _) =
-                        manager.run_semiclassical_edge_update(&edges, &mut state, &mut rng);
-                    size
-                })
-                .sum::<usize>() as f64;
-            self.semiclassical_clusters_counted += steps_to_run;
-        }
 
         if self.run_rvb_steps {
             let edges = EdgeNav {
@@ -646,8 +584,6 @@ where
             run_semiclassical_steps: self.run_semiclassical_steps,
             run_rvb_steps: self.run_rvb_steps,
             semiclassical_bonds: self.semiclassical_bonds.clone(),
-            total_semiclassical_cluster_size: self.total_semiclassical_cluster_size,
-            semiclassical_clusters_counted: self.semiclassical_clusters_counted,
             total_rvb_successes: self.total_rvb_successes,
             rvb_clusters_counted: self.rvb_clusters_counted,
         }
@@ -749,8 +685,6 @@ pub mod serialization {
         run_semiclassical_steps: bool,
         run_rvb_steps: bool,
         semiclassical_bonds: Option<Vec<Vec<usize>>>,
-        total_semiclassical_cluster_size: f64,
-        semiclassical_clusters_counted: usize,
         total_rvb_successes: usize,
         rvb_clusters_counted: usize,
     }
@@ -774,8 +708,6 @@ pub mod serialization {
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
-                total_semiclassical_cluster_size: self.total_semiclassical_cluster_size,
-                semiclassical_clusters_counted: self.semiclassical_clusters_counted,
                 total_rvb_successes: self.total_rvb_successes,
                 rvb_clusters_counted: self.rvb_clusters_counted,
             }
@@ -800,8 +732,6 @@ pub mod serialization {
                 run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
                 semiclassical_bonds: self.semiclassical_bonds,
-                total_semiclassical_cluster_size: self.total_semiclassical_cluster_size,
-                semiclassical_clusters_counted: self.semiclassical_clusters_counted,
                 total_rvb_successes: self.total_rvb_successes,
                 rvb_clusters_counted: self.rvb_clusters_counted,
             }
