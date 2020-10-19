@@ -4,6 +4,7 @@ pub mod cluster;
 pub mod diagonal;
 /// SSE directed loop updates.
 pub mod directed_loop;
+mod heatbath;
 /// Holding and manipulating ops.
 pub mod op_container;
 /// QMC timesteps and analysis.
@@ -14,6 +15,7 @@ pub mod rvb;
 pub use cluster::*;
 pub use diagonal::*;
 pub use directed_loop::*;
+pub use heatbath::*;
 pub use op_container::*;
 pub use qmc_stepper::*;
 pub use rvb::*;
