@@ -32,10 +32,9 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     rng: Option<R>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
-    // Optional semiclassical update, for each var a: [(b, ferro/antiferro, bond)...]
-    run_semiclassical_steps: bool,
     run_rvb_steps: bool,
-    semiclassical_bonds: Option<Vec<Vec<usize>>>,
+    // List of bonds.
+    classical_bonds: Option<Vec<Vec<usize>>>,
     total_rvb_successes: usize,
     rvb_clusters_counted: usize,
 }
@@ -103,9 +102,8 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             singlesite_energy_offset,
             rng: Some(rng),
             vars: (0..nvars).collect(),
-            run_semiclassical_steps: false,
             run_rvb_steps: false,
-            semiclassical_bonds: None,
+            classical_bonds: None,
             total_rvb_successes: 0,
             rvb_clusters_counted: 0,
         }
@@ -223,16 +221,16 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     }
 
     /// Perform a single rvb step.
-    pub fn single_rvb_step(&mut self) {
+    pub fn single_rvb_step(&mut self) -> Result<(), String> {
         let mut state = self.state.take().unwrap();
-        if self.semiclassical_bonds.is_none() {
-            self.make_semiclassical_bonds(state.len());
+        if self.classical_bonds.is_none() {
+            self.make_classical_bonds(state.len())?;
         }
         let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
 
         let edges = EdgeNav {
-            var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
+            var_to_bonds: self.classical_bonds.as_ref().unwrap(),
             edges: &self.edges,
         };
 
@@ -240,44 +238,41 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
         self.op_manager = Some(manager);
         self.state = Some(state);
+        Ok(())
     }
 
-    /// Make semiclassical bonds out of all edges with |j| == abs_j
-    fn make_semiclassical_bonds_with_abs(&mut self, nvars: usize, abs_j: f64) {
-        let abs_j = abs_j.abs();
-        let mut edge_lookup = vec![vec![]; nvars];
-        self.edges
+    /// Build classical bonds list, assume all js are the same magnitude.
+    fn make_classical_bonds(&mut self, nvars: usize) -> Result<(), String> {
+        let abs_j = self.edges[0].1.abs();
+        let all_eq = self
+            .edges
             .iter()
-            .filter(|(_, j)| (j.abs() - abs_j).abs() <= std::f64::EPSILON)
-            .map(|(edge, _)| (edge[0], edge[1]))
-            .enumerate()
-            .for_each(|(bond, (a, b))| {
-                edge_lookup[a].push(bond);
-                edge_lookup[b].push(bond);
-            });
-        self.semiclassical_bonds = Some(edge_lookup);
-    }
-
-    /// Pick the first edge and assume all js are exactly that.
-    fn make_semiclassical_bonds(&mut self, nvars: usize) {
-        self.make_semiclassical_bonds_with_abs(nvars, self.edges[0].1)
-    }
-
-    /// Enable or disable automatic semiclassical steps.
-    pub fn set_run_semiclassical(&mut self, run_semiclassical: bool) {
-        self.run_semiclassical_steps = run_semiclassical;
-        if self.run_semiclassical_steps && self.semiclassical_bonds.is_none() {
-            let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
-            self.make_semiclassical_bonds(nvars);
+            .all(|(_, j)| (j.abs() - abs_j).abs() < std::f64::EPSILON);
+        if all_eq {
+            let mut edge_lookup = vec![vec![]; nvars];
+            self.edges
+                .iter()
+                .map(|(edge, _)| (edge[0], edge[1]))
+                .enumerate()
+                .for_each(|(bond, (a, b))| {
+                    edge_lookup[a].push(bond);
+                    edge_lookup[b].push(bond);
+                });
+            self.classical_bonds = Some(edge_lookup);
+            Ok(())
+        } else {
+            Err("All bonds must have the same magnitude to enable RVB updates".to_string())
         }
     }
 
-    /// Enable or disable automatic rvb steps.
-    pub fn set_run_rvb(&mut self, run_rvb: bool) {
+    /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
+    pub fn set_run_rvb(&mut self, run_rvb: bool) -> Result<(), String> {
         self.run_rvb_steps = run_rvb;
-        if self.run_rvb_steps && self.semiclassical_bonds.is_none() {
+        if self.run_rvb_steps && self.classical_bonds.is_none() {
             let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
-            self.make_semiclassical_bonds(nvars);
+            self.make_classical_bonds(nvars)
+        } else {
+            Ok(())
         }
     }
 
@@ -371,7 +366,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         other.state = Some(s);
     }
 
-    /// Average semiclassical cluster size.
+    /// Average rvb success rate.
     pub fn rvb_success_rate(&self) -> f64 {
         self.total_rvb_successes as f64 / self.rvb_clusters_counted as f64
     }
@@ -451,7 +446,7 @@ where
 
         if self.run_rvb_steps {
             let edges = EdgeNav {
-                var_to_bonds: self.semiclassical_bonds.as_ref().unwrap(),
+                var_to_bonds: self.classical_bonds.as_ref().unwrap(),
                 edges: &self.edges,
             };
             // Average cluster size is always 2.
@@ -581,9 +576,8 @@ where
             singlesite_energy_offset: self.singlesite_energy_offset,
             rng: self.rng.clone(),
             vars: self.vars.clone(),
-            run_semiclassical_steps: self.run_semiclassical_steps,
             run_rvb_steps: self.run_rvb_steps,
-            semiclassical_bonds: self.semiclassical_bonds.clone(),
+            classical_bonds: self.classical_bonds.clone(),
             total_rvb_successes: self.total_rvb_successes,
             rvb_clusters_counted: self.rvb_clusters_counted,
         }
@@ -682,9 +676,8 @@ pub mod serialization {
         singlesite_energy_offset: f64,
         // Can be easily reconstructed
         nvars: usize,
-        run_semiclassical_steps: bool,
         run_rvb_steps: bool,
-        semiclassical_bonds: Option<Vec<Vec<usize>>>,
+        classical_bonds: Option<Vec<Vec<usize>>>,
         total_rvb_successes: usize,
         rvb_clusters_counted: usize,
     }
@@ -705,9 +698,8 @@ pub mod serialization {
                 singlesite_energy_offset: self.singlesite_energy_offset,
                 rng: Some(rng),
                 vars: (0..self.nvars).collect(),
-                run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
-                semiclassical_bonds: self.semiclassical_bonds,
+                classical_bonds: self.classical_bonds,
                 total_rvb_successes: self.total_rvb_successes,
                 rvb_clusters_counted: self.rvb_clusters_counted,
             }
@@ -729,9 +721,8 @@ pub mod serialization {
                 twosite_energy_offset: self.twosite_energy_offset,
                 singlesite_energy_offset: self.singlesite_energy_offset,
                 nvars: self.vars.len(),
-                run_semiclassical_steps: self.run_semiclassical_steps,
                 run_rvb_steps: self.run_rvb_steps,
-                semiclassical_bonds: self.semiclassical_bonds,
+                classical_bonds: self.classical_bonds,
                 total_rvb_successes: self.total_rvb_successes,
                 rvb_clusters_counted: self.rvb_clusters_counted,
             }

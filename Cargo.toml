@@ -1,6 +1,6 @@
 [package]
 name = "qmc"
-version = "2.6.0"
+version = "2.7.0"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"
@@ -10,17 +10,18 @@ license = "MIT"
 
 [features]
 default = []
+# Calculate autocorrelation lengths for various functions of the sampled states.
 autocorrelations = ["rayon", "rustfft"]
+# Allow for interactions of various numbers of spins to be stored on the stack
 const_generics = ["smallvec/const_generics"]
+# Enable nightly features in dependencies
 nightly = ["smallvec/specialization", "smallvec/union", "const_generics"]
+# Compile and export parallel-tempering code
 tempering = ["itertools"]
+# Add parallelization to parallel-tempering code
 parallel-tempering = ["rayon", "tempering"]
+# Add graph serialization.
 serialize = ["serde", "rand/serde1", "smallvec/serde"]
-
-[dev-dependencies]
-rand = {version = "^0.7", features = ["small_rng"]}
-serde_json = "^1.0"
-rand_isaac = {version = "^0.2", features = ["serde1"]}
 
 [dependencies]
 rand = "^0.7"
@@ -29,3 +30,8 @@ itertools = {version = "^0.9", optional = true}
 rayon = {version = "^1.3", optional = true}
 serde = {version = "^1.0", optional = true, features = ["derive"]}
 rustfft = {version = "^3.0", optional = true}
+
+[dev-dependencies]
+rand = {version = "^0.7", features = ["small_rng"]}
+serde_json = "^1.0"
+rand_isaac = {version = "^0.2", features = ["serde1"]}
