@@ -133,6 +133,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         let mut total = 0.0;
         let weight_and_cumulative = (0..num_bonds)
             .map(|i| {
+                // TODO check this and try to factor out smallvec.
                 let vars = bonds_fn(i);
                 let substate = vars
                     .iter()
