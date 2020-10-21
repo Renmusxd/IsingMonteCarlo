@@ -238,7 +238,7 @@ fn run_three() {
             rng,
             Some(vec![false; l * l]),
         );
-        ising.set_run_rvb(true);
+        ising.set_run_rvb(true).unwrap();
         ising.timesteps(1000, 1.0);
         assert!(ising.verify());
     }
@@ -257,7 +257,7 @@ fn run_four() {
             rng,
             Some(vec![false; l * l]),
         );
-        ising.set_run_rvb(true);
+        ising.set_run_rvb(true).unwrap();
         ising.timesteps(1000, 1.0);
         assert!(ising.verify());
     }
@@ -278,7 +278,7 @@ fn run_two_unit_cell() {
         Some(vec![false; nvars]),
     );
     ising.timesteps(1000, 1.0);
-    ising.set_run_rvb(true);
+    ising.set_run_rvb(true).unwrap();
     ising.timesteps(1000, 1.0);
     assert!(ising.verify());
     // }
