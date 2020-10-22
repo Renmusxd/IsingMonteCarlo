@@ -16,7 +16,7 @@ pub type DefaultQMC<R> = QMC<R, FastOps>;
 pub type DefaultQMCN<R, const N: usize> = QMC<R, FastOpsN<N>>;
 
 /// Trait encompassing requirements for QMC.
-pub trait QMCManager: OpContainerConstructor + DiagonalUpdater + ClusterUpdater {}
+pub trait QMCManager: OpContainerConstructor + HeatBathDiagonalUpdater + ClusterUpdater {}
 
 /// A manager for QMC and interactions.
 #[derive(Debug)]
@@ -36,6 +36,9 @@ where
     do_loop_updates: bool,
     offset: f64,
     non_const_diags: Vec<usize>,
+    // Heatbath
+    do_heatbath: bool,
+    bond_weights: Option<BondWeights>,
 }
 
 impl<R: Rng, M: QMCManager> QMC<R, M> {
@@ -67,6 +70,8 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
             do_loop_updates,
             offset: 0.0,
             non_const_diags: Vec::default(),
+            do_heatbath: false,
+            bond_weights: None,
         }
     }
 
@@ -83,6 +88,7 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
             self.non_const_diags.push(self.bonds.len())
         }
 
+        self.bond_weights = None;
         self.bonds.push(interaction);
     }
 
@@ -151,16 +157,31 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
 
         let num_bonds = bonds.len();
         let bonds_fn = |b: usize| -> (&[usize], bool) { (&bonds[b].vars, bonds[b].is_constant()) };
-
         let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
 
-        m.make_diagonal_update_with_rng_and_state_ref(
-            self.cutoff,
-            beta,
-            &mut state,
-            &ham,
-            &mut rng,
-        );
+        if self.do_heatbath {
+            if self.bond_weights.is_none() {
+                let bond_weights = M::make_bond_weights(h, num_bonds, |b| bonds_fn(b).0);
+                self.bond_weights = Some(bond_weights);
+            };
+            let bond_weights = self.bond_weights.as_ref().unwrap();
+            m.make_heatbath_diagonal_update_with_rng_and_state_ref(
+                self.cutoff,
+                beta,
+                &mut state,
+                &ham,
+                bond_weights,
+                &mut rng,
+            )
+        } else {
+            m.make_diagonal_update_with_rng_and_state_ref(
+                self.cutoff,
+                beta,
+                &mut state,
+                &ham,
+                &mut rng,
+            );
+        }
         self.cutoff = max(self.cutoff, m.get_n() + m.get_n() / 2);
 
         self.state = Some(state);
@@ -218,6 +239,16 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
         self.manager = Some(m);
         self.state = Some(state);
         self.rng = Some(rng);
+    }
+
+    /// Enable or disable the heatbath diagonal update.
+    pub fn set_do_heatbath(&mut self, do_heatbath: bool) {
+        self.do_heatbath = do_heatbath;
+    }
+
+    /// Should the model do heatbath diagonal updates.
+    pub fn should_do_heatbath(&self) -> bool {
+        self.do_heatbath
     }
 
     /// Change whether loop updates will be performed.
@@ -321,10 +352,6 @@ where
         self.state.as_ref().unwrap()
     }
 
-    fn state_ref(&self) -> &[bool] {
-        self.state.as_ref().unwrap()
-    }
-
     fn get_n(&self) -> usize {
         self.manager.as_ref().unwrap().get_n()
     }
@@ -332,6 +359,10 @@ where
     fn get_energy_for_average_n(&self, average_n: f64, beta: f64) -> f64 {
         let average_energy = -(average_n / beta);
         average_energy + self.offset
+    }
+
+    fn state_ref(&self) -> &[bool] {
+        self.state.as_ref().unwrap()
     }
 }
 

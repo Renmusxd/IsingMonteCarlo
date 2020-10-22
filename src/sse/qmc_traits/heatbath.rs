@@ -57,6 +57,21 @@ impl BondWeights {
             .binary_search_by(|(_, _, c)| c.partial_cmp(&val).unwrap())
             .unwrap_or_else(|x| x)
     }
+
+    fn max_weight_for_bond(&self, b: usize) -> f64 {
+        self.max_weight_and_cumulative
+            .iter()
+            .find_map(
+                |(bond, maxweight, _)| {
+                    if *bond == b {
+                        Some(*maxweight)
+                    } else {
+                        None
+                    }
+                },
+            )
+            .unwrap()
+    }
 }
 
 /// Heatbath updates for a diagonal updater.
@@ -188,6 +203,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                         substate.as_ref(),
                     );
 
+                    // TODO double check this.
                     if p * maxweight < weight {
                         let op = Self::Op::diagonal(vars, b, substate, constant);
                         Some(Some(op))
@@ -201,16 +217,18 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
             Some(op) if op.is_diagonal() => {
                 let numerator = (cutoff - n + 1) as f64;
                 let denominator = numerator + beta * bond_weights.total().unwrap();
-                if rng.gen_bool(numerator / denominator) {
-                    // TODO see if any modification is necessary here.
-                    // let weight = (hamiltonian.hamiltonian)(
-                    //     op.get_vars(),
-                    //     op.get_bond(),
-                    //     op.get_inputs(),
-                    //     op.get_outputs(),
-                    // );
-                    // let maxweight = bond_weights.max_weight_for_bond(op.get_bond());
 
+                // TODO see if any modification is necessary here.
+                // let weight = (hamiltonian.hamiltonian)(
+                //     op.get_vars(),
+                //     op.get_bond(),
+                //     op.get_inputs(),
+                //     op.get_outputs(),
+                // );
+                // let maxweight = bond_weights.max_weight_for_bond(op.get_bond());
+                // let denominator = denominator * weight / maxweight;
+
+                if rng.gen_bool(numerator / denominator) {
                     Some(None)
                 } else {
                     None
