@@ -545,6 +545,8 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
     }
 }
 
+impl<O: Op + Clone> HeatBathDiagonalUpdater for FastOpsTemplate<O> {}
+
 impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
     fn new(nvars: usize) -> Self {
         Self::new_from_nvars(nvars)

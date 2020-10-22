@@ -16,7 +16,10 @@ pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps>;
 type VecEdge = Vec<usize>;
 
 /// Trait encompassing all requirements for op managers in QMCIsingGraph.
-pub trait IsingManager: OpContainerConstructor + RVBUpdater + ClusterUpdater {}
+pub trait IsingManager:
+    OpContainerConstructor + HeatBathDiagonalUpdater + RVBUpdater + ClusterUpdater
+{
+}
 
 /// A container to run QMC simulations.
 #[derive(Debug)]
@@ -37,6 +40,8 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     classical_bonds: Option<Vec<Vec<usize>>>,
     total_rvb_successes: usize,
     rvb_clusters_counted: usize,
+    // Heatbath bond weights
+    bond_weights: Option<BondWeights>,
 }
 
 /// Build a new qmc graph with thread rng.
@@ -106,6 +111,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             classical_bonds: None,
             total_rvb_successes: 0,
             rvb_clusters_counted: 0,
+            bond_weights: None,
         }
     }
 
@@ -189,13 +195,26 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
         // Start by editing the ops list
         let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
-        manager.make_diagonal_update_with_rng_and_state_ref(
-            self.cutoff,
-            beta,
-            &mut state,
-            &ham,
-            rng,
-        );
+
+        if let Some(bond_weights) = &self.bond_weights {
+            manager.make_heatbath_diagonal_update_with_rng_and_state_ref(
+                self.cutoff,
+                beta,
+                &mut state,
+                &ham,
+                bond_weights,
+                rng,
+            );
+        } else {
+            manager.make_diagonal_update_with_rng_and_state_ref(
+                self.cutoff,
+                beta,
+                &mut state,
+                &ham,
+                rng,
+            );
+        }
+
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
         self.op_manager = Some(manager);
         self.state = Some(state);
@@ -273,6 +292,43 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             self.make_classical_bonds(nvars)
         } else {
             Ok(())
+        }
+    }
+
+    /// Enable heatbath diagonal updates.
+    pub fn set_enable_heatbath(&mut self, enable_heatbath: bool) {
+        if enable_heatbath {
+            let nvars = self.get_nvars();
+            let edges = &self.edges;
+            let vars = &self.vars;
+            let transverse = self.transverse;
+            let twosite_energy_offset = self.twosite_energy_offset;
+            let singlesite_energy_offset = self.singlesite_energy_offset;
+            let hinfo = HamInfo {
+                edges,
+                transverse,
+                singlesite_energy_offset,
+                twosite_energy_offset,
+            };
+            let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+                Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
+            };
+
+            let num_bonds = edges.len() + nvars;
+            let bonds_fn = |b: usize| -> &[usize] {
+                if b < edges.len() {
+                    &edges[b].0
+                } else {
+                    let b = b - edges.len();
+                    &vars[b..b + 1]
+                }
+            };
+
+            // Start by editing the ops list
+            let bw = M::make_bond_weights(h, num_bonds, bonds_fn);
+            self.bond_weights = Some(bw);
+        } else {
+            self.bond_weights = None;
         }
     }
 
@@ -435,13 +491,24 @@ where
 
         // Start by editing the ops list
         let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
-        manager.make_diagonal_update_with_rng_and_state_ref(
-            self.cutoff,
-            beta,
-            &mut state,
-            &ham,
-            &mut rng,
-        );
+        if let Some(bond_weights) = &self.bond_weights {
+            manager.make_heatbath_diagonal_update_with_rng_and_state_ref(
+                self.cutoff,
+                beta,
+                &mut state,
+                &ham,
+                bond_weights,
+                &mut rng,
+            )
+        } else {
+            manager.make_diagonal_update_with_rng_and_state_ref(
+                self.cutoff,
+                beta,
+                &mut state,
+                &ham,
+                &mut rng,
+            );
+        };
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         if self.run_rvb_steps {
@@ -580,6 +647,7 @@ where
             classical_bonds: self.classical_bonds.clone(),
             total_rvb_successes: self.total_rvb_successes,
             rvb_clusters_counted: self.rvb_clusters_counted,
+            bond_weights: self.bond_weights.clone(),
         }
     }
 }
@@ -680,6 +748,8 @@ pub mod serialization {
         classical_bonds: Option<Vec<Vec<usize>>>,
         total_rvb_successes: usize,
         rvb_clusters_counted: usize,
+        // Heatbath
+        bond_weights: Option<BondWeights>,
     }
 
     impl<M> SerializeQMCGraph<M>
@@ -702,6 +772,7 @@ pub mod serialization {
                 classical_bonds: self.classical_bonds,
                 total_rvb_successes: self.total_rvb_successes,
                 rvb_clusters_counted: self.rvb_clusters_counted,
+                bond_weights: self.bond_weights,
             }
         }
     }
@@ -725,6 +796,7 @@ pub mod serialization {
                 classical_bonds: self.classical_bonds,
                 total_rvb_successes: self.total_rvb_successes,
                 rvb_clusters_counted: self.rvb_clusters_counted,
+                bond_weights: self.bond_weights,
             }
         }
     }

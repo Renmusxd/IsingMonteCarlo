@@ -1,38 +1,61 @@
 use crate::sse::qmc_traits::{DiagonalUpdater, Hamiltonian};
 use crate::sse::Op;
 use rand::Rng;
-use smallvec::SmallVec;
+#[cfg(feature = "serialize")]
+use serde::{Deserialize, Serialize};
 
 /// Bond weight storage for fast lookup.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct BondWeights {
-    weight_and_cumulative: Vec<(f64, f64)>,
-    total: f64,
-    error: f64,
+    max_weight_and_cumulative: Vec<(usize, f64, f64)>,
 }
 
 impl BondWeights {
-    fn index_for_cumulative(&self, val: f64) -> usize {
-        self.weight_and_cumulative
-            .binary_search_by(|(_, c)| c.partial_cmp(&val).unwrap())
-            .unwrap_or_else(|x| x)
+    /// Make a new BondWeights using an iterator of each individual bond's weight.
+    pub fn new<It>(max_bond_weights: It) -> Self
+    where
+        It: Iterator<Item = f64>,
+    {
+        let max_weight_and_cumulative =
+            max_bond_weights
+                .enumerate()
+                .fold(vec![], |mut acc, (b, w)| {
+                    if acc.is_empty() {
+                        acc.push((b, w, w));
+                    } else {
+                        acc.push((b, w, w + acc[acc.len() - 1].2));
+                    };
+                    acc
+                });
+        Self {
+            max_weight_and_cumulative,
+        }
     }
 
-    fn update_weight(&mut self, b: usize, weight: f64) -> f64 {
-        let old_weight = self.weight_and_cumulative[b].0;
-        if (old_weight - weight).abs() > self.error {
-            // TODO:
-            // In the heatbath definition in 1812.05326 we see 2|J| used instead of J,
-            // should that become a abs(delta) here?
-            let delta = weight - old_weight;
-            self.total += delta;
-            let n = self.weight_and_cumulative.len();
-            self.weight_and_cumulative[b].0 += delta;
-            self.weight_and_cumulative[b..n]
-                .iter_mut()
-                .for_each(|(_, c)| *c += delta);
+    fn get_random_bond_and_max_weight<R: Rng>(&self, mut rng: R) -> Result<(usize, f64), &str> {
+        if let Some(total) = self.total() {
+            let c = rng.gen_range(0., total);
+            let index = self.index_for_cumulative(c);
+            Ok((
+                self.max_weight_and_cumulative[index].0,
+                self.max_weight_and_cumulative[index].1,
+            ))
+        } else {
+            Err("No bonds provided")
         }
-        old_weight
+    }
+
+    fn total(&self) -> Option<f64> {
+        self.max_weight_and_cumulative
+            .last()
+            .map(|(_, _, tot)| *tot)
+    }
+
+    fn index_for_cumulative(&self, val: f64) -> usize {
+        self.max_weight_and_cumulative
+            .binary_search_by(|(_, _, c)| c.partial_cmp(&val).unwrap())
+            .unwrap_or_else(|x| x)
     }
 }
 
@@ -45,9 +68,8 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         beta: f64,
         state: &[bool],
         hamiltonian: &Hamiltonian<'b, H, E>,
-        bond_weights: BondWeights,
-    ) -> BondWeights
-    where
+        bond_weights: &BondWeights,
+    ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> (&'b [usize], bool),
     {
@@ -68,10 +90,9 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         beta: f64,
         state: &[bool],
         hamiltonian: &Hamiltonian<'b, H, E>,
-        bond_weights: BondWeights,
+        bond_weights: &BondWeights,
         rng: &mut R,
-    ) -> BondWeights
-    where
+    ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> (&'b [usize], bool),
     {
@@ -93,62 +114,43 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         beta: f64,
         state: &mut [bool],
         hamiltonian: &Hamiltonian<'b, H, E>,
-        bond_weights: BondWeights,
+        bond_weights: &BondWeights,
         rng: &mut R,
-    ) -> BondWeights
-    where
+    ) where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> (&'b [usize], bool),
     {
-        let (_, _, bond_weights) = self.mutate_ps(
-            cutoff,
-            (state, rng, bond_weights),
-            |s, op, (state, rng, bond_weights)| {
-                let (op, bond_weights) = Self::heat_bath_single_diagonal_update(
-                    op,
-                    cutoff,
-                    s.get_n(),
-                    beta,
-                    state,
-                    (&hamiltonian, bond_weights),
-                    rng,
-                );
-                (op, (state, rng, bond_weights))
-            },
-        );
-        bond_weights
+        self.mutate_ps(cutoff, (state, rng), |s, op, (state, rng)| {
+            let op = Self::heat_bath_single_diagonal_update(
+                op,
+                cutoff,
+                s.get_n(),
+                beta,
+                state,
+                (&hamiltonian, bond_weights),
+                rng,
+            );
+            (op, (state, rng))
+        });
     }
 
     /// Make the bond weights struct for this container.
-    fn make_bond_weights<'b, H, E>(
-        state: &[bool],
-        hamiltonian: H,
-        num_bonds: usize,
-        bonds_fn: E,
-    ) -> BondWeights
+    fn make_bond_weights<'b, H, E>(hamiltonian: H, num_bonds: usize, bonds_fn: E) -> BondWeights
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> &'b [usize],
     {
-        let mut total = 0.0;
-        let weight_and_cumulative = (0..num_bonds)
-            .map(|i| {
-                // TODO check this and try to factor out smallvec.
-                let vars = bonds_fn(i);
-                let substate = vars
-                    .iter()
-                    .map(|v| state[*v])
-                    .collect::<SmallVec<[bool; 2]>>();
-                let weight = hamiltonian(vars, i, &substate, &substate);
-                total += weight;
-                (weight, total)
-            })
-            .collect();
-        BondWeights {
-            weight_and_cumulative,
-            total,
-            error: 1e-16,
-        }
+        let max_weights = (0..num_bonds).map(|i| {
+            let vars = bonds_fn(i);
+            (0..1 << vars.len())
+                .map(|substate| {
+                    let substate =
+                        Self::Op::make_substate((0..vars.len()).map(|v| (substate >> v) & 1 == 1));
+                    hamiltonian(vars, i, substate.as_ref(), substate.as_ref())
+                })
+                .fold(0.0, |acc, w| if w > acc { w } else { acc })
+        });
+        BondWeights::new(max_weights)
     }
 
     /// Perform a single heatbath update.
@@ -158,56 +160,71 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         n: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian_and_weights: (&Hamiltonian<'b, H, E>, BondWeights),
+        hamiltonian_and_weights: (&Hamiltonian<'b, H, E>, &BondWeights),
         rng: &mut R,
-    ) -> (Option<Option<Self::Op>>, BondWeights)
+    ) -> Option<Option<Self::Op>>
     where
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> (&'b [usize], bool),
     {
-        let (hamiltonian, mut bond_weights) = hamiltonian_and_weights;
+        let (hamiltonian, bond_weights) = hamiltonian_and_weights;
         let new_op = match op {
             None => {
-                let numerator = beta * bond_weights.total;
+                let numerator = beta * bond_weights.total().unwrap();
                 let denominator = (cutoff - n) as f64 + numerator;
                 if rng.gen_bool(numerator / denominator) {
+                    // For usage later.
+                    let p = rng.gen_range(0.0, 1.0);
                     // Find the bond to use, weighted by their matrix element.
-                    let val = rng.gen_range(0.0, bond_weights.total);
-                    let b = bond_weights.index_for_cumulative(val);
+                    let (b, maxweight) = bond_weights.get_random_bond_and_max_weight(rng).unwrap();
                     let (vars, constant) = (hamiltonian.edge_fn)(b);
-                    let substate = vars.iter().map(|v| state[*v]);
+                    let substate = Self::Op::make_substate(vars.iter().map(|v| state[*v]));
                     let vars = Self::Op::make_vars(vars.iter().cloned());
-                    let substate = Self::Op::make_substate(substate);
-                    let op = Self::Op::diagonal(vars, b, substate, constant);
-                    Some(Some(op))
+
+                    let weight = (hamiltonian.hamiltonian)(
+                        vars.as_ref(),
+                        b,
+                        substate.as_ref(),
+                        substate.as_ref(),
+                    );
+
+                    if p * maxweight < weight {
+                        let op = Self::Op::diagonal(vars, b, substate, constant);
+                        Some(Some(op))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
             }
             Some(op) if op.is_diagonal() => {
                 let numerator = (cutoff - n + 1) as f64;
-                let denominator = numerator + beta * bond_weights.total;
+                let denominator = numerator + beta * bond_weights.total().unwrap();
                 if rng.gen_bool(numerator / denominator) {
+                    // TODO see if any modification is necessary here.
+                    // let weight = (hamiltonian.hamiltonian)(
+                    //     op.get_vars(),
+                    //     op.get_bond(),
+                    //     op.get_inputs(),
+                    //     op.get_outputs(),
+                    // );
+                    // let maxweight = bond_weights.max_weight_for_bond(op.get_bond());
+
                     Some(None)
                 } else {
                     None
                 }
             }
+            // Update state
             Some(op) => {
                 op.get_vars()
                     .iter()
                     .zip(op.get_outputs().iter())
                     .for_each(|(v, b)| state[*v] = *b);
-                let weight = (hamiltonian.hamiltonian)(
-                    op.get_vars(),
-                    op.get_bond(),
-                    op.get_inputs(),
-                    op.get_outputs(),
-                );
-                bond_weights.update_weight(op.get_bond(), weight);
                 None
             }
         };
-        (new_op, bond_weights)
+        new_op
     }
 }
