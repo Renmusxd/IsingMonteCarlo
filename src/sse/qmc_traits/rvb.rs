@@ -17,6 +17,7 @@ pub trait RVBUpdater:
         state: &mut [bool],
         mut rng: R,
     ) -> (usize, bool) {
+        // TODO choose smaller regions and make faster update rule.
         let contiguous_vars = contiguous_bits(&mut rng);
         let mut vars_list: Vec<usize> = self.get_instance();
         let mut in_cluster: Vec<bool> = self.get_instance();
@@ -40,7 +41,7 @@ pub trait RVBUpdater:
             self.constant_ops_on_var(v, &mut in_cluster_constant_ps);
         });
 
-        // Get the ps for contant ops for a given var in var_list (given by index).
+        // Get the ps for constant ops for a given var in var_list (given by index).
         let constant_slice = |rel: usize| -> &[usize] {
             let start = var_starts[rel];
             if let Some(end) = var_starts.get(rel + 1) {
@@ -294,7 +295,7 @@ where
         1.0f64,
         (state, cluster),
     );
-    let res = rvb.try_iterate_ops(t, |_, op, p, acc| {
+    let res = rvb.try_iterate_ops(0, rvb.get_cutoff(), t, |_, op, p, acc| {
         let (mut next_flip, bonds, op_counts, mut mult, state_clust) = acc;
         let (sat_bonds, unsat_bonds) = bonds;
         let (mut nf, mut na) = op_counts;
@@ -418,7 +419,7 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
 
     let cutoff = rvb.get_cutoff();
     let t = (0usize, (sat_bonds, unsat_bonds), (state, cluster), rng);
-    rvb.mutate_ops(cutoff, t, |_, op, p, t| {
+    rvb.mutate_ops(0, cutoff, t, |_, op, p, t| {
         let (mut next_flip, bonds, state_clust, rng) = t;
         let (sat_bonds, unsat_bonds) = bonds;
         let (state, cluster) = state_clust;

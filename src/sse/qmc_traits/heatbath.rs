@@ -135,7 +135,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> (&'b [usize], bool),
     {
-        self.mutate_ps(cutoff, (state, rng), |s, op, (state, rng)| {
+        self.mutate_ps(0, cutoff, (state, rng), |s, op, (state, rng)| {
             let op = Self::heat_bath_single_diagonal_update(
                 op,
                 cutoff,

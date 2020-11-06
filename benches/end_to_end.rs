@@ -73,4 +73,43 @@ mod tests {
         g.timesteps(1000, beta);
         b.iter(|| g.timesteps(100, beta));
     }
+
+    #[bench]
+    fn two_d_rvb(b: &mut Bencher) {
+        let l = 4;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g =
+            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        g.set_run_rvb(true).unwrap();
+
+        let beta = 10.0;
+        g.timesteps(1000, beta);
+        b.iter(|| g.timesteps(100, beta));
+    }
+
+    #[bench]
+    fn two_d_rvb_large(b: &mut Bencher) {
+        let l = 16;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g =
+            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        g.set_run_rvb(true).unwrap();
+
+        let beta = 10.0;
+        g.timesteps(1000, beta);
+        b.iter(|| g.timesteps(100, beta));
+    }
+
+    #[bench]
+    fn two_d_rvb_cold(b: &mut Bencher) {
+        let l = 4;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g =
+            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        g.set_run_rvb(true).unwrap();
+
+        let beta = 100.0;
+        g.timesteps(1000, beta);
+        b.iter(|| g.timesteps(100, beta));
+    }
 }

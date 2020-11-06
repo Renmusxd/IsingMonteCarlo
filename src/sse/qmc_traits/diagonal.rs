@@ -34,16 +34,16 @@ where
 /// Perform diagonal updates to an op container.
 pub trait DiagonalUpdater: OpContainer {
     /// Folds across the p values, passing T down. Mutates op if returned values is Some(...)
-    fn mutate_ps<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
+    fn mutate_ps<F, T>(&mut self, pstart: usize, pend: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T);
 
-    /// Mutate only the ops.
-    fn mutate_ops<F, T>(&mut self, cutoff: usize, t: T, f: F) -> T
+    /// Mutate only the ops. Override with more efficient solutions if needed.
+    fn mutate_ops<F, T>(&mut self, pstart: usize, pend: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, &Self::Op, usize, T) -> (Option<Option<Self::Op>>, T),
     {
-        let (_, t) = self.mutate_ps(cutoff, (0, t), |s, op, (p, t)| {
+        let (_, t) = self.mutate_ps(pstart, pend, (0, t), |s, op, (p, t)| {
             let (op, t) = if let Some(op) = op {
                 f(s, op, p, t)
             } else {
@@ -55,17 +55,17 @@ pub trait DiagonalUpdater: OpContainer {
     }
 
     /// Iterate through the ops and call f. Exit early with Err(v).
-    fn try_iterate_ps<F, T, V>(&self, t: T, f: F) -> Result<T, V>
+    fn try_iterate_ps<F, T, V>(&self, pstart: usize, pend: usize, t: T, f: F) -> Result<T, V>
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> Result<T, V>;
 
-    /// Iterate through ops only.
-    fn try_iterate_ops<F, T, V>(&self, t: T, f: F) -> Result<T, V>
+    /// Iterate through ops only. Can override with more efficient implementation.
+    fn try_iterate_ops<F, T, V>(&self, pstart: usize, pend: usize, t: T, f: F) -> Result<T, V>
     where
         // self, op, p, accumulator
         F: Fn(&Self, &Self::Op, usize, T) -> Result<T, V>,
     {
-        self.try_iterate_ps((0, t), |s, op, (p, t)| {
+        self.try_iterate_ps(pstart, pend, (0, t), |s, op, (p, t)| {
             let t = if let Some(op) = op {
                 f(s, op, p, t)?
             } else {
@@ -77,22 +77,27 @@ pub trait DiagonalUpdater: OpContainer {
     }
 
     /// Iterate through the ops and call f.
-    fn iterate_ps<F, T>(&self, t: T, f: F) -> T
+    fn iterate_ps<F, T>(&self, pstart: usize, pend: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> T,
     {
-        self.try_iterate_ps(t, |s, op, t| -> Result<T, ()> { Ok(f(s, op, t)) })
-            .unwrap()
+        self.try_iterate_ps(pstart, pend, t, |s, op, t| -> Result<T, ()> {
+            Ok(f(s, op, t))
+        })
+        .unwrap()
     }
 
     /// Iterate through ops only.
-    fn iterate_ops<F, T>(&self, t: T, f: F) -> T
+    /// Calls try_iterate_ops by default.
+    fn iterate_ops<F, T>(&self, pstart: usize, pend: usize, t: T, f: F) -> T
     where
         // self, op, p, accumulator
         F: Fn(&Self, &Self::Op, usize, T) -> T,
     {
-        self.try_iterate_ops(t, |s, op, p, t| -> Result<T, ()> { Ok(f(s, op, p, t)) })
-            .unwrap()
+        self.try_iterate_ops(pstart, pend, t, |s, op, p, t| -> Result<T, ()> {
+            Ok(f(s, op, p, t))
+        })
+        .unwrap()
     }
 
     /// Perform a diagonal update step with thread rng.
@@ -143,7 +148,7 @@ pub trait DiagonalUpdater: OpContainer {
         H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
         E: Fn(usize) -> (&'b [usize], bool),
     {
-        self.mutate_ps(cutoff, (state, rng), |s, op, (state, rng)| {
+        self.mutate_ps(0, cutoff, (state, rng), |s, op, (state, rng)| {
             let op = metropolis_single_diagonal_update(
                 op,
                 cutoff,
@@ -229,7 +234,7 @@ pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bo
     }
     println!();
 
-    diagonal.iterate_ps(0, |_, op, p| {
+    diagonal.iterate_ps(0, diagonal.get_cutoff(), 0, |_, op, p| {
         if let Some(op) = op {
             let mut last_var = 0;
             for (var, outp) in op.get_vars().iter().zip(op.get_outputs().iter()) {
