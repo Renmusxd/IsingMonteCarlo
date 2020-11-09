@@ -161,6 +161,7 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
     }
 }
 
+// TODO make this const generic somehow? Possible to reuse op::vars type stuff?
 // For each var, (p, relvar)
 type LinkVars = SmallVec<[Option<PRel>; 2]>;
 

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 const SENTINEL_FLIP_POSITION: usize = std::usize::MAX;
 
 /// Resonating bond update.
-pub trait RVBUpdater: DiagonalUpdater {
+trait RVBUpdater: DiagonalUpdater + Factory<Vec<usize>> + Factory<Vec<bool>> {
     /// Perform a resonating bond update.
     fn rvb_update<R: Rng, EN: EdgeNavigator>(
         &mut self,
@@ -27,13 +27,219 @@ pub trait RVBUpdater: DiagonalUpdater {
         unimplemented!()
     }
 
-    /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
+    /// Append `ps` with the p values of constant (Hij=k) ops for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>);
 
     /// Fill `ps` with the p values of spin flips for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
+}
+
+fn make_cluster_of_size<RVB: RVBUpdater, EN: EdgeNavigator, R: Rng>(
+    rvb: &mut RVB,
+    edges: &EN,
+    mut size: usize,
+    starting_cluster: &mut [bool],
+    cluster_vars: &mut Vec<usize>,
+    cluster_ends: &mut Vec<usize>,
+    rng: &mut R,
+) {
+    if size == 0 {
+        return;
+    }
+    starting_cluster.iter_mut().for_each(|b| *b = false);
+    let mut helper = BFSHelper::new(rvb);
+
+    let starting_var = rng.gen_range(0, rvb.get_nvars());
+    helper.populate_ops_for_var(rvb, starting_var);
+    let starting_flip = rng.gen_range(0, helper.get_constant_ops_for_var(starting_var).len());
+    helper.push_flip(starting_var, starting_flip);
+
+    let mut to_add = helper.pop_flip(rng);
+    while let Some((var, flip_index)) = to_add {
+        let flips = helper.get_constant_ops_for_var(var);
+        let flip_start = flips[flip_index];
+        let flip_end = flips[(flip_index + 1) % flips.len()];
+
+        if flip_end <= flip_start {
+            starting_cluster[var] = true;
+        }
+        cluster_vars.push(var);
+        cluster_ends.push(flip_start);
+        cluster_ends.push(flip_end);
+
+        // So we added (s, e) for var, now add adjacent to list.
+        let prev = (flip_index + flips.len() - 1) % flips.len();
+        let next = (flip_index + 1) % flips.len();
+        helper.push_flip(var, prev);
+        helper.push_flip(var, next);
+        // And adjacent vars too...
+        edges
+            .bonds_for_var(var)
+            .iter()
+            .filter_map(|b| edges.other_var_for_bond(var, *b))
+            .for_each(|ov| {
+                helper.populate_ops_for_var(rvb, ov);
+                let ov_flips = helper.get_constant_ops_for_var(ov);
+                if flip_start == flip_end {
+                    // Handle edge case where start == end.
+                    (0..ov_flips).for_each(|flip_start| helper.push_flip(ov, flip_start));
+                } else {
+                    // Find the position where flip_start would live.
+                    let flip_pos = ov_flips.binary_search(&flip_start).unwrap_err();
+                    // TODO add all adjacent blocks to (flip_start, next)
+                    // This is definitely not done...
+                    let mut starting_pos = (flip_pos + ov_flips.len() - 1) % ov_flips.len();
+                    let mut ending_pos = flip_pos;
+                    while in_cluster(flip_start, flip_end, ov_flips[ending_pos]) {
+                        helper.push_flip(ov, starting_pos);
+                        starting_pos = ending_pos;
+                        ending_pos = (ending_pos + 1) % ov_flips.len();
+                    }
+                    // Now we are in a state where the ending pos is outside the cluster, but the
+                    // starting pos is either before or inside, so add once more.
+                    helper.push_flip(ov, starting_pos);
+                }
+            });
+
+        size -= 1;
+        if size == 0 {
+            break;
+        }
+        to_add = helper.pop_flip(rng);
+    }
+
+    cluster_vars.sort_unstable();
+    cluster_vars.dedup();
+    cluster_ends.sort_unstable();
+    drop_doubles(cluster_ends);
+
+    helper.cleanup(rvb);
+}
+
+/// Returns true if p between start and stop with periodic bounds.
+fn in_cluster(start: usize, stop: usize, p: usize) -> bool {
+    match (start, stop) {
+        (start, stop) if start == stop => true,
+        (start, stop) if start < stop => start < p && p <= stop,
+        (start, stop) if start > stop => !(stop < p && p <= start),
+        _ => unreachable!(),
+    }
+}
+
+fn drop_doubles(v: &mut Vec<usize>) {
+    let mut ii = 0;
+    let mut jj = 0;
+    while jj < v.len() {
+        let can_have_next = jj + 1 < v.len();
+        if can_have_next && v[jj] == v[jj + 1] {
+            // Two in a row, add neither
+            jj += 2;
+        } else {
+            v[ii] = v[jj];
+            ii += 1;
+            jj += 1;
+        }
+    }
+    v.resize(ii, 0);
+}
+
+struct BFSHelper {
+    var_lookup: Vec<usize>,
+    var_start_points: Vec<usize>,
+    var_constant_pos: Vec<usize>,
+    bfs_var: Vec<usize>,
+    bfs_flip_pos: Vec<usize>,
+    flip_start_seen: Vec<bool>,
+}
+
+impl BFSHelper {
+    fn new<F: Factory<Vec<usize>> + Factory<Vec<bool>>>(f: &mut F) -> Self {
+        Self {
+            var_lookup: f.get_instance(),
+            var_start_points: f.get_instance(),
+            var_constant_pos: f.get_instance(),
+            bfs_var: f.get_instance(),
+            bfs_flip_pos: f.get_instance(),
+            flip_start_seen: f.get_instance(),
+        }
+    }
+
+    fn populate_ops_for_var<RVB: RVBUpdater>(&mut self, rvb: &mut RVB, var: usize) {
+        if self.var_lookup.len() < var {
+            self.var_lookup.resize(var + 1, std::usize::MAX);
+        }
+        if self.var_lookup[var] == std::usize::MAX {
+            self.var_lookup[var] = self.var_start_points.len();
+            self.var_start_points.push(self.var_constant_pos.len());
+            rvb.constant_ops_on_var(var, &mut self.var_constant_pos);
+        }
+    }
+
+    fn has_populated_ops_for_var(&self, var: usize) -> bool {
+        self.var_lookup.len() > var && self.var_lookup[var] != std::usize::MAX
+    }
+
+    fn get_constant_ops_for_var(&self, var: usize) -> &[usize] {
+        let var_index = self.var_lookup[var];
+        debug_assert_ne!(
+            var_index,
+            std::usize::MAX,
+            "Reading sentinel value in lookup!"
+        );
+        let start = self.var_start_points[var_index];
+        if var_index + 1 == self.var_start_points.len() {
+            &self.var_constant_pos[start..]
+        } else {
+            let end = self.var_start_points[var_index + 1];
+            &self.var_constant_pos[start..end]
+        }
+    }
+
+    fn push_flip(&mut self, var: usize, flip_start: usize) {
+        let var_index = self.var_lookup[var];
+        debug_assert_ne!(
+            var_index,
+            std::usize::MAX,
+            "Reading sentinel value in lookup!"
+        );
+        let var_offset = self.var_start_points[var_index];
+        let i = var_offset + flip_start;
+        let start = self.var_constant_pos[i];
+
+        if self.flip_start_seen.len() <= start {
+            self.flip_start_seen.resize(start + 1, false);
+        }
+        if !self.flip_start_seen[start] {
+            self.flip_start_seen[start] = true;
+            self.bfs_var.push(var);
+            self.bfs_flip_pos.push(flip_start);
+        }
+    }
+
+    fn pop_flip<R: Rng>(&mut self, r: &mut R) -> Option<(usize, usize)> {
+        if self.bfs_var.is_empty() {
+            None
+        } else {
+            let pos = r.gen_range(0, self.bfs_var.len());
+            let l = self.bfs_var.len() - 1;
+            self.bfs_var.swap(pos, l);
+            self.bfs_flip_pos.swap(pos, l);
+
+            let var = self.bfs_var.pop().unwrap();
+            let flip_pos = self.bfs_flip_pos.pop().unwrap();
+            Some((var, flip_pos))
+        }
+    }
+
+    fn cleanup<F: Factory<Vec<usize>> + Factory<Vec<bool>>>(self, f: &mut F) {
+        f.return_instance(self.var_lookup);
+        f.return_instance(self.var_start_points);
+        f.return_instance(self.var_constant_pos);
+        f.return_instance(self.bfs_var);
+        f.return_instance(self.flip_start_seen);
+    }
 }
 
 /// Get returns n with chance 1/2^(n+1)
@@ -257,7 +463,7 @@ pub(crate) fn check_borders<O: Op>(op: &O, in_cluster: &[bool]) -> (bool, bool) 
 }
 
 /// A struct which allows navigation around the variables in a model.
-pub trait EdgeNavigator {
+trait EdgeNavigator {
     /// Number of bonds
     fn n_bonds(&self) -> usize;
     /// Get the bonds attached to this variable.
@@ -282,7 +488,7 @@ pub trait EdgeNavigator {
 /// A HashSet with random sampling.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct BondContainer<T: Clone + Into<usize>> {
+struct BondContainer<T: Clone + Into<usize>> {
     map: Vec<Option<usize>>,
     keys: Option<Vec<T>>,
 }
@@ -304,7 +510,7 @@ impl<T: Clone + Into<usize>> Default for BondContainer<T> {
 
 impl<T: Clone + Into<usize>> BondContainer<T> {
     /// Get a random entry from the HashSampler
-    pub fn get_random<R: Rng>(&self, mut r: R) -> Option<&T> {
+    fn get_random<R: Rng>(&self, mut r: R) -> Option<&T> {
         let keys = self.keys.as_ref().unwrap();
         if keys.is_empty() {
             None
@@ -316,7 +522,7 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     }
 
     /// Pop a random element.
-    pub fn pop_random<R: Rng>(&mut self, mut r: R) -> Option<T> {
+    fn pop_random<R: Rng>(&mut self, mut r: R) -> Option<T> {
         let keys = self.keys.as_ref().unwrap();
         if keys.is_empty() {
             None
@@ -328,7 +534,7 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     }
 
     /// Remove a given value.
-    pub fn remove(&mut self, value: &T) -> bool {
+    fn remove(&mut self, value: &T) -> bool {
         let bond_number = value.clone().into();
         let address = self.map[bond_number];
         if let Some(address) = address {
@@ -355,7 +561,7 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     }
 
     /// Check if a given element has been inserted.
-    pub fn contains(&self, value: &T) -> bool {
+    fn contains(&self, value: &T) -> bool {
         let t = value.clone().into();
         if t >= self.map.len() {
             false
@@ -365,7 +571,7 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     }
 
     /// Insert an element.
-    pub fn insert(&mut self, value: T) -> bool {
+    fn insert(&mut self, value: T) -> bool {
         let entry_index = value.clone().into();
         if entry_index >= self.map.len() {
             self.map.resize(entry_index + 1, None);
@@ -382,7 +588,7 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     }
 
     /// Clear the set
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         let mut keys = self.keys.take().unwrap();
         keys.iter().for_each(|k| {
             let bond = k.clone().into();
@@ -393,17 +599,17 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
     }
 
     /// Get number of elements in set.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.keys.as_ref().unwrap().len()
     }
 
     /// Check if empty.
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.keys.as_ref().unwrap().is_empty()
     }
 
     /// Iterate through items.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
+    fn iter(&self) -> impl Iterator<Item = &T> {
         self.keys.as_ref().unwrap().iter()
     }
 }
@@ -413,6 +619,14 @@ mod sc_tests {
     use super::*;
     use rand::prelude::SmallRng;
     use rand::SeedableRng;
+
+    #[test]
+    fn test_drop_doubles() {
+        let mut v = vec![0, 1, 1, 2, 3, 1, 3, 4, 4, 6];
+        drop_doubles(&mut v);
+        println!("{:?}", v);
+        assert_eq!(v, vec![0, 2, 3, 1, 3, 6])
+    }
 
     #[test]
     fn test_bond_container() {
