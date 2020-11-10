@@ -62,9 +62,9 @@ where
 
     /// Add a QMC instance to the tempering container. Returns an Err if the added QMCStepper
     /// cannot be swapped with the existing steppers.
-    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), ()> {
+    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), &str> {
         if !self.graphs.is_empty() && !self.graphs[0].0.can_swap_graphs(&q) {
-            Err(())
+            Err("Added graph not compatible with other graphs.")
         } else {
             self.graph_ham_eq_a = None;
             self.graph_ham_eq_b = None;

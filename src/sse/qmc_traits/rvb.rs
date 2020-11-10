@@ -24,10 +24,10 @@ pub trait RVBUpdater:
         state: &[bool],
         vars_list: &mut Vec<usize>,
         in_cluster: &mut [bool],
-        var_starts: &mut Vec<usize>,
-        flip_positions: &mut Vec<usize>,
+        flips: (&mut Vec<usize>, &mut Vec<usize>),
         rng: &mut R,
     ) {
+        let (var_starts, flip_positions) = flips;
         // Fill in_cluster and vars_list.
         let contiguous_vars = contiguous_bits(rng);
         let starting_var = rng.gen_range(0, state.len());
@@ -94,8 +94,7 @@ pub trait RVBUpdater:
             state,
             &mut vars_list,
             &mut in_cluster,
-            &mut var_starts,
-            &mut flip_positions,
+            (&mut var_starts, &mut flip_positions),
             rng,
         );
 
@@ -169,7 +168,6 @@ pub trait RVBUpdater:
                 rng,
             )
         }
-
         let ret_val = (vars_list.len(), perform_update);
 
         // Return things.

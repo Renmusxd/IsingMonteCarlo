@@ -208,9 +208,9 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
     }
 
     /// Flip spins using quantum cluster updates if QMC has ising symmetry.
-    pub fn cluster_update(&mut self) -> Result<(), ()> {
+    pub fn cluster_update(&mut self) -> Result<(), &str> {
         if self.breaks_ising_symmetry {
-            Err(())
+            Err("Cannot perform cluster updates on graphs that break ising symmetry.")
         } else {
             let mut m = self.manager.take().unwrap();
             let mut state = self.state.take().unwrap();

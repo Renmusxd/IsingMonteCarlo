@@ -54,21 +54,21 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
 
     /// Get the previous p for a given var.
-    fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, ()> {
+    fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, &str> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_previous_p_for_rel_var(relvar, node))
         } else {
-            Err(())
+            Err("Variable not present on given node")
         }
     }
     /// Get the next p for a given var.
-    fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, ()> {
+    fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, &str> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_next_p_for_rel_var(relvar, node))
         } else {
-            Err(())
+            Err("Variable not present on given node")
         }
     }
 
