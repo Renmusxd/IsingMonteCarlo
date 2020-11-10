@@ -215,7 +215,7 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
             let mut m = self.manager.take().unwrap();
             let mut state = self.state.take().unwrap();
             let mut rng = self.rng.take().unwrap();
-            m.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+            m.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
 
             self.manager = Some(m);
             self.state = Some(state);

@@ -227,7 +227,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         let rng = self.rng.as_mut().unwrap();
 
         // Start by editing the ops list
-        manager.flip_each_cluster_rng(0.5, rng, &mut state);
+        manager.flip_each_cluster_ising_symmetry_rng(0.5, rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
@@ -527,7 +527,7 @@ where
             self.rvb_clusters_counted += steps_to_run;
         }
 
-        manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+        manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {

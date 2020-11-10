@@ -64,14 +64,14 @@ mod tests {
 
     #[bench]
     fn two_d_large(b: &mut Bencher) {
-        let l = 16;
+        let l = 8;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
 
         let beta = 1.0;
         g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(100, beta));
+        b.iter(|| g.timesteps(1000, beta));
     }
 
     #[bench]
@@ -89,7 +89,7 @@ mod tests {
 
     #[bench]
     fn two_d_rvb_large(b: &mut Bencher) {
-        let l = 16;
+        let l = 8;
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
@@ -97,7 +97,7 @@ mod tests {
 
         let beta = 10.0;
         g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(100, beta));
+        b.iter(|| g.timesteps(1000, beta));
     }
 
     #[bench]
@@ -110,6 +110,6 @@ mod tests {
 
         let beta = 100.0;
         g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(100, beta));
+        b.iter(|| g.timesteps(1000, beta));
     }
 }

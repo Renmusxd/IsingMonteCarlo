@@ -11,10 +11,36 @@ pub trait ClusterUpdater:
     + Factory<Vec<usize>>
     + Factory<Vec<Option<usize>>>
     + Factory<Vec<OpSide>>
-    + Factory<Vec<Leg>>
 {
-    /// Flip each cluster in the graph using an rng instance, add to state changes in acc.
-    fn flip_each_cluster_rng<R: Rng>(&mut self, prob: f64, rng: &mut R, state: &mut [bool]) {
+    /// Flip each cluster in the graph using an rng instance, add to state changes in acc. Use this
+    /// version if there's ising symmetry in your graph.
+    fn flip_each_cluster_ising_symmetry_rng<R: Rng>(
+        &mut self,
+        prob: f64,
+        rng: &mut R,
+        state: &mut [bool],
+    ) {
+        self.flip_each_cluster_rng(prob, rng, state, None::<fn(&Self::Node) -> f64>)
+    }
+
+    /// Flip each cluster in the graph using an rng instance, add to state changes in acc. You can
+    /// provide a function to adjust the weights for flipping each cluster based off the nodes
+    /// within it. Edges of the cluster will always be constant ops but the total weight change
+    /// inside the cluster will affect the probability of acceptance (multiplied by a global `prob`
+    /// for each cluster). This function should take a node reference and return the ratio of the
+    /// new weight divided by old weight if a global spin flip were to take place.
+    /// # Rust language note:
+    /// To call with none and keep types happy you must use `None::<fn(&Self::Node) -> f64>` or
+    /// call the helper function `flip_each_cluster_ising_symmetry_rng` which does it for you.
+    fn flip_each_cluster_rng<R: Rng, F>(
+        &mut self,
+        prob: f64,
+        rng: &mut R,
+        state: &mut [bool],
+        weight_change_on_global_flip: Option<F>,
+    ) where
+        F: Fn(&Self::Node) -> f64,
+    {
         if self.get_n() == 0 {
             return;
         }
@@ -79,7 +105,34 @@ pub trait ClusterUpdater:
         };
 
         let mut flips: Vec<bool> = self.get_instance();
-        flips.extend((0..n_clusters).map(|_| rng.gen_bool(prob)));
+        // If the ising symmetry is broken calculate out weight terms.
+        if let Some(f) = weight_change_on_global_flip {
+            let mut flips_weights: Vec<f64> = self.get_instance();
+            boundaries
+                .iter()
+                .enumerate()
+                .filter_map(|(p, clust)| match clust {
+                    (Some(a), Some(b)) => Some((p, (a, b))),
+                    (None, None) => None,
+                    _ => unreachable!(),
+                })
+                .for_each(|(p, (input_cluster, output_cluster))| {
+                    let node = self.get_node_ref(p).unwrap();
+                    // If entire cluster will flip, then see weight changes.
+                    if input_cluster == output_cluster {
+                        flips_weights[*input_cluster] *= f(node)
+                    }
+                });
+            flips.extend(
+                flips_weights
+                    .iter()
+                    .cloned()
+                    .map(|c| rng.gen_bool(c * prob)),
+            );
+            self.return_instance(flips_weights);
+        } else {
+            flips.extend((0..n_clusters).map(|_| rng.gen_bool(prob)));
+        };
         boundaries
             .iter()
             .enumerate()
