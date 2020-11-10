@@ -11,7 +11,6 @@ pub mod op_container;
 pub mod qmc_stepper;
 /// Resonating bonds
 pub mod rvb;
-mod rvb_new;
 
 pub use cluster::*;
 pub use diagonal::*;

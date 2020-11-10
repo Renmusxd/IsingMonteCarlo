@@ -10,31 +10,37 @@ const SENTINEL_FLIP_POSITION: usize = std::usize::MAX;
 pub trait RVBUpdater:
     DiagonalUpdater + Factory<Vec<usize>> + Factory<Vec<bool>> + Factory<BondContainer<usize>>
 {
-    /// Perform a resonating bond update.
-    fn rvb_update<R: Rng, EN: EdgeNavigator>(
+    /// Select a cluster, add affected vars to `vars_list`, set true their indices in `in_cluster`,
+    /// then add all flip positions for each var to `flip_positions`, marking the start of each vars
+    /// segment with an index placed into `var_starts`.
+    /// # Example:
+    /// `vars_list = [0, 2]`
+    /// `var_starts = [0, 4]`
+    /// `flip_positions = [0, 1, 2, 3, 4, 5]`
+    /// means variable `0` has flip positions at `0, 1, 2, 3`; variable `2` has `4, 5`.
+    fn select_cluster<R: Rng, EN: EdgeNavigator>(
         &mut self,
         edges: &EN,
-        state: &mut [bool],
-        mut rng: R,
-    ) -> (usize, bool) {
-        // TODO choose smaller regions and make faster update rule.
-        let contiguous_vars = contiguous_bits(&mut rng);
-        let mut vars_list: Vec<usize> = self.get_instance();
-        let mut in_cluster: Vec<bool> = self.get_instance();
-        in_cluster.resize(state.len(), false);
+        state: &[bool],
+        vars_list: &mut Vec<usize>,
+        in_cluster: &mut [bool],
+        var_starts: &mut Vec<usize>,
+        flip_positions: &mut Vec<usize>,
+        rng: &mut R,
+    ) {
         // Fill in_cluster and vars_list.
+        let contiguous_vars = contiguous_bits(rng);
         let starting_var = rng.gen_range(0, state.len());
-        self.get_up_to_n_contiguous_vars(
+        get_up_to_n_contiguous_vars(
             contiguous_vars,
             starting_var,
             edges,
-            &mut in_cluster,
-            &mut vars_list,
-            &mut rng,
+            in_cluster,
+            vars_list,
+            rng,
         );
 
         // Get all the Hij=const ops on the world-lines in the cluster.
-        let mut var_starts: Vec<usize> = self.get_instance();
         let mut in_cluster_constant_ps: Vec<usize> = self.get_instance();
         vars_list.iter().cloned().for_each(|v| {
             var_starts.push(in_cluster_constant_ps.len());
@@ -52,7 +58,6 @@ pub trait RVBUpdater:
         };
 
         // Choose new flip positions for each variable in cluster.
-        let mut flip_positions: Vec<usize> = self.get_instance();
         (0..vars_list.len()).for_each(|relv| {
             debug_assert_eq!(flip_positions.len() % 2, 0);
             let flips = constant_slice(relv);
@@ -67,6 +72,32 @@ pub trait RVBUpdater:
             flip_positions.push(flip_b);
         });
         self.return_instance(in_cluster_constant_ps);
+    }
+
+    /// Perform a resonating bond update.
+    fn rvb_update<R: Rng, EN: EdgeNavigator>(
+        &mut self,
+        edges: &EN,
+        state: &mut [bool],
+        rng: &mut R,
+    ) -> (usize, bool) {
+        // TODO choose smaller regions and make faster update rule.
+        let mut vars_list: Vec<usize> = self.get_instance();
+        let mut in_cluster: Vec<bool> = self.get_instance();
+        in_cluster.resize(state.len(), false);
+
+        let mut var_starts: Vec<usize> = self.get_instance();
+        let mut flip_positions: Vec<usize> = self.get_instance();
+
+        self.select_cluster(
+            edges,
+            state,
+            &mut vars_list,
+            &mut in_cluster,
+            &mut var_starts,
+            &mut flip_positions,
+            rng,
+        );
 
         let mut all_spin_flips: Vec<usize> = self.get_instance();
         all_spin_flips.extend_from_slice(&flip_positions);
@@ -135,7 +166,7 @@ pub trait RVBUpdater:
                 &all_spin_flips,
                 (&mut sat_bonds, &mut unsat_bonds),
                 (state, &mut in_cluster),
-                &mut rng,
+                rng,
             )
         }
 
@@ -152,36 +183,6 @@ pub trait RVBUpdater:
         ret_val
     }
 
-    /// Get up to n contiguous variables by following bonds on edges.
-    fn get_up_to_n_contiguous_vars<R: Rng, EN: EdgeNavigator>(
-        &self,
-        mut n: usize,
-        starting_var: usize,
-        edges: &EN,
-        selected_vars: &mut Vec<bool>,
-        vars: &mut Vec<usize>,
-        mut rng: R,
-    ) {
-        let mut v = starting_var;
-        vars.push(starting_var);
-        selected_vars[v] = true;
-        while n > 0 {
-            let bonds = edges.bonds_for_var(v);
-            if bonds.is_empty() {
-                break;
-            }
-            let bond_index = rng.gen_range(0, bonds.len());
-            let other_var = edges.other_var_for_bond(v, bonds[bond_index]).unwrap();
-            if selected_vars[other_var] {
-                break;
-            }
-            vars.push(other_var);
-            selected_vars[other_var] = true;
-            v = other_var;
-            n -= 1;
-        }
-    }
-
     /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>);
@@ -191,9 +192,38 @@ pub trait RVBUpdater:
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
 }
 
+/// Get up to n contiguous variables by following bonds on edges.
+fn get_up_to_n_contiguous_vars<R: Rng, EN: EdgeNavigator>(
+    mut n: usize,
+    starting_var: usize,
+    edges: &EN,
+    selected_vars: &mut [bool],
+    vars: &mut Vec<usize>,
+    rng: &mut R,
+) {
+    let mut v = starting_var;
+    vars.push(starting_var);
+    selected_vars[v] = true;
+    while n > 0 {
+        let bonds = edges.bonds_for_var(v);
+        if bonds.is_empty() {
+            break;
+        }
+        let bond_index = rng.gen_range(0, bonds.len());
+        let other_var = edges.other_var_for_bond(v, bonds[bond_index]).unwrap();
+        if selected_vars[other_var] {
+            break;
+        }
+        vars.push(other_var);
+        selected_vars[other_var] = true;
+        v = other_var;
+        n -= 1;
+    }
+}
+
 /// Get returns n with chance 1/2^(n+1)
 /// Chance of failure is 1/2^(2^64) and should therefore be acceptable.
-fn contiguous_bits<R: Rng>(mut r: R) -> usize {
+fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
     let mut acc = 0;
     let mut v = r.next_u64();
     loop {
