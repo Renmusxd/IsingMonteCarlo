@@ -205,87 +205,115 @@ impl<O: Op + Clone> OpNode<O> for FastOpNodeTemplate<O> {
     }
 }
 
-trait MutateP: OpContainer + LoopUpdater {
-    type MutateArgs;
+/// Args for fast op mutation.
+#[derive(Debug)]
+pub struct FastOpMutateArgs {
+    /// Last p seen
+    last_p: Option<usize>,
+    /// Last p seen per var
+    last_vars: Vec<Option<usize>>,
+    /// Relative index of var.
+    last_rels: Vec<Option<usize>>,
+    /// (vars->subvars, subvars)
+    subvar_mapping: Option<(Vec<usize>, Vec<usize>)>,
+    /// Unfilled vars
+    unfilled: usize,
+}
 
-    fn mutate_p<T, F>(
-        &mut self,
-        f: F,
-        p: usize,
-        t: T,
-        args: Self::MutateArgs,
-    ) -> (T, Self::MutateArgs)
+impl FastOpMutateArgs {
+    fn new<Fact>(nvars: usize, vars: Option<&[usize]>, fact: &mut Fact) -> Self
     where
-        F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T);
-
-    fn get_args_at_p(&mut self, p: usize) -> Self::MutateArgs;
-
-    fn return_args(&mut self, args: Self::MutateArgs);
-
-    /// Iterate over ops at indices less than or equal to p. Applies function `f_at_p` only to the
-    /// op at p. Applies `f` to all other ops above p.
-    fn iter_ops_above_p<T, F, G>(&mut self, p: usize, mut t: T, f: F, f_at_p: G) -> T
-    where
-        // Applied to each op at or above p until returns false
-        // Takes p and op
-        F: Fn(usize, &Self::Node, T) -> (T, bool),
-        G: Fn(&Self::Node, T) -> (T, bool),
+        Fact: Factory<Vec<usize>> + Factory<Vec<Option<usize>>>,
     {
-        // Find the most recent node above p. Can set subbstate using inputs at node at p.
-        let mut node_p = match self.get_node_ref(p) {
-            None if p == 0 => None,
-            None => {
-                let mut sel_p = p - 1;
-                let mut prev_node = self.get_node_ref(sel_p);
-                while prev_node.is_none() && sel_p > 0 {
-                    sel_p -= 1;
-                    prev_node = self.get_node_ref(sel_p);
-                }
-                prev_node.map(|_| sel_p)
-            }
-            Some(node) => {
-                let (tt, c) = f_at_p(node, t);
-                t = tt;
-                if c {
-                    self.get_previous_p(node)
-                } else {
-                    None
-                }
-            }
-        };
+        let last_p: Option<usize> = None;
+        let mut last_vars: Vec<Option<usize>> = fact.get_instance();
+        let mut last_rels: Vec<Option<usize>> = fact.get_instance();
+        last_vars.resize(nvars, None);
+        last_rels.resize(nvars, None);
 
-        // Find previous ops and use their outputs to set substate.
-        while let Some(p) = node_p {
-            let node = self.get_node_ref(p).unwrap();
-            let c = f(p, node, t);
-            t = c.0;
-            if !c.1 {
-                break;
-            }
-            node_p = self.get_previous_p(node);
+        FastOpMutateArgs {
+            last_p,
+            last_vars,
+            last_rels,
+            subvar_mapping: vars.map(|vars| {
+                let mut vars_to_subvars: Vec<usize> = fact.get_instance();
+                let mut subvars_to_vars: Vec<usize> = fact.get_instance();
+                vars_to_subvars.resize(nvars, std::usize::MAX);
+                subvars_to_vars.extend_from_slice(vars);
+                subvars_to_vars
+                    .iter()
+                    .enumerate()
+                    .for_each(|(i, v)| vars_to_subvars[*v] = i);
+                (vars_to_subvars, subvars_to_vars)
+            }),
+            unfilled: 0,
         }
-        t
     }
 }
 
-impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
-    type MutateArgs = (Option<usize>, Vec<Option<usize>>, Vec<Option<usize>>);
-    fn mutate_p<T, F>(
-        &mut self,
-        f: F,
-        p: usize,
-        t: T,
-        args: Self::MutateArgs,
-    ) -> (T, Self::MutateArgs)
+impl MutateArgs for FastOpMutateArgs {
+    type SubvarIndex = usize;
+
+    fn n_subvars(&self) -> usize {
+        self.last_vars.len()
+    }
+
+    fn subvar_to_var(&self, index: Self::SubvarIndex) -> usize {
+        match &self.subvar_mapping {
+            None => index,
+            Some((_, subvars)) => subvars[index],
+        }
+    }
+
+    fn var_to_subvar(&self, var: usize) -> Option<Self::SubvarIndex> {
+        match &self.subvar_mapping {
+            None => Some(var),
+            Some((allvars, _)) => {
+                let i = allvars[var];
+                if i == std::usize::MAX {
+                    None
+                } else {
+                    Some(i)
+                }
+            }
+        }
+    }
+}
+
+impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
+    type Args = FastOpMutateArgs;
+    fn mutate_p<T, F>(&mut self, f: F, p: usize, t: T, mut args: Self::Args) -> (T, Self::Args)
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
     {
-        let (mut last_p, mut last_vars, mut last_rels) = args;
         let op_ref = self.get_pth(p);
         let (new_op, t) = f(&self, op_ref, t);
 
         // If we are making a change.
         if let Some(new_op) = new_op {
+            // Lets check that all vars are included in the subvars of `args`.
+            debug_assert!(
+                {
+                    op_ref
+                        .map(|op| {
+                            op.get_vars()
+                                .iter()
+                                .all(|v| args.var_to_subvar(*v).is_some())
+                        })
+                        .unwrap_or(true)
+                        && new_op
+                        .as_ref()
+                        .map(|op| {
+                            op.get_vars()
+                                .iter()
+                                .all(|v| args.var_to_subvar(*v).is_some())
+                        })
+                        .unwrap_or(true)
+
+                },
+                "Trying to mutate from or into an op which spans variables not prepared in the args."
+            );
+
             let old_op_node = self.ops[p].take();
 
             // Check if the nodes share all the same variables, in which case we can do a
@@ -320,7 +348,7 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                 if let Some(node_ref) = old_op_node {
                     // Uninstall the old op.
                     // If there's a previous p, point it towards the next one
-                    if let Some(last_p) = last_p {
+                    if let Some(last_p) = args.last_p {
                         let node = self.ops[last_p].as_mut().unwrap();
                         node.next_p = node_ref.next_p;
                     } else {
@@ -338,7 +366,7 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                     // If there's a next p, point it towards the previous one
                     let next_p_node = node_ref.next_p.and_then(|p| self.ops[p].as_mut());
                     if let Some(next_p_node) = next_p_node {
-                        next_p_node.previous_p = last_p
+                        next_p_node.previous_p = args.last_p
                     } else {
                         // No next p, so we are removing the tail. Adjust.
                         self.p_ends = if let Some((head, tail)) = self.p_ends {
@@ -357,7 +385,9 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                     let vars = node_ref.op.get_vars();
                     vars.iter().cloned().enumerate().for_each(|(relv, v)| {
                         // Check the previous node using this variable.
-                        if let Some((prev_p_for_v, prev_rel_indx)) = last_vars[v].zip(last_rels[v])
+                        let subvar = args.var_to_subvar(v).unwrap();
+                        if let Some((prev_p_for_v, prev_rel_indx)) =
+                            args.last_vars[subvar].zip(args.last_rels[subvar])
                         {
                             let prev_p_for_v_ref = self.ops[prev_p_for_v].as_mut().unwrap();
                             prev_p_for_v_ref.next_for_vars[prev_rel_indx] =
@@ -383,8 +413,10 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                         }) = node_ref.next_for_vars[relv]
                         {
                             let next_p_for_v_ref = self.ops[next_p_for_v].as_mut().unwrap();
-                            next_p_for_v_ref.previous_for_vars[next_rel_index] =
-                                last_vars[v].zip(last_rels[v]).map(PRel::from);
+                            next_p_for_v_ref.previous_for_vars[next_rel_index] = args.last_vars
+                                [subvar]
+                                .zip(args.last_rels[subvar])
+                                .map(PRel::from);
                         } else {
                             self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
                                 debug_assert_eq!(tail, PRel { p, relv });
@@ -413,9 +445,13 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                         .iter()
                         .cloned()
                         .map(|v| -> (Option<PRel>, Option<PRel>) {
-                            let prev_p_and_rel = last_vars[v].zip(last_rels[v]).map(PRel::from);
+                            let subvar = args.var_to_subvar(v).unwrap();
+                            let prev_p_and_rel = args.last_vars[subvar]
+                                .zip(args.last_rels[subvar])
+                                .map(PRel::from);
 
-                            let next_p_and_rel = if let Some(prev_p_for_v) = last_vars[v] {
+                            let next_p_and_rel = if let Some(prev_p_for_v) = args.last_vars[subvar]
+                            {
                                 // If there's a previous node for the var, check its next entry.
                                 let prev_node_for_v = self.ops[prev_p_for_v].as_ref().unwrap();
                                 let indx = prev_node_for_v.op.index_of_var(v).unwrap();
@@ -481,8 +517,8 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                         });
 
                     let mut node_ref = FastOpNodeTemplate::new(new_op, prevs, nexts);
-                    node_ref.previous_p = last_p;
-                    node_ref.next_p = if let Some(last_p) = last_p {
+                    node_ref.previous_p = args.last_p;
+                    node_ref.next_p = if let Some(last_p) = args.last_p {
                         let last_p_node = self.ops[last_p].as_ref().unwrap();
                         last_p_node.next_p
                     } else if let Some((head, _)) = self.p_ends {
@@ -531,88 +567,35 @@ impl<O: Op + Clone> MutateP for FastOpsTemplate<O> {
                 .cloned()
                 .enumerate()
                 .for_each(|(relv, v)| {
-                    last_vars[v] = Some(p);
-                    last_rels[v] = Some(relv);
+                    args.last_vars[v] = Some(p);
+                    args.last_rels[v] = Some(relv);
                 });
-            last_p = Some(p)
+            args.last_p = Some(p)
         }
-        (t, (last_p, last_vars, last_rels))
+        (t, args)
     }
 
-    // TODO test this
-    fn get_args_at_p(&mut self, p: usize) -> Self::MutateArgs {
-        let last_p: Option<usize> = None;
-        let mut last_vars: Vec<Option<usize>> = self.get_instance();
-        let mut last_rels: Vec<Option<usize>> = self.get_instance();
-        last_vars.resize(self.var_ends.len(), None);
-        last_rels.resize(self.var_ends.len(), None);
-
-        // Can subtract off vars with no ops. nvars - noops = nvars_with_ops
-        let count = self.var_ends.iter().filter(|end| end.is_some()).count();
-        let args = (last_p, last_vars, last_rels);
-        if count > 0 {
-            let (args, _) = self.iter_ops_above_p(
-                p,
-                (args, count),
-                |p, node, ((mut last_p, mut last_vars, mut last_rels), mut count)| {
-                    if last_p.is_none() {
-                        last_p = Some(p);
-                    }
-                    node.get_op_ref()
-                        .get_vars()
-                        .iter()
-                        .cloned()
-                        .enumerate()
-                        .for_each(|(relv, v)| {
-                            if last_vars[v].is_none() {
-                                debug_assert_eq!(last_rels[v], None);
-                                count -= 1;
-                                last_vars[v] = Some(p);
-                                last_rels[v] = Some(relv);
-                            }
-                        });
-                    (((last_p, last_vars, last_rels), count), count > 0)
-                },
-                |node, ((_, mut last_vars, mut last_rels), mut count)| {
-                    node.get_op_ref()
-                        .get_vars()
-                        .iter()
-                        .zip(node.previous_for_vars.iter())
-                        .filter_map(|(v, prel)| prel.as_ref().map(|prel| (*v, prel)))
-                        .for_each(|(v, prel)| {
-                            if last_vars[v].is_none() {
-                                debug_assert_eq!(last_rels[v], None);
-                                count -= 1;
-                                last_vars[v] = Some(prel.p);
-                                last_rels[v] = Some(prel.relv);
-                            }
-                        });
-                    (((node.previous_p, last_vars, last_rels), count), count > 0)
-                },
-            );
-            args
-        } else {
-            args
-        }
-    }
-
-    fn return_args(&mut self, args: Self::MutateArgs) {
-        let (_, last_vars, last_rels) = args;
-        self.return_instance(last_vars);
-        self.return_instance(last_rels);
-    }
-}
-
-impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
-    fn mutate_ps<F, T>(&mut self, pstart: usize, pend: usize, t: T, f: F) -> T
+    fn mutate_subsection<T, F>(
+        &mut self,
+        pstart: usize,
+        pend: usize,
+        t: T,
+        f: F,
+        args: Option<Self::Args>,
+    ) -> T
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
     {
         if pend > self.ops.len() {
             self.ops.resize(pend, None)
         };
-
-        let args = self.get_args_at_p(pstart);
+        let args = match args {
+            Some(args) => args,
+            None => {
+                let args = self.get_empty_args(SubvarAccess::ALL);
+                self.fill_args_at_p(pstart, args)
+            }
+        };
         let (t, args) =
             (pstart..pend).fold((t, args), |(t, args), p| self.mutate_p(&f, p, t, args));
         self.return_args(args);
@@ -620,8 +603,14 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
         t
     }
 
-    /// Mutate only the ops. Override with more efficient solutions if needed.
-    fn mutate_ops<F, T>(&mut self, pstart: usize, pend: usize, mut t: T, f: F) -> T
+    fn mutate_subsection_ops<T, F>(
+        &mut self,
+        pstart: usize,
+        pend: usize,
+        mut t: T,
+        f: F,
+        args: Option<Self::Args>,
+    ) -> T
     where
         F: Fn(&Self, &Self::Op, usize, T) -> (Option<Option<Self::Op>>, T),
     {
@@ -629,7 +618,13 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
             self.ops.resize(pend, None)
         };
 
-        let mut args = self.get_args_at_p(pstart);
+        let mut args = match args {
+            Some(args) => args,
+            None => {
+                let args = self.get_empty_args(SubvarAccess::ALL);
+                self.fill_args_at_p(pstart, args)
+            }
+        };
 
         // Find starting position.
         let mut p = self.p_ends.and_then(|(start, pend)| {
@@ -661,6 +656,337 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
         self.return_args(args);
 
         t
+    }
+
+    fn get_empty_args(&mut self, vars: SubvarAccess<FastOpMutateArgs>) -> FastOpMutateArgs {
+        match vars {
+            SubvarAccess::ALL => {
+                let mut args = FastOpMutateArgs::new(self.get_nvars(), None, self);
+                // Can subtract off vars with no ops. nvars - noops = nvars_with_ops
+                args.unfilled = self.var_ends.iter().filter(|end| end.is_some()).count();
+                args
+            }
+            SubvarAccess::VARLIST(vars) => {
+                let mut args = FastOpMutateArgs::new(self.get_nvars(), Some(vars), self);
+                // Can subtract off vars with no ops. nvars - noops = nvars_with_ops
+                args.unfilled = vars.iter().filter(|v| self.var_ends[**v].is_some()).count();
+                args
+            }
+            SubvarAccess::ARGS(mut args) => {
+                // Count how many need to be set (are None).
+                args.unfilled = (0..args.n_subvars())
+                    .filter(|subvar| {
+                        let v = args.subvar_to_var(*subvar);
+                        args.last_vars[*subvar].is_none() && self.var_ends[v].is_some()
+                    })
+                    .count();
+                args
+            }
+        }
+    }
+
+    // TODO test get_args_at_p for nonzero values, and for var subsections. Test empty vars!
+    fn fill_args_at_p(&self, p: usize, empty_args: Self::Args) -> Self::Args {
+        let args = empty_args;
+        if args.unfilled > 0 {
+            self.iter_ops_above_p(
+                p,
+                args,
+                |p, node, mut args| {
+                    if args.last_p.is_none() {
+                        args.last_p = Some(p);
+                    }
+                    node.get_op_ref()
+                        .get_vars()
+                        .iter()
+                        .cloned()
+                        .enumerate()
+                        .for_each(|(relv, v)| {
+                            let subvar = args.var_to_subvar(v);
+                            // Only set vars which we are looking at.
+                            if let Some(subvar) = subvar {
+                                if args.last_vars[subvar].is_none() {
+                                    debug_assert_eq!(args.last_rels[subvar], None);
+                                    args.last_vars[subvar] = Some(p);
+                                    args.last_rels[subvar] = Some(relv);
+                                    args.unfilled -= 1;
+                                }
+                            }
+                        });
+                    let cont = args.unfilled > 0;
+                    (args, cont)
+                },
+                |node, mut args| {
+                    node.get_op_ref()
+                        .get_vars()
+                        .iter()
+                        .zip(node.previous_for_vars.iter())
+                        .filter_map(|(v, prel)| prel.as_ref().map(|prel| (*v, prel)))
+                        .for_each(|(v, prel)| {
+                            let subvar = args.var_to_subvar(v);
+                            // Only set vars which we are looking at.
+                            if let Some(subvar) = subvar {
+                                if args.last_vars[subvar].is_none() {
+                                    debug_assert_eq!(args.last_rels[subvar], None);
+                                    args.unfilled -= 1;
+                                    args.last_vars[subvar] = Some(prel.p);
+                                    args.last_rels[subvar] = Some(prel.relv);
+                                }
+                            }
+                        });
+                    args.last_p = node.previous_p;
+                    let cont = args.unfilled > 0;
+                    (args, cont)
+                },
+            )
+        } else {
+            args
+        }
+    }
+
+    fn fill_args_at_p_with_hint<It>(
+        &self,
+        p: usize,
+        args: &mut Self::Args,
+        vars: &[usize],
+        hint: It,
+    ) where
+        It: Iterator<Item = Option<usize>>,
+    {
+        let psel = p;
+        // Need to find an op for each var that has ops on worldline.
+        hint.zip(vars.iter().cloned())
+            .enumerate()
+            .for_each(|(subvar, (phint, var))| {
+                // Get starting spot.
+                let (mut pcheck, mut relv) = if let Some(phint) = phint {
+                    // Use hint
+                    let relv = self
+                        .get_node_ref(phint)
+                        .unwrap()
+                        .get_op_ref()
+                        .index_of_var(var)
+                        .unwrap();
+                    (phint, relv)
+                } else if let Some((pstart, _)) = self.var_ends[var] {
+                    // Manually look.
+                    (pstart.p, pstart.relv)
+                } else {
+                    // No need to update substate.
+                    return;
+                };
+
+                // Iterate to valid location.
+                loop {
+                    let node = self.get_node_ref(pcheck).unwrap();
+                    let next = self
+                        .get_next_p_for_rel_var(relv, node)
+                        .unwrap_or_else(|| self.var_ends[var].unwrap().0);
+                    // If psel in (pcheck, next.p)
+                    if p_crosses(pcheck, next.p, psel) {
+                        // Leave as None if wraps around.
+                        if pcheck < next.p {
+                            args.last_vars[subvar] = Some(pcheck);
+                            args.last_rels[subvar] = Some(relv);
+                        }
+                        break;
+                    } else {
+                        pcheck = next.p;
+                        relv = next.relv;
+                    }
+                }
+            });
+
+        // Set last_p to the first p found.
+        args.last_p = (0..psel)
+            .rev()
+            .filter(|p| self.get_node_ref(*p).is_some())
+            .next();
+    }
+
+    // fn fill_args_at_p_with_hint<It>(
+    //     &self,
+    //     p: usize,
+    //     empty_args: Self::Args,
+    //     hint: It,
+    // ) -> Result<Self::Args, Self::Args>
+    // where
+    //     It: Iterator<Item = usize>,
+    // {
+    //     let psel = p;
+    //     let mut args = empty_args;
+    //
+    //     // We can only use ps with nodes in them.
+    //     let mut filled_hints = hint.filter_map(|p| self.get_node_ref(p));
+    //     let res = filled_hints
+    //         .try_for_each(|node| {
+    //             // Check for last_p.
+    //             let next_p = match self.get_next_p(node) {
+    //                 Some(p) => p,
+    //                 // There must be at least one node in the graph since node
+    //                 // is not None.
+    //                 None => self.p_ends.unwrap().0,
+    //             };
+    //             if p_crosses(p, next_p, psel) {
+    //                 args.last_p = Some(p);
+    //             }
+    //
+    //             // On this node look at each variable.
+    //             node.get_op_ref()
+    //                 .get_vars()
+    //                 .iter()
+    //                 .cloned()
+    //                 .enumerate()
+    //                 .try_for_each(|(relvar, v)| {
+    //                     // Get subvar, if already set then set to None and return Ok(())
+    //                     args.var_to_subvar(v)
+    //                         .and_then(|subvar| match args.last_vars[subvar] {
+    //                             None => Some(subvar),
+    //                             Some(_) => None,
+    //                         })
+    //                         .map(|subvar| {
+    //                             debug_assert_eq!(args.last_rels[subvar], None);
+    //                             // So now lets check if this is a valid op to use for reference.
+    //                             let next_p_for_var =
+    //                                 self.get_next_p_for_rel_var(relvar, node).map(|prel| prel.p);
+    //                             let first_p_for_var = self.var_ends[v].map(|(prel, _)| prel.p);
+    //                             let next_p = match (next_p_for_var, first_p_for_var) {
+    //                                 // Simply the next p.
+    //                                 (Some(p), _) => p,
+    //                                 // Wrap around pbc.
+    //                                 (None, Some(p)) => p,
+    //                                 // This var doesn't have anything on it, not possible since
+    //                                 // we know at least one node is on it.
+    //                                 (None, None) => unreachable!(),
+    //                             };
+    //                             // if p is before psel and next_p is after.
+    //                             if p_crosses(p, next_p, psel) {
+    //                                 args.last_vars[subvar] = Some(p);
+    //                                 args.last_rels[subvar] = Some(relvar);
+    //                                 args.unfilled -= 1;
+    //                             }
+    //                             if args.unfilled == 0 {
+    //                                 Err(())
+    //                             } else {
+    //                                 Ok(())
+    //                             }
+    //                         })
+    //                         .unwrap_or(Ok(()))
+    //                 })
+    //         })
+    //         // If we ended early, check remaining for last_p if needed.
+    //         .map_err(|_| {
+    //             if args.last_p.is_none() {
+    //                 filled_hints.try_for_each(|node| {
+    //                     // Check for last_p.
+    //                     let next_p = match self.get_next_p(node) {
+    //                         Some(p) => p,
+    //                         // There must be at least one node in the graph since node
+    //                         // is not None.
+    //                         None => self.p_ends.unwrap().0,
+    //                     };
+    //                     if p_crosses(p, next_p, psel) {
+    //                         args.last_p = Some(p);
+    //                         Err(())
+    //                     } else {
+    //                         Ok(())
+    //                     }
+    //                 })
+    //             } else {
+    //                 Err(())
+    //             }
+    //         });
+    //     // Check the end result.
+    //     // If we got through all ps without reducing count, we have failed.
+    //     // If we ended early but were not able to find the last_p after continuing we also
+    //     // failed to fill args.
+    //     match res {
+    //         Ok(()) | Err(Ok(())) => Err(args),
+    //         _ => Ok(args),
+    //     }
+    // }
+
+    fn return_args(&mut self, args: Self::Args) {
+        self.return_instance(args.last_vars);
+        self.return_instance(args.last_rels);
+        if let Some((vars_to_subvars, subvars_to_vars)) = args.subvar_mapping {
+            self.return_instance(vars_to_subvars);
+            self.return_instance(subvars_to_vars);
+        }
+    }
+
+    fn get_propagated_substate_with_hint<It>(
+        &self,
+        p: usize,
+        substate: &mut [bool],
+        vars: &[usize],
+        hint: It,
+    ) where
+        It: Iterator<Item = Option<usize>>,
+    {
+        let psel = p;
+        // Need to find an op for each var that has ops on worldline.
+        hint.zip(vars.iter().cloned())
+            .enumerate()
+            .for_each(|(subvar, (phint, var))| {
+                // Get starting spot.
+                let (mut pcheck, mut relv) = if let Some(phint) = phint {
+                    // Use hint
+                    let relv = self
+                        .get_node_ref(phint)
+                        .unwrap()
+                        .get_op_ref()
+                        .index_of_var(var)
+                        .unwrap();
+                    (phint, relv)
+                } else if let Some((pstart, _)) = self.var_ends[var] {
+                    // Manually look.
+                    (pstart.p, pstart.relv)
+                } else {
+                    // No need to update substate.
+                    return;
+                };
+
+                // Iterate to valid location.
+                loop {
+                    let node = self.get_node_ref(pcheck).unwrap();
+                    let next = self
+                        .get_next_p_for_rel_var(relv, node)
+                        .unwrap_or_else(|| self.var_ends[var].unwrap().0);
+                    if p_crosses(pcheck, next.p, psel) {
+                        substate[subvar] = node.get_op_ref().get_outputs()[relv];
+                        break;
+                    } else {
+                        pcheck = next.p;
+                        relv = next.relv;
+                    }
+                }
+            });
+    }
+}
+
+fn p_crosses(pstart: usize, pend: usize, psel: usize) -> bool {
+    match (pstart, pend) {
+        (pstart, pend) if pstart < pend => (pstart < psel) && (psel <= pend),
+        (pstart, pend) if pstart > pend => (pend < psel) || (psel <= pstart),
+        // Only one var. pstart == pend
+        _ => true,
+    }
+}
+
+impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
+    fn mutate_ps<F, T>(&mut self, pstart: usize, pend: usize, t: T, f: F) -> T
+    where
+        F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
+    {
+        self.mutate_subsection(pstart, pend, t, f, None)
+    }
+
+    fn mutate_ops<F, T>(&mut self, pstart: usize, pend: usize, t: T, f: F) -> T
+    where
+        F: Fn(&Self, &Self::Op, usize, T) -> (Option<Option<Self::Op>>, T),
+    {
+        self.mutate_subsection_ops(pstart, pend, t, f, None)
     }
 
     fn try_iterate_ps<F, T, V>(&self, pstart: usize, pend: usize, t: T, f: F) -> Result<T, V>
@@ -719,85 +1045,86 @@ impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
 impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
     type Op = O;
 
-    fn get_propagated_substate(
-        &mut self,
-        p: usize,
-        state: &[bool],
-        vars: &[usize],
-        substate: &mut [bool],
-    ) {
-        let vars_to_set = vars.len();
-        let mut var_set: Vec<bool> = self.get_instance();
-        var_set.resize(vars.len(), false);
-        let mut var_lookup: Vec<Option<usize>> = self.get_instance();
-        var_lookup.resize(state.len(), None);
-        vars.iter()
-            .enumerate()
-            .for_each(|(i, v)| var_lookup[*v] = Some(i));
-        let var_lookup = var_lookup;
-
-        let t = (vars_to_set, var_set, substate);
-        let run_on_bools = |node: &FastOpNodeTemplate<O>,
-                            bools: &[bool],
-                            vars_to_set: &mut usize,
-                            var_set: &mut [bool],
-                            substate: &mut [bool]| {
-            node.get_op_ref()
-                .get_vars()
-                .iter()
-                .zip(bools.iter())
-                .for_each(|(v, b)| {
-                    if let Some(i) = var_lookup[*v] {
-                        if !var_set[i] {
-                            var_set[i] = true;
-                            *vars_to_set -= 1;
-                            substate[i] = *b;
-                        }
-                    }
-                });
-        };
-
-        let (vars_to_set, var_set, substate) = self.iter_ops_above_p(
-            p,
-            t,
-            |_, node, t| {
-                let (mut vars_to_set, mut var_set, substate) = t;
-                run_on_bools(
-                    node,
-                    node.get_op_ref().get_outputs(),
-                    &mut vars_to_set,
-                    &mut var_set,
-                    substate,
-                );
-                ((vars_to_set, var_set, substate), vars_to_set > 0)
-            },
-            |node, t| {
-                let (mut vars_to_set, mut var_set, substate) = t;
-                run_on_bools(
-                    node,
-                    node.get_op_ref().get_inputs(),
-                    &mut vars_to_set,
-                    &mut var_set,
-                    substate,
-                );
-                ((vars_to_set, var_set, substate), vars_to_set > 0)
-            },
-        );
-
-        // If there are more to set.
-        if vars_to_set > 0 {
-            vars.iter()
-                .zip(var_set.iter().zip(substate.iter_mut()))
-                .for_each(|(v, (set, b))| {
-                    if !set {
-                        *b = state[*v]
-                    }
-                });
-        }
-
-        self.return_instance(var_set);
-        self.return_instance(var_lookup);
-    }
+    // TODO remove if not needed
+    // fn get_propagated_substate(
+    //     &mut self,
+    //     p: usize,
+    //     state: &[bool],
+    //     vars: &[usize],
+    //     substate: &mut [bool],
+    // ) {
+    //     let vars_to_set = vars.len();
+    //     let mut var_set: Vec<bool> = self.get_instance();
+    //     var_set.resize(vars.len(), false);
+    //     let mut var_lookup: Vec<Option<usize>> = self.get_instance();
+    //     var_lookup.resize(state.len(), None);
+    //     vars.iter()
+    //         .enumerate()
+    //         .for_each(|(i, v)| var_lookup[*v] = Some(i));
+    //     let var_lookup = var_lookup;
+    //
+    //     let t = (vars_to_set, var_set, substate);
+    //     let run_on_bools = |node: &FastOpNodeTemplate<O>,
+    //                         bools: &[bool],
+    //                         vars_to_set: &mut usize,
+    //                         var_set: &mut [bool],
+    //                         substate: &mut [bool]| {
+    //         node.get_op_ref()
+    //             .get_vars()
+    //             .iter()
+    //             .zip(bools.iter())
+    //             .for_each(|(v, b)| {
+    //                 if let Some(i) = var_lookup[*v] {
+    //                     if !var_set[i] {
+    //                         var_set[i] = true;
+    //                         *vars_to_set -= 1;
+    //                         substate[i] = *b;
+    //                     }
+    //                 }
+    //             });
+    //     };
+    //
+    //     let (vars_to_set, var_set, substate) = self.iter_ops_above_p(
+    //         p,
+    //         t,
+    //         |_, node, t| {
+    //             let (mut vars_to_set, mut var_set, substate) = t;
+    //             run_on_bools(
+    //                 node,
+    //                 node.get_op_ref().get_outputs(),
+    //                 &mut vars_to_set,
+    //                 &mut var_set,
+    //                 substate,
+    //             );
+    //             ((vars_to_set, var_set, substate), vars_to_set > 0)
+    //         },
+    //         |node, t| {
+    //             let (mut vars_to_set, mut var_set, substate) = t;
+    //             run_on_bools(
+    //                 node,
+    //                 node.get_op_ref().get_inputs(),
+    //                 &mut vars_to_set,
+    //                 &mut var_set,
+    //                 substate,
+    //             );
+    //             ((vars_to_set, var_set, substate), vars_to_set > 0)
+    //         },
+    //     );
+    //
+    //     // If there are more to set.
+    //     if vars_to_set > 0 {
+    //         vars.iter()
+    //             .zip(var_set.iter().zip(substate.iter_mut()))
+    //             .for_each(|(v, (set, b))| {
+    //                 if !set {
+    //                     *b = state[*v]
+    //                 }
+    //             });
+    //     }
+    //
+    //     self.return_instance(var_set);
+    //     self.return_instance(var_lookup);
+    // }
 
     fn get_cutoff(&self) -> usize {
         self.ops.len()

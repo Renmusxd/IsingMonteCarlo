@@ -16,7 +16,7 @@ fn single_cluster_test() {
 
     let mut rng = rand::thread_rng();
     let mut state = vec![false; manager.get_nvars()];
-    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
     println!("{:?}", state);
 }
 
@@ -39,7 +39,7 @@ fn simple_cluster_test() {
 
     let mut rng = rand::thread_rng();
     let mut state = vec![false; manager.get_nvars()];
-    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
     println!("{:?}", state);
 }
 
@@ -70,7 +70,7 @@ fn multi_cluster_test() {
 
     let mut rng = rand::thread_rng();
     let mut state = vec![false; manager.get_nvars()];
-    manager.flip_each_cluster_rng(0.5, &mut rng, &mut state);
+    manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
     println!("{:?}", state);
 }
 

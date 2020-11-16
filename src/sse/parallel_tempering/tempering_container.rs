@@ -62,7 +62,7 @@ where
 
     /// Add a QMC instance to the tempering container. Returns an Err if the added QMCStepper
     /// cannot be swapped with the existing steppers.
-    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), &str> {
+    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), &'static str> {
         if !self.graphs.is_empty() && !self.graphs[0].0.can_swap_graphs(&q) {
             Err("Added graph not compatible with other graphs.")
         } else {
@@ -648,7 +648,7 @@ pub mod rayon_tempering {
         use rand::SeedableRng;
 
         #[test]
-        fn test_basic() -> Result<(), ()> {
+        fn test_basic() -> Result<(), &'static str> {
             let rng1 = SmallRng::seed_from_u64(0u64);
 
             let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
@@ -755,7 +755,7 @@ mod swap_test {
     use rand::SeedableRng;
 
     #[test]
-    fn test_basic() -> Result<(), ()> {
+    fn test_basic() -> Result<(), &'static str> {
         let rng1 = SmallRng::seed_from_u64(0u64);
 
         let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
@@ -776,7 +776,7 @@ mod swap_test {
     }
 
     #[test]
-    fn test_convert() -> Result<(), ()> {
+    fn test_convert() -> Result<(), &'static str> {
         let rng1 = SmallRng::seed_from_u64(0u64);
 
         let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];

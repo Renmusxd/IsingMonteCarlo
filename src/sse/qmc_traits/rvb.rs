@@ -81,7 +81,6 @@ pub trait RVBUpdater:
         state: &mut [bool],
         rng: &mut R,
     ) -> (usize, bool) {
-        // TODO choose smaller regions and make faster update rule.
         let mut vars_list: Vec<usize> = self.get_instance();
         let mut in_cluster: Vec<bool> = self.get_instance();
         in_cluster.resize(state.len(), false);
@@ -221,7 +220,7 @@ fn get_up_to_n_contiguous_vars<R: Rng, EN: EdgeNavigator>(
 
 /// Get returns n with chance 1/2^(n+1)
 /// Chance of failure is 1/2^(2^64) and should therefore be acceptable.
-fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
+pub fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
     let mut acc = 0;
     let mut v = r.next_u64();
     loop {
@@ -614,7 +613,7 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
     });
 }
 
-fn calculate_mult(
+pub(crate) fn calculate_mult(
     sat: &BondContainer<usize>,
     unsat: &BondContainer<usize>,
     nf: i32,

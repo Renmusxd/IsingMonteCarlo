@@ -163,6 +163,22 @@ pub trait DiagonalUpdater: OpContainer {
         self.post_diagonal_update_hook();
     }
 
+    // TODO remove if not needed
+    // /// Set state to be equal to the propagated state at `p`, override with more efficient
+    // /// implementations if desired. By default iterates over ops from 0 to p and overwrites state
+    // /// as needed.
+    // fn get_propagated_state(&self, p: usize, state: &mut [bool]) {
+    //     self.iterate_ops(0, p, state, |s, op, p, state| {
+    //         if !op.is_diagonal() {
+    //             op.get_vars()
+    //                 .iter()
+    //                 .zip(op.get_outputs().iter())
+    //                 .for_each(|(v, b)| state[*v] = *b)
+    //         }
+    //         state
+    //     });
+    // }
+
     /// Called after an update.
     fn post_diagonal_update_hook(&mut self) {}
 }
