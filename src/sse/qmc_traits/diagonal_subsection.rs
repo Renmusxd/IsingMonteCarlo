@@ -103,6 +103,7 @@ pub trait DiagonalSubsection: OpContainer + LoopUpdater + DiagonalUpdater {
         &self,
         p: usize,
         substate: &mut [bool],
+        state: &[bool],
         vars: &[usize],
         hint: It,
     ) where

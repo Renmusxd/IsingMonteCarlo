@@ -17,7 +17,7 @@ type VecEdge = Vec<usize>;
 
 /// Trait encompassing all requirements for op managers in QMCIsingGraph.
 pub trait IsingManager:
-    OpContainerConstructor + HeatBathDiagonalUpdater + RVBUpdater + ClusterUpdater
+    OpContainerConstructor + HeatBathDiagonalUpdater + RVBClusterUpdater + ClusterUpdater
 {
 }
 
@@ -241,23 +241,25 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
     /// Perform a single rvb step.
     pub fn single_rvb_step(&mut self) -> Result<(), String> {
-        let mut state = self.state.take().unwrap();
-        if self.classical_bonds.is_none() {
-            self.make_classical_bonds(state.len())?;
-        }
-        let mut manager = self.op_manager.take().unwrap();
-        let rng = self.rng.as_mut().unwrap();
+        unimplemented!();
 
-        let edges = EdgeNav {
-            var_to_bonds: self.classical_bonds.as_ref().unwrap(),
-            edges: &self.edges,
-        };
-
-        manager.rvb_update(&edges, &mut state, rng);
-
-        self.op_manager = Some(manager);
-        self.state = Some(state);
-        Ok(())
+        // let mut state = self.state.take().unwrap();
+        // if self.classical_bonds.is_none() {
+        //     self.make_classical_bonds(state.len())?;
+        // }
+        // let mut manager = self.op_manager.take().unwrap();
+        // let rng = self.rng.as_mut().unwrap();
+        //
+        // let edges = EdgeNav {
+        //     var_to_bonds: self.classical_bonds.as_ref().unwrap(),
+        //     edges: &self.edges,
+        // };
+        //
+        // manager.rvb_update(&edges, &mut state, rng);
+        //
+        // self.op_manager = Some(manager);
+        // self.state = Some(state);
+        // Ok(())
     }
 
     /// Build classical bonds list, assume all js are the same magnitude.
@@ -518,13 +520,16 @@ where
             };
             // Average cluster size is always 2.
             let steps_to_run = (state.len() + 1) / 2;
-            let (_, succs) = (0..steps_to_run)
-                .map(|_| manager.rvb_update(&edges, &mut state, &mut rng))
-                .fold((0usize, 0usize), |(totvars, nsucc), (nvars, succ)| {
-                    (totvars + nvars, nsucc + if succ { 1 } else { 0 })
-                });
-            self.total_rvb_successes += succs;
-            self.rvb_clusters_counted += steps_to_run;
+
+            manager.rvb_cluster_update(&edges, &mut state, steps_to_run, &mut rng);
+            //
+            // let (_, succs) = (0..steps_to_run)
+            //     .map(|_| manager.rvb_update(&edges, &mut state, &mut rng))
+            //     .fold((0usize, 0usize), |(totvars, nsucc), (nvars, succ)| {
+            //         (totvars + nvars, nsucc + if succ { 1 } else { 0 })
+            //     });
+            // self.total_rvb_successes += succs;
+            // self.rvb_clusters_counted += steps_to_run;
         }
 
         manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);

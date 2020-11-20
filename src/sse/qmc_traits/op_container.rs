@@ -96,26 +96,6 @@ pub trait OpContainer {
     /// The op object to manage.
     type Op: Op;
 
-    // TODO remove if not needed
-    // /// Set `substate` to be equal to the propagated substate at `p`.
-    // fn get_propagated_substate(
-    //     &mut self,
-    //     p: usize,
-    //     state: &[bool],
-    //     vars: &[usize],
-    //     substate: &mut [bool],
-    // );
-    // /// Return the propagated substate at `p`.
-    // fn get_propagated_substate_vec(
-    //     &mut self,
-    //     p: usize,
-    //     state: &[bool],
-    //     vars: &[usize],
-    // ) -> Vec<bool> {
-    //     let mut substate = vec![false; vars.len()];
-    //     self.get_propagated_substate(p, state, vars, &mut substate);
-    //     substate
-    // }
     /// Get the cutoff for this container.
     fn get_cutoff(&self) -> usize;
     /// Set the cutoff for this container.

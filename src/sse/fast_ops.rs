@@ -56,11 +56,11 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             var_ends: vec![None; nvars],
             bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
             // Set bounds to make sure there are not "leaks"
-            usize_alloc: Allocator::new_with_max_in_flight(4),
+            usize_alloc: Allocator::new_with_max_in_flight(10),
             bool_alloc: Allocator::new_with_max_in_flight(2),
             opside_alloc: Allocator::new_with_max_in_flight(1),
             leg_alloc: Allocator::new_with_max_in_flight(1),
-            option_usize_alloc: Allocator::new_with_max_in_flight(2),
+            option_usize_alloc: Allocator::new_with_max_in_flight(4),
             f64_alloc: Allocator::new_with_max_in_flight(1),
             bond_container_alloc: Allocator::new_with_max_in_flight(2),
         }
@@ -228,8 +228,9 @@ impl FastOpMutateArgs {
         let last_p: Option<usize> = None;
         let mut last_vars: Vec<Option<usize>> = fact.get_instance();
         let mut last_rels: Vec<Option<usize>> = fact.get_instance();
-        last_vars.resize(nvars, None);
-        last_rels.resize(nvars, None);
+        let last_size = vars.map(|vars| vars.len()).unwrap_or(nvars);
+        last_vars.resize(last_size, None);
+        last_rels.resize(last_size, None);
 
         FastOpMutateArgs {
             last_p,
@@ -475,14 +476,12 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
                         .zip(new_op.get_vars().iter())
                         .enumerate()
                         .for_each(|(relv, (prev, v))| {
-                            if let Some(PRel {
-                                p: prev_p,
-                                relv: prev_rel,
-                            }) = prev
-                            {
-                                let prev_node = self.ops[*prev_p].as_mut().unwrap();
-                                debug_assert_eq!(prev_node.get_op_ref().get_vars()[*prev_rel], *v);
-                                prev_node.next_for_vars[*prev_rel] = Some(PRel::from((p, relv)));
+                            if let Some(prel) = prev {
+                                let prev_p = prel.p;
+                                let prev_rel = prel.relv;
+                                let prev_node = self.ops[prev_p].as_mut().unwrap();
+                                debug_assert_eq!(prev_node.get_op_ref().get_vars()[prev_rel], *v);
+                                prev_node.next_for_vars[prev_rel] = Some(PRel::from((p, relv)));
                             } else {
                                 self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
                                     debug_assert!(head.p >= p);
@@ -567,8 +566,10 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
                 .cloned()
                 .enumerate()
                 .for_each(|(relv, v)| {
-                    args.last_vars[v] = Some(p);
-                    args.last_rels[v] = Some(relv);
+                    if let Some(subvar) = args.var_to_subvar(v) {
+                        args.last_vars[subvar] = Some(p);
+                        args.last_rels[subvar] = Some(relv);
+                    }
                 });
             args.last_p = Some(p)
         }
@@ -754,157 +755,116 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         It: Iterator<Item = Option<usize>>,
     {
         let psel = p;
+        let iter_and_set = |mut pcheck: usize,
+                            var: usize,
+                            mut relv: usize,
+                            subvar: usize,
+                            args: &mut Self::Args| {
+            loop {
+                debug_assert!(pcheck < p);
+                let node = self
+                    .get_node_ref(pcheck)
+                    .expect("Gave a hint without an op");
+                let next = self
+                    .get_next_p_for_rel_var(relv, node)
+                    .unwrap_or_else(|| self.var_ends[var].unwrap().0);
+                // If psel in (pcheck, next.p)
+                if p_crosses(pcheck, next.p, psel) {
+                    // Leave as None if wraps around.
+                    if pcheck < psel {
+                        args.last_vars[subvar] = Some(pcheck);
+                        args.last_rels[subvar] = Some(relv);
+                    }
+                    break;
+                } else {
+                    pcheck = next.p;
+                    relv = next.relv;
+                }
+            }
+        };
+
+        let set_using = |phint: usize, relv: usize, subvar: usize, args: &mut Self::Args| {
+            debug_assert_eq!(phint, p);
+            let node = self.get_node_ref(phint).expect("Gave a hint without an op");
+            let prel = node.previous_for_vars[relv];
+            args.last_vars[subvar] = prel.map(|prel| prel.p);
+            args.last_rels[subvar] = prel.map(|prel| prel.relv);
+        };
+
         // Need to find an op for each var that has ops on worldline.
         hint.zip(vars.iter().cloned())
             .enumerate()
             .for_each(|(subvar, (phint, var))| {
-                // Get starting spot.
-                let (mut pcheck, mut relv) = if let Some(phint) = phint {
-                    // Use hint
-                    let relv = self
-                        .get_node_ref(phint)
-                        .unwrap()
-                        .get_op_ref()
-                        .index_of_var(var)
-                        .unwrap();
-                    (phint, relv)
-                } else if let Some((pstart, _)) = self.var_ends[var] {
-                    // Manually look.
-                    (pstart.p, pstart.relv)
-                } else {
-                    // No need to update substate.
-                    return;
+                debug_assert!(
+                    phint
+                        .map(|phint| self.get_node_ref(phint).is_some())
+                        .unwrap_or(true),
+                    "Hints must be to ops."
+                );
+                let var_start: Option<PRel> = self.var_ends[var].map(|(prel, _)| prel);
+                let can_use_hint_iter = phint.map(|phint| phint < p).unwrap_or(false);
+                let can_use_start_iter = var_start.map(|prel| prel.p < p).unwrap_or(false);
+                let use_exact: Option<PRel> = match (phint, var_start) {
+                    (Some(phint), _) if phint == p => {
+                        let node = self.get_node_ref(p).expect("Gave a hint without an op");
+                        let relv = node
+                            .get_op_ref()
+                            .index_of_var(var)
+                            .expect("Gave a hint with an op with the wrong variable.");
+                        Some(PRel { p: phint, relv })
+                    }
+                    (_, Some(prel)) if prel.p == p => Some(prel),
+                    _ => None,
                 };
 
-                // Iterate to valid location.
-                loop {
-                    let node = self.get_node_ref(pcheck).unwrap();
-                    let next = self
-                        .get_next_p_for_rel_var(relv, node)
-                        .unwrap_or_else(|| self.var_ends[var].unwrap().0);
-                    // If psel in (pcheck, next.p)
-                    if p_crosses(pcheck, next.p, psel) {
-                        // Leave as None if wraps around.
-                        if pcheck < next.p {
-                            args.last_vars[subvar] = Some(pcheck);
-                            args.last_rels[subvar] = Some(relv);
+                if let Some(use_exact) = use_exact {
+                    set_using(use_exact.p, use_exact.relv, subvar, args)
+                } else {
+                    // Neither the hint nor the start line up exactly, use iteration.
+                    match (phint, var_start) {
+                        // Nothing available.
+                        (None, None) => {}
+
+                        // Only one available
+                        (None, Some(prel)) => {
+                            if can_use_start_iter {
+                                iter_and_set(prel.p, var, prel.relv, subvar, args)
+                            }
                         }
-                        break;
-                    } else {
-                        pcheck = next.p;
-                        relv = next.relv;
+
+                        // Both available
+                        (Some(phint), Some(prel)) => {
+                            let node = self.get_node_ref(phint).expect("Gave a hint without an op");
+                            let relv = node
+                                .get_op_ref()
+                                .index_of_var(var)
+                                .expect("Gave a hint with an op with the wrong variable.");
+                            match (can_use_hint_iter, can_use_start_iter) {
+                                (false, false) => {}
+                                (true, false) => iter_and_set(phint, var, relv, subvar, args),
+                                (false, true) => iter_and_set(prel.p, var, prel.relv, subvar, args),
+                                (true, true) => {
+                                    let prel = if phint < prel.p {
+                                        PRel { p: phint, relv }
+                                    } else {
+                                        prel
+                                    };
+                                    iter_and_set(prel.p, var, prel.relv, subvar, args)
+                                }
+                            }
+                        }
+
+                        // Impossible
+                        (Some(_), None) => {
+                            panic!("Gave a hint for a variable with no ops!")
+                        }
                     }
                 }
             });
 
         // Set last_p to the first p found.
-        args.last_p = (0..psel)
-            .rev()
-            .filter(|p| self.get_node_ref(*p).is_some())
-            .next();
+        args.last_p = (0..psel).rev().find(|p| self.get_node_ref(*p).is_some());
     }
-
-    // fn fill_args_at_p_with_hint<It>(
-    //     &self,
-    //     p: usize,
-    //     empty_args: Self::Args,
-    //     hint: It,
-    // ) -> Result<Self::Args, Self::Args>
-    // where
-    //     It: Iterator<Item = usize>,
-    // {
-    //     let psel = p;
-    //     let mut args = empty_args;
-    //
-    //     // We can only use ps with nodes in them.
-    //     let mut filled_hints = hint.filter_map(|p| self.get_node_ref(p));
-    //     let res = filled_hints
-    //         .try_for_each(|node| {
-    //             // Check for last_p.
-    //             let next_p = match self.get_next_p(node) {
-    //                 Some(p) => p,
-    //                 // There must be at least one node in the graph since node
-    //                 // is not None.
-    //                 None => self.p_ends.unwrap().0,
-    //             };
-    //             if p_crosses(p, next_p, psel) {
-    //                 args.last_p = Some(p);
-    //             }
-    //
-    //             // On this node look at each variable.
-    //             node.get_op_ref()
-    //                 .get_vars()
-    //                 .iter()
-    //                 .cloned()
-    //                 .enumerate()
-    //                 .try_for_each(|(relvar, v)| {
-    //                     // Get subvar, if already set then set to None and return Ok(())
-    //                     args.var_to_subvar(v)
-    //                         .and_then(|subvar| match args.last_vars[subvar] {
-    //                             None => Some(subvar),
-    //                             Some(_) => None,
-    //                         })
-    //                         .map(|subvar| {
-    //                             debug_assert_eq!(args.last_rels[subvar], None);
-    //                             // So now lets check if this is a valid op to use for reference.
-    //                             let next_p_for_var =
-    //                                 self.get_next_p_for_rel_var(relvar, node).map(|prel| prel.p);
-    //                             let first_p_for_var = self.var_ends[v].map(|(prel, _)| prel.p);
-    //                             let next_p = match (next_p_for_var, first_p_for_var) {
-    //                                 // Simply the next p.
-    //                                 (Some(p), _) => p,
-    //                                 // Wrap around pbc.
-    //                                 (None, Some(p)) => p,
-    //                                 // This var doesn't have anything on it, not possible since
-    //                                 // we know at least one node is on it.
-    //                                 (None, None) => unreachable!(),
-    //                             };
-    //                             // if p is before psel and next_p is after.
-    //                             if p_crosses(p, next_p, psel) {
-    //                                 args.last_vars[subvar] = Some(p);
-    //                                 args.last_rels[subvar] = Some(relvar);
-    //                                 args.unfilled -= 1;
-    //                             }
-    //                             if args.unfilled == 0 {
-    //                                 Err(())
-    //                             } else {
-    //                                 Ok(())
-    //                             }
-    //                         })
-    //                         .unwrap_or(Ok(()))
-    //                 })
-    //         })
-    //         // If we ended early, check remaining for last_p if needed.
-    //         .map_err(|_| {
-    //             if args.last_p.is_none() {
-    //                 filled_hints.try_for_each(|node| {
-    //                     // Check for last_p.
-    //                     let next_p = match self.get_next_p(node) {
-    //                         Some(p) => p,
-    //                         // There must be at least one node in the graph since node
-    //                         // is not None.
-    //                         None => self.p_ends.unwrap().0,
-    //                     };
-    //                     if p_crosses(p, next_p, psel) {
-    //                         args.last_p = Some(p);
-    //                         Err(())
-    //                     } else {
-    //                         Ok(())
-    //                     }
-    //                 })
-    //             } else {
-    //                 Err(())
-    //             }
-    //         });
-    //     // Check the end result.
-    //     // If we got through all ps without reducing count, we have failed.
-    //     // If we ended early but were not able to find the last_p after continuing we also
-    //     // failed to fill args.
-    //     match res {
-    //         Ok(()) | Err(Ok(())) => Err(args),
-    //         _ => Ok(args),
-    //     }
-    // }
 
     fn return_args(&mut self, args: Self::Args) {
         self.return_instance(args.last_vars);
@@ -919,56 +879,166 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         &self,
         p: usize,
         substate: &mut [bool],
+        state: &[bool],
         vars: &[usize],
         hint: It,
     ) where
         It: Iterator<Item = Option<usize>>,
     {
         let psel = p;
+        let iter_and_set = |mut pcheck: usize,
+                            var: usize,
+                            mut relv: usize,
+                            subvar: usize,
+                            substate: &mut [bool]| {
+            loop {
+                debug_assert!(pcheck < p);
+                let node = self
+                    .get_node_ref(pcheck)
+                    .expect("Gave a hint without an op");
+                let next = self
+                    .get_next_p_for_rel_var(relv, node)
+                    .unwrap_or_else(|| self.var_ends[var].unwrap().0);
+                // If psel in (pcheck, next.p)
+                if p_crosses(pcheck, next.p, psel) {
+                    // Leave as None if wraps around.
+                    if pcheck < next.p {
+                        substate[subvar] = node.get_op_ref().get_outputs()[relv];
+                    }
+                    break;
+                } else {
+                    pcheck = next.p;
+                    relv = next.relv;
+                }
+            }
+        };
+
+        let set_using = |phint: usize, relv: usize, subvar: usize, substate: &mut [bool]| {
+            debug_assert_eq!(phint, p);
+            let node = self.get_node_ref(phint).expect("Gave a hint without an op");
+            substate[subvar] = node.get_op_ref().get_inputs()[relv];
+        };
+
         // Need to find an op for each var that has ops on worldline.
         hint.zip(vars.iter().cloned())
             .enumerate()
             .for_each(|(subvar, (phint, var))| {
-                // Get starting spot.
-                let (mut pcheck, mut relv) = if let Some(phint) = phint {
-                    // Use hint
-                    let relv = self
-                        .get_node_ref(phint)
-                        .unwrap()
-                        .get_op_ref()
-                        .index_of_var(var)
-                        .unwrap();
-                    (phint, relv)
-                } else if let Some((pstart, _)) = self.var_ends[var] {
-                    // Manually look.
-                    (pstart.p, pstart.relv)
-                } else {
-                    // No need to update substate.
-                    return;
+                debug_assert!(
+                    phint
+                        .map(|phint| self.get_node_ref(phint).is_some())
+                        .unwrap_or(true),
+                    "Hints must be to ops."
+                );
+                substate[subvar] = state[var];
+                let var_start: Option<PRel> = self.var_ends[var].map(|(prel, _)| prel);
+                let can_use_hint_iter = phint.map(|phint| phint < p).unwrap_or(false);
+                let can_use_start_iter = var_start.map(|prel| prel.p < p).unwrap_or(false);
+                let use_exact: Option<PRel> = match (phint, var_start) {
+                    (Some(phint), _) if phint == p => {
+                        let node = self.get_node_ref(p).expect("Gave a hint without an op");
+                        let relv = node
+                            .get_op_ref()
+                            .index_of_var(var)
+                            .expect("Gave a hint with an op with the wrong variable.");
+                        Some(PRel { p: phint, relv })
+                    }
+                    (_, Some(prel)) if prel.p == p => Some(prel),
+                    _ => None,
                 };
 
-                // Iterate to valid location.
-                loop {
-                    let node = self.get_node_ref(pcheck).unwrap();
-                    let next = self
-                        .get_next_p_for_rel_var(relv, node)
-                        .unwrap_or_else(|| self.var_ends[var].unwrap().0);
-                    if p_crosses(pcheck, next.p, psel) {
-                        substate[subvar] = node.get_op_ref().get_outputs()[relv];
-                        break;
-                    } else {
-                        pcheck = next.p;
-                        relv = next.relv;
+                if let Some(use_exact) = use_exact {
+                    set_using(use_exact.p, use_exact.relv, subvar, substate)
+                } else {
+                    // Neither the hint nor the start line up exactly, use iteration.
+                    match (phint, var_start) {
+                        // Nothing available.
+                        (None, None) => {}
+
+                        // Only one available
+                        (None, Some(prel)) => {
+                            if can_use_start_iter {
+                                iter_and_set(prel.p, var, prel.relv, subvar, substate)
+                            }
+                        }
+
+                        // Both available
+                        (Some(phint), Some(prel)) => {
+                            let node = self.get_node_ref(phint).expect("Gave a hint without an op");
+                            let relv = node
+                                .get_op_ref()
+                                .index_of_var(var)
+                                .expect("Gave a hint with an op with the wrong variable.");
+                            match (can_use_hint_iter, can_use_start_iter) {
+                                (false, false) => {}
+                                (true, false) => iter_and_set(phint, var, relv, subvar, substate),
+                                (false, true) => {
+                                    iter_and_set(prel.p, var, prel.relv, subvar, substate)
+                                }
+                                (true, true) => {
+                                    let prel = if phint < prel.p {
+                                        PRel { p: phint, relv }
+                                    } else {
+                                        prel
+                                    };
+                                    iter_and_set(prel.p, var, prel.relv, subvar, substate)
+                                }
+                            }
+                        }
+
+                        // Impossible
+                        (Some(_), None) => {
+                            panic!("Gave a hint for a variable with no ops!")
+                        }
                     }
                 }
             });
+
+        // let psel = p;
+        // // Need to find an op for each var that has ops on worldline.
+        // hint.zip(vars.iter().cloned())
+        //     .enumerate()
+        //     .for_each(|(subvar, (phint, var))| {
+        //         // Get starting spot.
+        //         let (mut pcheck, mut relv) = if let Some(phint) = phint {
+        //             // Use hint
+        //             let relv = self
+        //                 .get_node_ref(phint)
+        //                 .unwrap()
+        //                 .get_op_ref()
+        //                 .index_of_var(var)
+        //                 .unwrap();
+        //             (phint, relv)
+        //         } else if let Some((pstart, _)) = self.var_ends[var] {
+        //             // Manually look.
+        //             (pstart.p, pstart.relv)
+        //         } else {
+        //             // No need to update substate.
+        //             return;
+        //         };
+        //
+        //         // Iterate to valid location.
+        //         loop {
+        //             let node = self.get_node_ref(pcheck).unwrap();
+        //             let next = self
+        //                 .get_next_p_for_rel_var(relv, node)
+        //                 .unwrap_or_else(|| self.var_ends[var].unwrap().0);
+        //
+        //             if p_crosses(pcheck, next.p, psel) {
+        //                 substate[subvar] = node.get_op_ref().get_outputs()[relv];
+        //                 break;
+        //             } else {
+        //                 pcheck = next.p;
+        //                 relv = next.relv;
+        //             }
+        //         }
+        //     });
     }
 }
 
 fn p_crosses(pstart: usize, pend: usize, psel: usize) -> bool {
     match (pstart, pend) {
         (pstart, pend) if pstart < pend => (pstart < psel) && (psel <= pend),
-        (pstart, pend) if pstart > pend => (pend < psel) || (psel <= pstart),
+        (pstart, pend) if pstart > pend => !((pend < psel) && (psel <= pstart)),
         // Only one var. pstart == pend
         _ => true,
     }
@@ -1044,87 +1114,6 @@ impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
 
 impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
     type Op = O;
-
-    // TODO remove if not needed
-    // fn get_propagated_substate(
-    //     &mut self,
-    //     p: usize,
-    //     state: &[bool],
-    //     vars: &[usize],
-    //     substate: &mut [bool],
-    // ) {
-    //     let vars_to_set = vars.len();
-    //     let mut var_set: Vec<bool> = self.get_instance();
-    //     var_set.resize(vars.len(), false);
-    //     let mut var_lookup: Vec<Option<usize>> = self.get_instance();
-    //     var_lookup.resize(state.len(), None);
-    //     vars.iter()
-    //         .enumerate()
-    //         .for_each(|(i, v)| var_lookup[*v] = Some(i));
-    //     let var_lookup = var_lookup;
-    //
-    //     let t = (vars_to_set, var_set, substate);
-    //     let run_on_bools = |node: &FastOpNodeTemplate<O>,
-    //                         bools: &[bool],
-    //                         vars_to_set: &mut usize,
-    //                         var_set: &mut [bool],
-    //                         substate: &mut [bool]| {
-    //         node.get_op_ref()
-    //             .get_vars()
-    //             .iter()
-    //             .zip(bools.iter())
-    //             .for_each(|(v, b)| {
-    //                 if let Some(i) = var_lookup[*v] {
-    //                     if !var_set[i] {
-    //                         var_set[i] = true;
-    //                         *vars_to_set -= 1;
-    //                         substate[i] = *b;
-    //                     }
-    //                 }
-    //             });
-    //     };
-    //
-    //     let (vars_to_set, var_set, substate) = self.iter_ops_above_p(
-    //         p,
-    //         t,
-    //         |_, node, t| {
-    //             let (mut vars_to_set, mut var_set, substate) = t;
-    //             run_on_bools(
-    //                 node,
-    //                 node.get_op_ref().get_outputs(),
-    //                 &mut vars_to_set,
-    //                 &mut var_set,
-    //                 substate,
-    //             );
-    //             ((vars_to_set, var_set, substate), vars_to_set > 0)
-    //         },
-    //         |node, t| {
-    //             let (mut vars_to_set, mut var_set, substate) = t;
-    //             run_on_bools(
-    //                 node,
-    //                 node.get_op_ref().get_inputs(),
-    //                 &mut vars_to_set,
-    //                 &mut var_set,
-    //                 substate,
-    //             );
-    //             ((vars_to_set, var_set, substate), vars_to_set > 0)
-    //         },
-    //     );
-    //
-    //     // If there are more to set.
-    //     if vars_to_set > 0 {
-    //         vars.iter()
-    //             .zip(var_set.iter().zip(substate.iter_mut()))
-    //             .for_each(|(v, (set, b))| {
-    //                 if !set {
-    //                     *b = state[*v]
-    //                 }
-    //             });
-    //     }
-    //
-    //     self.return_instance(var_set);
-    //     self.return_instance(var_lookup);
-    // }
 
     fn get_cutoff(&self) -> usize {
         self.ops.len()
@@ -1322,6 +1311,8 @@ impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
         }
     }
 }
+
+impl<O: Op> RVBClusterUpdater for FastOpsTemplate<O> {}
 
 impl<O: Op> IsingManager for FastOpsTemplate<O> {}
 impl<O: Op> QMCManager for FastOpsTemplate<O> {}

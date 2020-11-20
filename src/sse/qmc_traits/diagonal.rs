@@ -163,22 +163,6 @@ pub trait DiagonalUpdater: OpContainer {
         self.post_diagonal_update_hook();
     }
 
-    // TODO remove if not needed
-    // /// Set state to be equal to the propagated state at `p`, override with more efficient
-    // /// implementations if desired. By default iterates over ops from 0 to p and overwrites state
-    // /// as needed.
-    // fn get_propagated_state(&self, p: usize, state: &mut [bool]) {
-    //     self.iterate_ops(0, p, state, |s, op, p, state| {
-    //         if !op.is_diagonal() {
-    //             op.get_vars()
-    //                 .iter()
-    //                 .zip(op.get_outputs().iter())
-    //                 .for_each(|(v, b)| state[*v] = *b)
-    //         }
-    //         state
-    //     });
-    // }
-
     /// Called after an update.
     fn post_diagonal_update_hook(&mut self) {}
 }
@@ -239,7 +223,8 @@ where
     }
 }
 
-pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bool]) {
+/// Print a diagonal updater using a state.
+pub fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bool]) {
     let nvars = diagonal.get_nvars();
     for _ in 0..nvars {
         print!("=");
@@ -253,23 +238,30 @@ pub(crate) fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bo
     diagonal.iterate_ps(0, diagonal.get_cutoff(), 0, |_, op, p| {
         if let Some(op) = op {
             let mut last_var = 0;
-            for (var, outp) in op.get_vars().iter().zip(op.get_outputs().iter()) {
-                for _ in last_var..*var {
+            let mut v_b: Vec<(usize, bool)> = op
+                .get_vars()
+                .iter()
+                .cloned()
+                .zip(op.get_outputs().iter().cloned())
+                .collect();
+            v_b.sort_unstable();
+            for (var, outp) in v_b.into_iter() {
+                for _ in last_var..var {
                     print!("|");
                 }
-                print!("{}", if *outp { 1 } else { 0 });
+                print!("{}", if outp { 1 } else { 0 });
                 last_var = var + 1;
             }
             for _ in last_var..nvars {
                 print!("|");
             }
+            println!("\tp={}\t{:?}", p, op.get_vars());
         } else {
             for _ in 0..nvars {
                 print!("|");
             }
+            println!("\tp={}", p);
         }
-
-        println!("\tp={}", p);
         p + 1
     });
 }
