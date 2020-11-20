@@ -239,8 +239,9 @@ where
     adjust_states(inputs.as_mut(), outputs.as_mut(), entrance_leg);
 
     // Change the op now that we passed through.
-    let (inputs, outputs) = sel_opnode.get_op_mut().get_mut_inputs_and_outputs();
-    adjust_states(inputs, outputs, exit_leg);
+    sel_opnode.get_op_mut().edit_in_out(|ins, outs| {
+        adjust_states(ins, outs, exit_leg);
+    });
 
     // No longer need mutability.
     let sel_opnode = l.get_node_ref(sel_op_pos).unwrap();

@@ -470,19 +470,21 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                     .find(|(_, (start, stop))| flip_p == start || flip_p == stop);
                 let new_op = if let Some((v, (start, stop))) = new_flip {
                     // This is a new flip.
-                    let mut new_op = op.clone();
-                    let relv = new_op.index_of_var(v).unwrap();
-
+                    let relv = op.index_of_var(v).unwrap();
                     if start == p {
-                        let outs = new_op.get_outputs_mut();
-                        outs[relv] = !outs[relv];
                         cluster[v] = !cluster[v];
                     }
                     if stop == p {
-                        let ins = new_op.get_inputs_mut();
-                        ins[relv] = !ins[relv];
                         cluster[v] = !cluster[v];
                     }
+                    let new_op = op.clone_and_edit_in_out(|ins, outs| {
+                        if start == p {
+                            outs[relv] = !outs[relv];
+                        }
+                        if stop == p {
+                            ins[relv] = !ins[relv];
+                        }
+                    });
                     // Note that if start == stop == p then cluster remains the same.
 
                     Some(new_op)
@@ -490,9 +492,9 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                     // Check if this is in the cluster.
                     let all_in = op.get_vars().iter().all(|v| cluster[*v]);
                     if all_in {
-                        let mut new_op = op.clone();
-                        new_op.get_inputs_mut().iter_mut().for_each(|b| *b = !*b);
-                        new_op.get_outputs_mut().iter_mut().for_each(|b| *b = !*b);
+                        let new_op = op.clone_and_edit_in_out_symmetric(|state| {
+                            state.iter_mut().for_each(|b| *b = !*b);
+                        });
                         Some(new_op)
                     } else {
                         // Don't currently handle this the mixed case.
@@ -565,10 +567,9 @@ fn perform_rvb_update<RVB, EN, F, G, R>(
                     None
                 } else if all_in {
                     // Flip all inputs, otherwise the same.
-                    let mut new_op = op.clone();
-                    let (ins, outs) = new_op.get_mut_inputs_and_outputs();
-                    ins.iter_mut().for_each(|b| *b = !*b);
-                    outs.iter_mut().for_each(|b| *b = !*b);
+                    let new_op = op.clone_and_edit_in_out_symmetric(|state| {
+                        state.iter_mut().for_each(|b| *b = !*b);
+                    });
 
                     // Set the state. (could be offdiagonal)
                     new_op

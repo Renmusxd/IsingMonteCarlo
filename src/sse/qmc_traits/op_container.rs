@@ -59,14 +59,27 @@ pub trait Op: Clone + Debug {
     /// Get the output state for the op.
     fn get_outputs(&self) -> &[bool];
 
-    /// Get the input state for the op.
-    fn get_inputs_mut(&mut self) -> &mut [bool];
+    /// Clone the op and edit inputs and outputs.
+    fn clone_and_edit_in_out<F>(&self, f: F) -> Self
+    where
+        F: Fn(&mut [bool], &mut [bool]);
 
-    /// Get the output state for the op.
-    fn get_outputs_mut(&mut self) -> &mut [bool];
+    /// Clone the op and edit inputs and outputs. Must edit states symmetrically (diagonal stays
+    /// diagonal, offdiagonal stays offdiagonal).
+    fn clone_and_edit_in_out_symmetric<F>(&self, f: F) -> Self
+    where
+        F: Fn(&mut [bool]);
 
-    /// Get both the inputs and outputs for op.
-    fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]);
+    /// Edit inputs and outputs.
+    fn edit_in_out<F>(&mut self, f: F)
+    where
+        F: Fn(&mut [bool], &mut [bool]);
+
+    /// Edit inputs and outputs. Must edit states symmetrically (diagonal stays
+    /// diagonal, offdiagonal stays offdiagonal).
+    fn edit_in_out_symmetric<F>(&mut self, f: F)
+    where
+        F: Fn(&mut [bool]);
 
     /// Get the input state for the op.
     fn clone_inputs(&self) -> Self::SubState;
@@ -140,6 +153,65 @@ pub trait OpContainer {
     }
 }
 
+/// Holds op inputs and outputs as diagonal or offdiagonal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+pub enum OpType<SubState>
+where
+    SubState: Clone + Debug + FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]>,
+{
+    /// A diagonal op.
+    DIAGONAL(SubState),
+    /// An offdiagonal op.
+    OFFDIAGONAL(SubState, SubState),
+}
+
+impl<SubState> OpType<SubState>
+where
+    SubState: Clone + Debug + FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]>,
+{
+    fn edit_states<F>(&mut self, f: F)
+    where
+        F: Fn(&mut [bool], &mut [bool]),
+    {
+        let (inputs, outputs) = match self {
+            OpType::DIAGONAL(state) => {
+                let mut inputs = state.clone();
+                let mut outputs = state.clone();
+                f(inputs.as_mut(), outputs.as_mut());
+                (inputs, outputs)
+            }
+            OpType::OFFDIAGONAL(inputs, outputs) => {
+                let mut inputs = inputs.clone();
+                let mut outputs = outputs.clone();
+                f(inputs.as_mut(), outputs.as_mut());
+                (inputs, outputs)
+            }
+        };
+
+        *self = if inputs.as_ref() == outputs.as_ref() {
+            Self::DIAGONAL(inputs)
+        } else {
+            Self::OFFDIAGONAL(inputs, outputs)
+        };
+    }
+
+    fn edit_states_symmetric<F>(&mut self, f: F)
+    where
+        F: Fn(&mut [bool]),
+    {
+        match self {
+            OpType::DIAGONAL(state) => {
+                f(state.as_mut());
+            }
+            OpType::OFFDIAGONAL(inputs, outputs) => {
+                f(inputs.as_mut());
+                f(outputs.as_mut());
+            }
+        };
+    }
+}
+
 /// An standard op which covers a number of variables and changes the state from input to output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
@@ -152,10 +224,8 @@ where
     vars: Vars,
     /// Bond number (index of op)
     bond: usize,
-    /// Input state into op.
-    inputs: SubState,
-    /// Output state out of op.
-    outputs: SubState,
+    /// Input and Output state.
+    in_out: OpType<SubState>,
     /// Is this op constant under bit flips?
     constant: bool,
 }
@@ -173,12 +243,10 @@ where
         A: Into<Self::Vars>,
         B: Into<Self::SubState>,
     {
-        let outputs = state.into();
         Self {
             vars: vars.into(),
             bond,
-            inputs: outputs.clone(),
-            outputs,
+            in_out: OpType::DIAGONAL(state.into()),
             constant,
         }
     }
@@ -192,10 +260,13 @@ where
         Self {
             vars: vars.into(),
             bond,
-            inputs: inputs.into(),
-            outputs: outputs.into(),
+            in_out: OpType::OFFDIAGONAL(inputs.into(), outputs.into()),
             constant,
         }
+    }
+
+    fn is_diagonal(&self) -> bool {
+        matches!(&self.in_out, OpType::DIAGONAL(_))
     }
 
     fn index_of_var(&self, var: usize) -> Option<usize> {
@@ -220,34 +291,105 @@ where
     }
 
     fn get_inputs(&self) -> &[bool] {
-        self.inputs.as_ref()
+        match &self.in_out {
+            OpType::DIAGONAL(state) => state.as_ref(),
+            OpType::OFFDIAGONAL(state, _) => state.as_ref(),
+        }
     }
 
     fn get_outputs(&self) -> &[bool] {
-        self.outputs.as_ref()
+        match &self.in_out {
+            OpType::DIAGONAL(state) => state.as_ref(),
+            OpType::OFFDIAGONAL(_, state) => state.as_ref(),
+        }
     }
 
-    fn get_inputs_mut(&mut self) -> &mut [bool] {
-        self.inputs.as_mut()
+    fn clone_and_edit_in_out<F>(&self, f: F) -> Self
+    where
+        F: Fn(&mut [bool], &mut [bool]),
+    {
+        let (mut inputs, mut outputs) = match &self.in_out {
+            OpType::DIAGONAL(state) => {
+                let inputs = state.clone();
+                let outputs = state.clone();
+                (inputs, outputs)
+            }
+            OpType::OFFDIAGONAL(inputs, outputs) => {
+                let inputs = inputs.clone();
+                let outputs = outputs.clone();
+                (inputs, outputs)
+            }
+        };
+        f(inputs.as_mut(), outputs.as_mut());
+        let all_eq = inputs.as_ref() == outputs.as_ref();
+        let in_out = if all_eq {
+            OpType::DIAGONAL(inputs)
+        } else {
+            OpType::OFFDIAGONAL(inputs, outputs)
+        };
+        Self {
+            vars: self.vars.clone(),
+            bond: self.bond,
+            in_out,
+            constant: self.constant,
+        }
     }
 
-    fn get_outputs_mut(&mut self) -> &mut [bool] {
-        self.outputs.as_mut()
-    }
-
-    fn get_mut_inputs_and_outputs(&mut self) -> (&mut [bool], &mut [bool]) {
-        (self.inputs.as_mut(), self.outputs.as_mut())
+    fn clone_and_edit_in_out_symmetric<F>(&self, f: F) -> Self
+    where
+        F: Fn(&mut [bool]),
+    {
+        let in_out = match &self.in_out {
+            OpType::DIAGONAL(state) => {
+                let mut inputs = state.clone();
+                f(inputs.as_mut());
+                OpType::DIAGONAL(inputs)
+            }
+            OpType::OFFDIAGONAL(inputs, outputs) => {
+                let mut inputs = inputs.clone();
+                let mut outputs = outputs.clone();
+                f(inputs.as_mut());
+                f(outputs.as_mut());
+                OpType::OFFDIAGONAL(inputs, outputs)
+            }
+        };
+        Self {
+            vars: self.vars.clone(),
+            bond: self.bond,
+            in_out,
+            constant: self.constant,
+        }
     }
 
     fn clone_inputs(&self) -> Self::SubState {
-        self.inputs.clone()
+        match &self.in_out {
+            OpType::DIAGONAL(state) => state.clone(),
+            OpType::OFFDIAGONAL(state, _) => state.clone(),
+        }
     }
 
     fn clone_outputs(&self) -> Self::SubState {
-        self.outputs.clone()
+        match &self.in_out {
+            OpType::DIAGONAL(state) => state.clone(),
+            OpType::OFFDIAGONAL(_, state) => state.clone(),
+        }
     }
 
     fn is_constant(&self) -> bool {
         self.constant
+    }
+
+    fn edit_in_out<F>(&mut self, f: F)
+    where
+        F: Fn(&mut [bool], &mut [bool]),
+    {
+        self.in_out.edit_states(f)
+    }
+
+    fn edit_in_out_symmetric<F>(&mut self, f: F)
+    where
+        F: Fn(&mut [bool]),
+    {
+        self.in_out.edit_states_symmetric(f)
     }
 }

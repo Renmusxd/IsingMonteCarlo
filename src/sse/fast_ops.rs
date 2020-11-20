@@ -1001,46 +1001,6 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
                     }
                 }
             });
-
-        // let psel = p;
-        // // Need to find an op for each var that has ops on worldline.
-        // hint.zip(vars.iter().cloned())
-        //     .enumerate()
-        //     .for_each(|(subvar, (phint, var))| {
-        //         // Get starting spot.
-        //         let (mut pcheck, mut relv) = if let Some(phint) = phint {
-        //             // Use hint
-        //             let relv = self
-        //                 .get_node_ref(phint)
-        //                 .unwrap()
-        //                 .get_op_ref()
-        //                 .index_of_var(var)
-        //                 .unwrap();
-        //             (phint, relv)
-        //         } else if let Some((pstart, _)) = self.var_ends[var] {
-        //             // Manually look.
-        //             (pstart.p, pstart.relv)
-        //         } else {
-        //             // No need to update substate.
-        //             return;
-        //         };
-        //
-        //         // Iterate to valid location.
-        //         loop {
-        //             let node = self.get_node_ref(pcheck).unwrap();
-        //             let next = self
-        //                 .get_next_p_for_rel_var(relv, node)
-        //                 .unwrap_or_else(|| self.var_ends[var].unwrap().0);
-        //
-        //             if p_crosses(pcheck, next.p, psel) {
-        //                 substate[subvar] = node.get_op_ref().get_outputs()[relv];
-        //                 break;
-        //             } else {
-        //                 pcheck = next.p;
-        //                 relv = next.relv;
-        //             }
-        //         }
-        //     });
     }
 }
 

@@ -377,20 +377,19 @@ fn mutate_graph<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized,
                                 .cloned()
                                 .all(|v| var_to_subvar(v).is_some()));
 
-                            let mut new_op = op.clone();
-                            let (ins, outs) = new_op.get_mut_inputs_and_outputs();
-
-                            op.get_vars()
-                                .iter()
-                                .cloned()
-                                .map(|v| var_to_subvar(v).unwrap())
-                                .zip(ins.iter_mut().zip(outs.iter_mut()))
-                                .for_each(|(subvar, (bin, bout))| {
-                                    // Flip if cluster_state is true.
-                                    *bin = *bin != cluster_state[subvar];
-                                    // Flip if cluster_state _will be_ true.
-                                    *bout = *bout != !cluster_state[subvar];
-                                });
+                            let new_op = op.clone_and_edit_in_out(|ins, outs| {
+                                op.get_vars()
+                                    .iter()
+                                    .cloned()
+                                    .map(|v| var_to_subvar(v).unwrap())
+                                    .zip(ins.iter_mut().zip(outs.iter_mut()))
+                                    .for_each(|(subvar, (bin, bout))| {
+                                        // Flip if cluster_state is true.
+                                        *bin = *bin != cluster_state[subvar];
+                                        // Flip if cluster_state _will be_ true.
+                                        *bout = *bout != !cluster_state[subvar];
+                                    });
+                            });
                             // Having changed substate now sat_bonds and unsat_bonds are invalid
                             // near this op, luckily flipping the cluster will remove all the
                             // invalid bonds.
@@ -461,10 +460,9 @@ fn mutate_graph<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized,
                             if !any_subvars || (!any_in_cluster && op.is_diagonal()) {
                                 None
                             } else if any_in_cluster {
-                                let mut new_op = op.clone();
-                                let (ins, outs) = new_op.get_mut_inputs_and_outputs();
-                                ins.iter_mut().for_each(|b| *b = !*b);
-                                outs.iter_mut().for_each(|b| *b = !*b);
+                                let new_op = op.clone_and_edit_in_out_symmetric(|state| {
+                                    state.iter_mut().for_each(|b| *b = !*b);
+                                });
 
                                 if !op.is_diagonal() {
                                     // Update state and bonds.

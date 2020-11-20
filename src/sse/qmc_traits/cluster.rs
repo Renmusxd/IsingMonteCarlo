@@ -310,8 +310,8 @@ fn set_boundaries(
 }
 
 fn flip_state_for_op<O: Op>(op: &mut O, side: OpSide) {
-    match side {
-        OpSide::Inputs => op.get_inputs_mut().iter_mut().for_each(|b| *b = !*b),
-        OpSide::Outputs => op.get_outputs_mut().iter_mut().for_each(|b| *b = !*b),
-    }
+    op.edit_in_out(|ins, outs| match side {
+        OpSide::Inputs => ins.iter_mut().for_each(|b| *b = !*b),
+        OpSide::Outputs => outs.iter_mut().for_each(|b| *b = !*b),
+    });
 }
