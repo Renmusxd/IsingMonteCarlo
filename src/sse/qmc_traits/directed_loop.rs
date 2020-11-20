@@ -1,6 +1,6 @@
-use crate::memory::allocator::{Factory, StackTuplizer};
 use crate::sse::qmc_traits::op_container::*;
 use crate::sse::qmc_types::*;
+use crate::util::allocator::{Factory, StackTuplizer};
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};

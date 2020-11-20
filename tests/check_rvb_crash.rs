@@ -84,7 +84,7 @@ fn run_single_var() {
     let mut state = vec![false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, &mut rng);
+        manager.rvb_update(&edges, &mut state, 1, &mut rng);
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -121,7 +121,7 @@ fn run_two_independent_vars() {
     let mut state = vec![false, false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, &mut rng);
+        manager.rvb_update(&edges, &mut state, 1, &mut rng);
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -162,7 +162,7 @@ fn run_two_joined_vars() {
     let mut state = vec![false, false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, &mut rng);
+        manager.rvb_update(&edges, &mut state, 1, &mut rng);
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -219,7 +219,7 @@ fn run_two_joined_vars_double() {
     let mut state = vec![false, false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, &mut rng);
+        manager.rvb_update(&edges, &mut state, 1, &mut rng);
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));

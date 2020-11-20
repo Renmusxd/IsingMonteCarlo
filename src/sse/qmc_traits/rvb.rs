@@ -1,642 +1,7 @@
-use crate::memory::allocator::{Factory, Reset};
-use crate::sse::{DiagonalUpdater, Op};
+use crate::sse::*;
+use crate::util::allocator::Factory;
+use crate::util::bondcontainer::BondContainer;
 use rand::Rng;
-#[cfg(feature = "serialize")]
-use serde::{Deserialize, Serialize};
-
-const SENTINEL_FLIP_POSITION: usize = std::usize::MAX;
-
-/// Resonating bond update.
-pub trait RVBUpdater:
-    DiagonalUpdater + Factory<Vec<usize>> + Factory<Vec<bool>> + Factory<BondContainer<usize>>
-{
-    /// Select a cluster, add affected vars to `vars_list`, set true their indices in `in_cluster`,
-    /// then add all flip positions for each var to `flip_positions`, marking the start of each vars
-    /// segment with an index placed into `var_starts`.
-    /// # Example:
-    /// `vars_list = [0, 2]`
-    /// `var_starts = [0, 4]`
-    /// `flip_positions = [0, 1, 2, 3, 4, 5]`
-    /// means variable `0` has flip positions at `0, 1, 2, 3`; variable `2` has `4, 5`.
-    fn select_cluster<R: Rng, EN: EdgeNavigator>(
-        &mut self,
-        edges: &EN,
-        state: &[bool],
-        vars_list: &mut Vec<usize>,
-        in_cluster: &mut [bool],
-        flips: (&mut Vec<usize>, &mut Vec<usize>),
-        rng: &mut R,
-    ) {
-        let (var_starts, flip_positions) = flips;
-        // Fill in_cluster and vars_list.
-        let contiguous_vars = contiguous_bits(rng);
-        let starting_var = rng.gen_range(0, state.len());
-        get_up_to_n_contiguous_vars(
-            contiguous_vars,
-            starting_var,
-            edges,
-            in_cluster,
-            vars_list,
-            rng,
-        );
-
-        // Get all the Hij=const ops on the world-lines in the cluster.
-        let mut in_cluster_constant_ps: Vec<usize> = self.get_instance();
-        vars_list.iter().cloned().for_each(|v| {
-            var_starts.push(in_cluster_constant_ps.len());
-            self.constant_ops_on_var(v, &mut in_cluster_constant_ps);
-        });
-
-        // Get the ps for constant ops for a given var in var_list (given by index).
-        let constant_slice = |rel: usize| -> &[usize] {
-            let start = var_starts[rel];
-            if let Some(end) = var_starts.get(rel + 1) {
-                &in_cluster_constant_ps[start..*end]
-            } else {
-                &in_cluster_constant_ps[start..]
-            }
-        };
-
-        // Choose new flip positions for each variable in cluster.
-        (0..vars_list.len()).for_each(|relv| {
-            debug_assert_eq!(flip_positions.len() % 2, 0);
-            let flips = constant_slice(relv);
-            let (flip_a, flip_b) = if flips.is_empty() {
-                (SENTINEL_FLIP_POSITION, SENTINEL_FLIP_POSITION)
-            } else {
-                let flip_a = rng.gen_range(0, flips.len());
-                let flip_b = rng.gen_range(0, flips.len());
-                (flips[flip_a], flips[flip_b])
-            };
-            flip_positions.push(flip_a);
-            flip_positions.push(flip_b);
-        });
-        self.return_instance(in_cluster_constant_ps);
-    }
-
-    /// Perform a resonating bond update.
-    fn rvb_update<R: Rng, EN: EdgeNavigator>(
-        &mut self,
-        edges: &EN,
-        state: &mut [bool],
-        rng: &mut R,
-    ) -> (usize, bool) {
-        let mut vars_list: Vec<usize> = self.get_instance();
-        let mut in_cluster: Vec<bool> = self.get_instance();
-        in_cluster.resize(state.len(), false);
-
-        let mut var_starts: Vec<usize> = self.get_instance();
-        let mut flip_positions: Vec<usize> = self.get_instance();
-
-        self.select_cluster(
-            edges,
-            state,
-            &mut vars_list,
-            &mut in_cluster,
-            (&mut var_starts, &mut flip_positions),
-            rng,
-        );
-
-        let mut all_spin_flips: Vec<usize> = self.get_instance();
-        all_spin_flips.extend_from_slice(&flip_positions);
-
-        // Get all spin flips in cluster and in neighbors.
-        // These, plus the flips from above, are all the stops for regions where we need to rebuild
-        // boundaries and recalculate.
-        let mut in_or_around_cluster: Vec<bool> = self.get_instance();
-        in_or_around_cluster.resize(state.len(), false);
-        vars_list.iter().cloned().for_each(|v| {
-            in_or_around_cluster[v] = true;
-            self.spin_flips_on_var(v, &mut all_spin_flips);
-            edges.bonds_for_var(v).iter().cloned().for_each(|bond| {
-                let ov = edges.other_var_for_bond(v, bond).unwrap();
-                if !in_or_around_cluster[ov] {
-                    self.spin_flips_on_var(ov, &mut all_spin_flips);
-                    in_or_around_cluster[ov] = true;
-                };
-            });
-        });
-        self.return_instance(in_or_around_cluster);
-
-        // Get all spin flips in sorted order.
-        // Dups can be inserted from spin-flips being selected for additional flips.
-        all_spin_flips.sort_unstable();
-        all_spin_flips.dedup();
-
-        // Now get the number of ferro and antiferro bonds on the border
-        let is_sat = |bond: usize, state: &[bool]| -> bool {
-            let p_aligned = edges.bond_prefers_aligned(bond);
-            let (a, b) = edges.vars_for_bond(bond);
-            let aligned = state[a] == state[b];
-            aligned == p_aligned
-        };
-        let mut sat_bonds: BondContainer<usize> = self.get_instance();
-        let mut unsat_bonds: BondContainer<usize> = self.get_instance();
-
-        let bounds = |relv: usize| (flip_positions[2 * relv], flip_positions[2 * relv + 1]);
-
-        // Using a copy is good for large (beta E)/(nvars)
-        let mut state_copy: Vec<bool> = self.get_instance();
-        state_copy.extend_from_slice(state);
-        let p_to_succ = calculate_graph_flip_prob(
-            self,
-            (edges, is_sat),
-            (&vars_list, bounds),
-            &all_spin_flips,
-            (&mut sat_bonds, &mut unsat_bonds),
-            (&mut state_copy, &mut in_cluster),
-        );
-        self.return_instance(state_copy);
-
-        let perform_update = if p_to_succ > 1.0 {
-            true
-        } else if p_to_succ <= std::f64::EPSILON {
-            false
-        } else {
-            rng.gen_bool(p_to_succ)
-        };
-
-        if perform_update {
-            perform_rvb_update(
-                self,
-                (edges, is_sat),
-                (&vars_list, bounds),
-                &all_spin_flips,
-                (&mut sat_bonds, &mut unsat_bonds),
-                (state, &mut in_cluster),
-                rng,
-            )
-        }
-        let ret_val = (vars_list.len(), perform_update);
-
-        // Return things.
-        self.return_instance(sat_bonds);
-        self.return_instance(unsat_bonds);
-        self.return_instance(all_spin_flips);
-        self.return_instance(flip_positions);
-        self.return_instance(var_starts);
-        self.return_instance(in_cluster);
-        self.return_instance(vars_list);
-        ret_val
-    }
-
-    /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
-    /// An implementation by the same name is provided for LoopUpdaters
-    fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>);
-
-    /// Fill `ps` with the p values of spin flips for a given var.
-    /// An implementation by the same name is provided for LoopUpdaters
-    fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
-}
-
-/// Get up to n contiguous variables by following bonds on edges.
-fn get_up_to_n_contiguous_vars<R: Rng, EN: EdgeNavigator>(
-    mut n: usize,
-    starting_var: usize,
-    edges: &EN,
-    selected_vars: &mut [bool],
-    vars: &mut Vec<usize>,
-    rng: &mut R,
-) {
-    let mut v = starting_var;
-    vars.push(starting_var);
-    selected_vars[v] = true;
-    while n > 0 {
-        let bonds = edges.bonds_for_var(v);
-        if bonds.is_empty() {
-            break;
-        }
-        let bond_index = rng.gen_range(0, bonds.len());
-        let other_var = edges.other_var_for_bond(v, bonds[bond_index]).unwrap();
-        if selected_vars[other_var] {
-            break;
-        }
-        vars.push(other_var);
-        selected_vars[other_var] = true;
-        v = other_var;
-        n -= 1;
-    }
-}
-
-/// Get returns n with chance 1/2^(n+1)
-/// Chance of failure is 1/2^(2^64) and should therefore be acceptable.
-pub fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
-    let mut acc = 0;
-    let mut v = r.next_u64();
-    loop {
-        if v == std::u64::MAX {
-            acc += 64;
-            v = r.next_u64();
-        } else {
-            while v & 1 == 1 {
-                acc += 1;
-                v >>= 1;
-            }
-            break acc;
-        }
-    }
-}
-
-fn set_cluster<F>(vars: &[usize], cluster: &mut [bool], p: usize, bounds: F)
-where
-    F: Fn(usize) -> (usize, usize),
-{
-    vars.iter().cloned().enumerate().for_each(|(relv, v)| {
-        let flips = bounds(relv);
-        let in_cluster = match flips {
-            (start, stop) if start == stop => true,
-            (start, stop) if start < stop => start < p && p <= stop,
-            (start, stop) if start > stop => !(stop < p && p <= start),
-            _ => unreachable!(),
-        };
-        cluster[v] = in_cluster;
-    });
-}
-
-fn fill_bonds<EN, F>(
-    edges: &EN,
-    is_sat: F,
-    vars: &[usize],
-    cluster: &[bool],
-    state: &mut [bool],
-    sat: &mut BondContainer<usize>,
-    unsat: &mut BondContainer<usize>,
-) where
-    EN: EdgeNavigator,
-    F: Fn(usize, &[bool]) -> bool,
-{
-    vars.iter().cloned().filter(|v| cluster[*v]).for_each(|v| {
-        edges.bonds_for_var(v).iter().cloned().for_each(|bond| {
-            let ov = edges.other_var_for_bond(v, bond).unwrap();
-            if !cluster[ov] {
-                if is_sat(bond, &state) {
-                    sat.insert(bond);
-                } else {
-                    unsat.insert(bond);
-                }
-            }
-        });
-    })
-}
-
-fn toggle_state(vars: &[usize], cluster: &[bool], state: &mut [bool]) {
-    vars.iter().cloned().filter(|v| cluster[*v]).for_each(|v| {
-        state[v] = !state[v];
-    })
-}
-
-/// Calculate the probability of performing an update on vars in `vars_list`, flips between p values
-/// defined by `bounds`.
-/// Could leave state modified.
-fn calculate_graph_flip_prob<RVB, EN, F, G>(
-    rvb: &RVB,
-    (edges, is_sat): (&EN, F),
-    (vars_list, bounds): (&[usize], G),
-    relevant_spin_flips: &[usize],
-    (sat_bonds, unsat_bonds): (&mut BondContainer<usize>, &mut BondContainer<usize>),
-    (state, cluster): (&mut [bool], &mut [bool]),
-) -> f64
-where
-    RVB: RVBUpdater + ?Sized,
-    EN: EdgeNavigator,
-    F: Fn(usize, &[bool]) -> bool + Copy,
-    G: Fn(usize) -> (usize, usize) + Copy,
-{
-    set_cluster(vars_list, cluster, 0, bounds);
-    sat_bonds.clear();
-    unsat_bonds.clear();
-    fill_bonds(
-        edges,
-        is_sat,
-        vars_list,
-        cluster,
-        state,
-        sat_bonds,
-        unsat_bonds,
-    );
-
-    let t = (
-        0usize,
-        (sat_bonds, unsat_bonds),
-        (0, 0),
-        1.0f64,
-        (state, cluster),
-    );
-    let res = rvb.try_iterate_ops(0, rvb.get_cutoff(), t, |_, op, p, acc| {
-        let (mut next_flip, bonds, op_counts, mut mult, state_clust) = acc;
-        let (sat_bonds, unsat_bonds) = bonds;
-        let (mut nf, mut na) = op_counts;
-        let (state, cluster) = state_clust;
-        // Check consistency.
-        debug_assert!(op
-            .get_vars()
-            .iter()
-            .cloned()
-            .zip(op.get_inputs().iter().cloned())
-            .all(|(v, b)| { state[v] == b }));
-
-        // Set state
-        op.get_vars()
-            .iter()
-            .cloned()
-            .zip(op.get_outputs().iter().cloned())
-            .for_each(|(v, b)| {
-                state[v] = b;
-            });
-
-        match relevant_spin_flips.get(next_flip) {
-            Some(flip_p) if *flip_p == p => {
-                // Get new bonds and mult.
-                mult *= calculate_mult(sat_bonds, unsat_bonds, nf, na);
-                if mult <= std::f64::EPSILON {
-                    return Err(());
-                }
-                // Use p+1 since we measure from inputs not outputs.
-                set_cluster(vars_list, cluster, p + 1, bounds);
-
-                sat_bonds.clear();
-                unsat_bonds.clear();
-                na = 0;
-                nf = 0;
-                fill_bonds(
-                    edges,
-                    is_sat,
-                    vars_list,
-                    cluster,
-                    state,
-                    sat_bonds,
-                    unsat_bonds,
-                );
-
-                // Technically we may need to increment more than once because there are some flip
-                // positions that correspond to None ops (for vars with no constant ops). These are
-                // places at SENTINEL_FLIP_POSITION which is larger than any reasonable world line,
-                // we will run out of ops long before then.
-                next_flip += 1;
-            }
-            _ => {
-                // See whether this op is nf or na.
-                if sat_bonds.contains(&op.get_bond()) {
-                    // (X/0)^(0 - Y) = 0
-                    if unsat_bonds.is_empty() {
-                        return Err(());
-                    }
-                    nf += 1;
-                } else if unsat_bonds.contains(&op.get_bond()) {
-                    // (0/X)^(Y - 0) = 0
-                    if sat_bonds.is_empty() {
-                        return Err(());
-                    }
-                    na += 1;
-                }
-            }
-        };
-
-        Ok((
-            next_flip,
-            (sat_bonds, unsat_bonds),
-            (nf, na),
-            mult,
-            (state, cluster),
-        ))
-    });
-    if let Ok((_, bonds, op_counts, mult, _)) = res {
-        if mult > std::f64::EPSILON {
-            let (sat_bonds, unsat_bonds) = bonds;
-
-            let (nf, na) = op_counts;
-            mult * calculate_mult(sat_bonds, unsat_bonds, nf, na)
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    }
-}
-
-fn perform_rvb_update<RVB, EN, F, G, R>(
-    rvb: &mut RVB,
-    (edges, is_sat): (&EN, F),
-    (vars_list, bounds): (&[usize], G),
-    relevant_spin_flips: &[usize],
-    (sat_bonds, unsat_bonds): (&mut BondContainer<usize>, &mut BondContainer<usize>),
-    (state, cluster): (&mut [bool], &mut [bool]),
-    rng: &mut R,
-) where
-    RVB: RVBUpdater + ?Sized,
-    EN: EdgeNavigator,
-    F: Fn(usize, &[bool]) -> bool + Copy,
-    G: Fn(usize) -> (usize, usize) + Copy,
-    R: Rng,
-{
-    // Flip state where appropriate.
-    set_cluster(vars_list, cluster, 0, bounds);
-    toggle_state(vars_list, cluster, state);
-    sat_bonds.clear();
-    unsat_bonds.clear();
-    fill_bonds(
-        edges,
-        is_sat,
-        vars_list,
-        cluster,
-        state,
-        unsat_bonds,
-        sat_bonds,
-    );
-
-    let cutoff = rvb.get_cutoff();
-    let t = (0usize, (sat_bonds, unsat_bonds), (state, cluster), rng);
-    rvb.mutate_ops(0, cutoff, t, |_, op, p, t| {
-        let (mut next_flip, bonds, state_clust, rng) = t;
-        let (sat_bonds, unsat_bonds) = bonds;
-        let (state, cluster) = state_clust;
-        let mut rng = rng;
-
-        let op = match relevant_spin_flips.get(next_flip) {
-            Some(flip_p) if *flip_p == p => {
-                // Eat one flip.
-                // Technically we may need to increment more than once because there are some flip
-                // positions that correspond to None ops (for vars with no constant ops). These are
-                // places at SENTINEL_FLIP_POSITION which is larger than any reasonable world line,
-                // we will run out of ops long before then.
-                next_flip += 1;
-
-                // Whichever op we are on is an existing spin flip or a requested one.
-                let new_flip = vars_list
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .map(|(i, v)| (v, bounds(i)))
-                    .find(|(_, (start, stop))| flip_p == start || flip_p == stop);
-                let new_op = if let Some((v, (start, stop))) = new_flip {
-                    // This is a new flip.
-                    let relv = op.index_of_var(v).unwrap();
-                    if start == p {
-                        cluster[v] = !cluster[v];
-                    }
-                    if stop == p {
-                        cluster[v] = !cluster[v];
-                    }
-                    let new_op = op.clone_and_edit_in_out(|ins, outs| {
-                        if start == p {
-                            outs[relv] = !outs[relv];
-                        }
-                        if stop == p {
-                            ins[relv] = !ins[relv];
-                        }
-                    });
-                    // Note that if start == stop == p then cluster remains the same.
-
-                    Some(new_op)
-                } else {
-                    // Check if this is in the cluster.
-                    let all_in = op.get_vars().iter().all(|v| cluster[*v]);
-                    if all_in {
-                        let new_op = op.clone_and_edit_in_out_symmetric(|state| {
-                            state.iter_mut().for_each(|b| *b = !*b);
-                        });
-                        Some(new_op)
-                    } else {
-                        // Don't currently handle this the mixed case.
-                        let all_out = !op.get_vars().iter().any(|v| cluster[*v]);
-                        debug_assert!(all_out);
-                        // Since fully outside, nothing to be done.
-                        None
-                    }
-                };
-
-                // To update state.
-                let (vars, outs) = new_op
-                    .as_ref()
-                    .map(|op| (op.get_vars(), op.get_outputs()))
-                    .unwrap_or_else(|| (op.get_vars(), op.get_outputs()));
-
-                debug_assert!(
-                    {
-                        // Check inputs.
-                        let ins = new_op
-                            .as_ref()
-                            .map(|op| op.get_inputs())
-                            .unwrap_or_else(|| op.get_inputs());
-
-                        vars.iter()
-                            .cloned()
-                            .zip(ins.iter().cloned())
-                            .all(|(v, inp)| state[v] == inp)
-                    },
-                    "state != input for bond: {}",
-                    op.get_bond()
-                );
-
-                vars.iter()
-                    .cloned()
-                    .zip(outs.iter().cloned())
-                    .for_each(|(v, b)| {
-                        state[v] = b;
-                    });
-
-                // Now fill up the new sat and broken bonds.
-                sat_bonds.clear();
-                unsat_bonds.clear();
-                fill_bonds(
-                    edges,
-                    is_sat,
-                    vars_list,
-                    cluster,
-                    state,
-                    unsat_bonds,
-                    sat_bonds,
-                );
-
-                new_op.map(Some)
-            }
-            _ => {
-                // No interesting spin flips here, normal treatment.
-
-                // Now, if the op has no vars in the cluster ignore it. If all are in the
-                // cluster then just flip inputs and outputs, if mixed then see later.
-                let (all_in, all_out) = check_borders(op, cluster);
-                let new_op = if all_out {
-                    // Set the state. (could be offdiagonal)
-                    op.get_vars()
-                        .iter()
-                        .zip(op.get_outputs().iter())
-                        .for_each(|(v, b)| {
-                            state[*v] = *b;
-                        });
-                    None
-                } else if all_in {
-                    // Flip all inputs, otherwise the same.
-                    let new_op = op.clone_and_edit_in_out_symmetric(|state| {
-                        state.iter_mut().for_each(|b| *b = !*b);
-                    });
-
-                    // Set the state. (could be offdiagonal)
-                    new_op
-                        .get_vars()
-                        .iter()
-                        .zip(new_op.get_outputs().iter())
-                        .for_each(|(v, b)| {
-                            state[*v] = *b;
-                        });
-                    Some(Some(new_op))
-                } else {
-                    // We are only covering 2-variable edges.
-                    debug_assert_eq!(op.get_vars().len(), 2);
-                    // We only move diagonal ops.
-                    debug_assert!(op.is_diagonal());
-                    let bond = op.get_bond();
-
-                    let new_bond = if sat_bonds.contains(&bond) {
-                        unsat_bonds.get_random(&mut rng).unwrap()
-                    } else {
-                        debug_assert!(
-                            unsat_bonds.contains(&bond),
-                            "Bond failed to be broken or not broken: {}",
-                            bond
-                        );
-                        sat_bonds.get_random(&mut rng).unwrap()
-                    };
-                    let (new_a, new_b) = edges.vars_for_bond(*new_bond);
-                    let vars = RVB::Op::make_vars([new_a, new_b].iter().cloned());
-                    let state = RVB::Op::make_substate([new_a, new_b].iter().map(|v| state[*v]));
-                    let new_op = RVB::Op::diagonal(vars, *new_bond, state, op.is_constant());
-
-                    Some(Some(new_op))
-                };
-
-                new_op
-            }
-        };
-
-        let t = (next_flip, (sat_bonds, unsat_bonds), (state, cluster), rng);
-        (op, t)
-    });
-}
-
-pub(crate) fn calculate_mult(
-    sat: &BondContainer<usize>,
-    unsat: &BondContainer<usize>,
-    nf: i32,
-    na: i32,
-) -> f64 {
-    if nf == na || sat.len() == unsat.len() {
-        1.0
-    } else {
-        (sat.len() as f64 / unsat.len() as f64).powi(na - nf)
-    }
-}
-
-pub(crate) fn check_borders<O: Op>(op: &O, in_cluster: &[bool]) -> (bool, bool) {
-    op.get_vars().iter().cloned().map(|v| in_cluster[v]).fold(
-        (true, true),
-        |(all_true, all_false), b| {
-            let all_true = all_true & b;
-            let all_false = all_false & !b;
-            (all_true, all_false)
-        },
-    )
-}
 
 /// A struct which allows navigation around the variables in a model.
 pub trait EdgeNavigator {
@@ -661,159 +26,1219 @@ pub trait EdgeNavigator {
     }
 }
 
-/// A HashSet with random sampling.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct BondContainer<T: Clone + Into<usize>> {
-    map: Vec<Option<usize>>,
-    keys: Option<Vec<T>>,
-}
+/// Resonating bond update.
+pub trait RVBUpdater:
+    DiagonalSubsection
+    + Factory<Vec<usize>>
+    + Factory<Vec<bool>>
+    + Factory<BondContainer<usize>>
+    + Factory<Vec<Option<usize>>>
+{
+    /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
+    /// An implementation by the same name is provided for LoopUpdaters
+    fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>);
 
-impl<T: Clone + Into<usize>> Reset for BondContainer<T> {
-    fn reset(&mut self) {
-        self.clear();
-    }
-}
+    /// Fill `ps` with the p values of spin flips for a given var.
+    /// An implementation by the same name is provided for LoopUpdaters
+    fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
 
-impl<T: Clone + Into<usize>> Default for BondContainer<T> {
-    fn default() -> Self {
-        Self {
-            map: Vec::default(),
-            keys: Some(Vec::default()),
-        }
-    }
-}
+    /// Perform a resonating bond update.
+    fn rvb_update<R: Rng, EN: EdgeNavigator>(
+        &mut self,
+        edges: &EN,
+        state: &mut [bool],
+        updates: usize,
+        rng: &mut R,
+    ) -> usize {
+        let mut var_starts: Vec<usize> = self.get_instance();
+        let mut var_lengths: Vec<usize> = self.get_instance();
+        let mut constant_ps: Vec<usize> = self.get_instance();
+        // This helps us sample evenly.
+        let mut vars_with_zero_ops: Vec<usize> = self.get_instance();
 
-impl<T: Clone + Into<usize>> BondContainer<T> {
-    /// Get a random entry from the HashSampler
-    pub fn get_random<R: Rng>(&self, mut r: R) -> Option<&T> {
-        let keys = self.keys.as_ref().unwrap();
-        if keys.is_empty() {
-            None
-        } else {
-            // Choose a key to remove
-            let index = r.gen_range(0, keys.len());
-            Some(&keys[index])
-        }
-    }
+        // O(beta * n)
+        find_constants(
+            self,
+            &mut var_starts,
+            &mut var_lengths,
+            &mut constant_ps,
+            &mut vars_with_zero_ops,
+        );
 
-    /// Pop a random element.
-    pub fn pop_random<R: Rng>(&mut self, mut r: R) -> Option<T> {
-        let keys = self.keys.as_ref().unwrap();
-        if keys.is_empty() {
-            None
-        } else {
-            // Choose a key to remove
-            let keys_index = r.gen_range(0, keys.len());
-            Some(self.remove_index(keys_index))
-        }
-    }
+        let mut num_succ = 0;
+        for _ in 0..updates {
+            // Pick starting flip.
+            let choice = rng.gen_range(0, constant_ps.len() + vars_with_zero_ops.len());
+            let (v, flip) = if choice < constant_ps.len() {
+                let res = var_starts.binary_search(&choice);
+                let v = match res {
+                    Err(i) => i - 1,
+                    Ok(i) => i,
+                };
+                (v, Some(choice))
+            } else {
+                let choice = choice - constant_ps.len();
+                (vars_with_zero_ops[choice], None)
+            };
 
-    /// Remove a given value.
-    pub fn remove(&mut self, value: &T) -> bool {
-        let bond_number = value.clone().into();
-        let address = self.map[bond_number];
-        if let Some(address) = address {
-            self.remove_index(address);
-            true
-        } else {
-            false
-        }
-    }
+            let mut cluster_vars: Vec<usize> = self.get_instance();
+            let mut cluster_flips: Vec<Option<usize>> = self.get_instance();
+            let mut boundary_vars: Vec<usize> = self.get_instance();
+            let mut boundary_flips_pos: Vec<Option<usize>> = self.get_instance();
 
-    fn remove_index(&mut self, keys_index: usize) -> T {
-        // Move key to last position.
-        let keys = self.keys.as_mut().unwrap();
-        let last_indx = keys.len() - 1;
-        keys.swap(keys_index, last_indx);
-        // Update address
-        let bond_number = keys[keys_index].clone().into();
-        let old_indx = self.map[bond_number].as_mut().unwrap();
-        *old_indx = keys_index;
-        // Remove key
-        let out = self.keys.as_mut().unwrap().pop().unwrap();
-        self.map[out.clone().into()] = None;
-        out
-    }
+            let cluster_size = contiguous_bits(rng) + 1;
+            build_cluster(
+                cluster_size,
+                (v, flip),
+                (self.get_nvars(), self.get_cutoff()),
+                (&mut cluster_vars, &mut cluster_flips),
+                (&mut boundary_vars, &mut boundary_flips_pos),
+                (&var_starts, &var_lengths),
+                &constant_ps,
+                edges,
+                self,
+                rng,
+            );
+            let mut cluster_starting_state: Vec<bool> = self.get_instance();
+            let mut cluster_toggle_ps: Vec<usize> = self.get_instance();
+            let mut subvars: Vec<usize> = self.get_instance();
+            let mut var_to_subvar: Vec<Option<usize>> = self.get_instance();
+            var_to_subvar.resize(self.get_nvars(), None);
 
-    /// Check if a given element has been inserted.
-    pub fn contains(&self, value: &T) -> bool {
-        let t = value.clone().into();
-        if t >= self.map.len() {
-            false
-        } else {
-            self.map[t].is_some()
-        }
-    }
+            subvars.extend(cluster_vars.iter().chain(boundary_vars.iter()).cloned());
+            subvars.sort_unstable();
+            subvars.dedup();
+            subvars
+                .iter()
+                .cloned()
+                .enumerate()
+                .for_each(|(subvar, var)| var_to_subvar[var] = Some(subvar));
 
-    /// Insert an element.
-    pub fn insert(&mut self, value: T) -> bool {
-        let entry_index = value.clone().into();
-        if entry_index >= self.map.len() {
-            self.map.resize(entry_index + 1, None);
-        }
-        match self.map[entry_index] {
-            Some(_) => false,
-            None => {
-                let keys = self.keys.as_mut().unwrap();
-                self.map[entry_index] = Some(keys.len());
-                keys.push(value);
+            cluster_starting_state.resize(subvars.len(), false);
+            cluster_vars
+                .iter()
+                .cloned()
+                .zip(cluster_flips.iter().cloned())
+                .for_each(|(v, fi)| {
+                    let subvar = var_to_subvar[v].unwrap();
+                    if let Some(fi) = fi {
+                        let vstart = var_starts[v];
+                        let fi_rel = fi - vstart;
+
+                        if fi_rel + 1 >= var_lengths[v] {
+                            cluster_starting_state[subvar] = true;
+                            cluster_toggle_ps.push(constant_ps[fi]);
+                            cluster_toggle_ps.push(constant_ps[vstart]);
+                        } else {
+                            cluster_toggle_ps.push(constant_ps[fi]);
+                            cluster_toggle_ps.push(constant_ps[fi + 1]);
+                        }
+                    } else {
+                        cluster_starting_state[subvar] = true;
+                    }
+                });
+            self.return_instance(cluster_flips);
+            self.return_instance(cluster_vars);
+
+            // Should be able to infer substate based solely on boundary + cluster.
+            // First get all vars in boundary or in cluster.
+            let mut substate: Vec<bool> = self.get_instance();
+            substate.extend(subvars.iter().cloned().map(|v| state[v]));
+
+            // Lets find the tops of each boundary.
+            let mut subvar_boundary_tops: Vec<Option<usize>> = self.get_instance();
+            subvar_boundary_tops.resize(subvars.len(), None);
+            boundary_vars
+                .iter()
+                .zip(boundary_flips_pos.iter())
+                .for_each(|(bv, bfp)| {
+                    let subvar =
+                        var_to_subvar[*bv].expect("Boundary must be in var_to_subvar array.");
+                    match (bfp, subvar_boundary_tops[subvar]) {
+                        (Some(bfp), Some(bt)) => {
+                            if *bfp < bt {
+                                subvar_boundary_tops[subvar] = Some(constant_ps[*bfp])
+                            }
+                        }
+                        (Some(_), None) | (None, None) => {
+                            subvar_boundary_tops[subvar] = bfp.map(|bfp| constant_ps[bfp])
+                        }
+                        (None, Some(_)) => unreachable!(),
+                    };
+                });
+            self.return_instance(boundary_vars);
+            self.return_instance(boundary_flips_pos);
+
+            // Now lets get the cluster boundaries.
+            cluster_toggle_ps.sort_unstable();
+            remove_doubles(&mut cluster_toggle_ps);
+
+            let p_to_flip = calculate_flip_prob(
+                self,
+                (state, &mut substate),
+                (&mut cluster_starting_state, &cluster_toggle_ps),
+                &subvar_boundary_tops,
+                (&subvars, |v| var_to_subvar[v]),
+                edges,
+            );
+            let should_mutate = if p_to_flip > 1.0 {
                 true
+            } else {
+                rng.gen_bool(p_to_flip)
+            };
+
+            if should_mutate {
+                // Great, mutate the graph.
+                mutate_graph(
+                    self,
+                    (state, &mut substate),
+                    (&mut cluster_starting_state, &cluster_toggle_ps),
+                    &subvar_boundary_tops,
+                    (&subvars, |v| var_to_subvar[v]),
+                    edges,
+                    rng,
+                );
+                let starting_cluster = cluster_starting_state
+                    .iter()
+                    .cloned()
+                    .filter(|b| *b)
+                    .count()
+                    > 0;
+
+                if starting_cluster {
+                    subvars
+                        .iter()
+                        .cloned()
+                        .zip(cluster_starting_state.iter().cloned())
+                        .for_each(|(v, c)| {
+                            state[v] = state[v] != c;
+                        });
+                }
+                num_succ += 1;
+            }
+            self.return_instance(var_to_subvar);
+            self.return_instance(subvar_boundary_tops);
+            self.return_instance(substate);
+            self.return_instance(subvars);
+            self.return_instance(cluster_toggle_ps);
+            self.return_instance(cluster_starting_state);
+        }
+
+        self.return_instance(vars_with_zero_ops);
+        self.return_instance(constant_ps);
+        self.return_instance(var_lengths);
+        self.return_instance(var_starts);
+        num_succ
+    }
+}
+
+/// Returns true if substate is changed.
+fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng>(
+    rvb: &mut RVB,
+    (state, substate): (&[bool], &mut [bool]),
+    (cluster_state, cluster_flips): (&mut [bool], &[usize]),
+    boundary_tops: &[Option<usize>], // top for each of vars.
+    (vars, var_to_subvar): (&[usize], VS),
+    edges: &EN,
+    rng: &mut R,
+) where
+    VS: Fn(usize) -> Option<usize>,
+{
+    // Find all spots where cluster is empty.
+    let mut jump_to: Vec<usize> = rvb.get_instance();
+    let mut continue_until: Vec<usize> = rvb.get_instance();
+
+    let mut count = cluster_state.iter().filter(|b| **b).count();
+    // If cluster hits t=0 then we need to mutate right away.
+    let has_starting_cluster = if count != 0 {
+        jump_to.push(0);
+        // We need to adjust substate since there's a starting cluster.
+        substate
+            .iter_mut()
+            .zip(cluster_state.iter().cloned())
+            .for_each(|(b, c)| *b = *b != c);
+
+        true
+    } else {
+        false
+    };
+    cluster_flips.iter().cloned().for_each(|p| {
+        // If count is currently 0, this p will change that. We will need to
+        // jump here for mutations.
+        if count == 0 {
+            jump_to.push(p)
+        }
+
+        let op = rvb.get_node_ref(p).unwrap().get_op_ref();
+        count = op
+            .get_vars()
+            .iter()
+            .cloned()
+            .filter_map(|v| var_to_subvar(v))
+            .fold(count, |count, subvar| {
+                cluster_state[subvar] = !cluster_state[subvar];
+                if cluster_state[subvar] {
+                    count + 1
+                } else {
+                    count - 1
+                }
+            });
+
+        // If this op set the count to zero
+        if count == 0 {
+            continue_until.push(p)
+        }
+    });
+    // If we end with a count that means we will start with one too, go all the way to the end.
+    if count != 0 {
+        debug_assert!(has_starting_cluster);
+        continue_until.push(rvb.get_cutoff());
+    }
+    debug_assert_eq!(
+        jump_to.len(),
+        continue_until.len(),
+        "Should have the same number of starts and ends."
+    );
+
+    let is_sat = |bond: usize, substate: &[bool]| -> bool {
+        let p_aligned = edges.bond_prefers_aligned(bond);
+        let (a, b) = edges.vars_for_bond(bond);
+        let a = var_to_subvar(a).unwrap();
+        let b = var_to_subvar(b).unwrap();
+        let aligned = substate[a] == substate[b];
+        aligned == p_aligned
+    };
+
+    // Now we have a series of pairs.
+    let mut sat_bonds: BondContainer<usize> = rvb.get_instance();
+    let mut unsat_bonds: BondContainer<usize> = rvb.get_instance();
+    let mut next_cluster_index = 0;
+
+    vars.iter()
+        .cloned()
+        .filter(|v| cluster_state[var_to_subvar(*v).unwrap()])
+        .for_each(|v| {
+            edges.bonds_for_var(v).iter().cloned().for_each(|b| {
+                let ov = edges.other_var_for_bond(v, b).unwrap();
+                if !cluster_state[var_to_subvar(ov).unwrap()] {
+                    if is_sat(b, substate) {
+                        sat_bonds.insert(b);
+                    } else {
+                        unsat_bonds.insert(b);
+                    }
+                }
+            })
+        });
+
+    jump_to
+        .iter()
+        .cloned()
+        .zip(continue_until.iter().cloned())
+        .fold(
+            (substate, cluster_state, rng),
+            |(substate, cluster_state, rng), (from, until)| {
+                rvb.get_propagated_substate_with_hint(
+                    from,
+                    substate,
+                    state,
+                    vars,
+                    boundary_tops.iter().cloned(),
+                );
+                substate
+                    .iter_mut()
+                    .zip(cluster_state.iter().cloned())
+                    .for_each(|(b, c)| *b = *b != c);
+
+                let mut args = rvb.get_empty_args(SubvarAccess::VARLIST(&vars));
+                rvb.fill_args_at_p_with_hint(from, &mut args, vars, boundary_tops.iter().cloned());
+
+                let acc = (
+                    next_cluster_index,
+                    &mut sat_bonds,
+                    &mut unsat_bonds,
+                    substate,
+                    cluster_state,
+                    rng,
+                );
+                let ret = rvb.mutate_subsection_ops(
+                    from,
+                    until,
+                    acc,
+                    |_, op, p, acc| {
+                        let (
+                            mut next_cluster_index,
+                            sat_bonds,
+                            unsat_bonds,
+                            substate,
+                            cluster_state,
+                            mut rng,
+                        ) = acc;
+
+                        debug_assert!(sat_bonds.iter().cloned().all(|b| is_sat(b, substate)));
+                        debug_assert!(unsat_bonds.iter().cloned().all(|b| !is_sat(b, substate)));
+
+                        let in_sat = sat_bonds.contains(&op.get_bond());
+                        let in_unsat = unsat_bonds.contains(&op.get_bond());
+                        let at_next_cluster_flip = next_cluster_index < cluster_flips.len()
+                            && p == cluster_flips[next_cluster_index];
+                        let newop = if in_sat || in_unsat {
+                            // Rotatable ops must be diagonal.
+                            debug_assert!(op.is_diagonal());
+
+                            // Need to rotate
+                            let new_bond = if in_sat {
+                                unsat_bonds.get_random(&mut rng).unwrap()
+                            } else {
+                                sat_bonds.get_random(&mut rng).unwrap()
+                            };
+
+                            let (new_a, new_b) = edges.vars_for_bond(*new_bond);
+                            let vars = RVB::Op::make_vars([new_a, new_b].iter().cloned());
+                            let state = RVB::Op::make_substate(
+                                [new_a, new_b]
+                                    .iter()
+                                    .cloned()
+                                    .map(|v| var_to_subvar(v).unwrap())
+                                    .map(|subvar| substate[subvar]),
+                            );
+                            let new_op =
+                                RVB::Op::diagonal(vars, *new_bond, state, op.is_constant());
+
+                            Some(Some(new_op))
+                        } else if at_next_cluster_flip {
+                            // We are at a cluster boundary, flips cluster state and bonds.
+                            debug_assert!(op.is_constant());
+                            // Cluster flips must be entirely in subvar region.
+                            debug_assert!(op
+                                .get_vars()
+                                .iter()
+                                .cloned()
+                                .all(|v| var_to_subvar(v).is_some()));
+
+                            let new_op = op.clone_and_edit_in_out(|ins, outs| {
+                                op.get_vars()
+                                    .iter()
+                                    .cloned()
+                                    .map(|v| var_to_subvar(v).unwrap())
+                                    .zip(ins.iter_mut().zip(outs.iter_mut()))
+                                    .for_each(|(subvar, (bin, bout))| {
+                                        // Flip if cluster_state is true.
+                                        *bin = *bin != cluster_state[subvar];
+                                        // Flip if cluster_state _will be_ true.
+                                        *bout = *bout != !cluster_state[subvar];
+                                    });
+                            });
+                            // Having changed substate now sat_bonds and unsat_bonds are invalid
+                            // near this op, luckily flipping the cluster will remove all the
+                            // invalid bonds.
+
+                            toggle_cluster_and_bonds(
+                                op,
+                                cluster_state,
+                                substate,
+                                is_sat,
+                                (sat_bonds, unsat_bonds),
+                                &var_to_subvar,
+                                edges,
+                            );
+                            toggle_state_and_bonds(
+                                &new_op,
+                                substate,
+                                sat_bonds,
+                                unsat_bonds,
+                                &var_to_subvar,
+                                edges,
+                            );
+
+                            next_cluster_index += 1;
+                            Some(Some(new_op))
+                        } else {
+                            // Flip appropriate inputs/outputs.
+                            // If any are out, then all are out - otherwise would be in sat or unsat
+                            debug_assert!(
+                                {
+                                    let all_in = op.get_vars().iter().cloned().all(|v| {
+                                        var_to_subvar(v)
+                                            .map(|subvar| cluster_state[subvar])
+                                            .unwrap_or(false)
+                                    });
+                                    let all_out = op.get_vars().iter().cloned().all(|v| {
+                                        var_to_subvar(v)
+                                            .map(|subvar| !cluster_state[subvar])
+                                            .unwrap_or(true)
+                                    });
+                                    let succ = (all_in != all_out) && (all_in || all_out);
+                                    if !succ {
+                                        println!("subvars: {:?}", vars);
+                                        println!(
+                                            "op: {:?}\t{:?} -> {:?}",
+                                            op.get_vars(),
+                                            op.get_inputs(),
+                                            op.get_outputs()
+                                        );
+                                        println!("all_in: {}\tall_out: {}", all_in, all_out);
+                                    }
+                                    succ
+                                },
+                                "All variables must be in or out, and at least one of those two."
+                            );
+
+                            let any_subvars = op
+                                .get_vars()
+                                .iter()
+                                .cloned()
+                                .any(|v| var_to_subvar(v).is_some());
+                            let any_in_cluster = op
+                                .get_vars()
+                                .iter()
+                                .cloned()
+                                .filter_map(&var_to_subvar)
+                                .any(|subvar| cluster_state[subvar]);
+                            // If out of known region or if diagonal and not flipped by cluster.
+                            if !any_subvars || (!any_in_cluster && op.is_diagonal()) {
+                                None
+                            } else if any_in_cluster {
+                                let new_op = op.clone_and_edit_in_out_symmetric(|state| {
+                                    state.iter_mut().for_each(|b| *b = !*b);
+                                });
+
+                                if !op.is_diagonal() {
+                                    // Update state and bonds.
+                                    toggle_state_and_bonds(
+                                        &new_op,
+                                        substate,
+                                        sat_bonds,
+                                        unsat_bonds,
+                                        &var_to_subvar,
+                                        edges,
+                                    );
+                                }
+
+                                Some(Some(new_op))
+                            } else {
+                                if !op.is_diagonal() {
+                                    // Update state and bonds.
+                                    toggle_state_and_bonds(
+                                        op,
+                                        substate,
+                                        sat_bonds,
+                                        unsat_bonds,
+                                        &var_to_subvar,
+                                        edges,
+                                    );
+                                }
+
+                                None
+                            }
+                        };
+
+                        (
+                            newop,
+                            (
+                                next_cluster_index,
+                                sat_bonds,
+                                unsat_bonds,
+                                substate,
+                                cluster_state,
+                                rng,
+                            ),
+                        )
+                    },
+                    Some(args),
+                );
+                next_cluster_index = ret.0;
+                let substate = ret.3;
+                let cluster_state = ret.4;
+                let rng = ret.5;
+                (substate, cluster_state, rng)
+            },
+        );
+    rvb.return_instance(sat_bonds);
+    rvb.return_instance(unsat_bonds);
+
+    rvb.return_instance(jump_to);
+    rvb.return_instance(continue_until);
+}
+
+fn calculate_flip_prob<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized>(
+    rvb: &mut RVB,
+    (state, substate): (&[bool], &mut [bool]),
+    (cluster_state, cluster_flips): (&mut [bool], &[usize]),
+    boundary_tops: &[Option<usize>], // top for each of vars.
+    (vars, var_to_subvar): (&[usize], VS),
+    edges: &EN,
+) -> f64
+where
+    VS: Fn(usize) -> Option<usize>,
+{
+    let mut cluster_size = cluster_state.iter().cloned().filter(|x| *x).count();
+    let mut psel = rvb.get_first_p();
+    let mut next_cluster_index = 0;
+    let mut mult = 1.0;
+
+    let is_sat = |bond: usize, substate: &[bool]| -> bool {
+        let p_aligned = edges.bond_prefers_aligned(bond);
+        let (a, b) = edges.vars_for_bond(bond);
+        let a = var_to_subvar(a).unwrap();
+        let b = var_to_subvar(b).unwrap();
+        let aligned = substate[a] == substate[b];
+        aligned == p_aligned
+    };
+
+    let mut sat_bonds: BondContainer<usize> = rvb.get_instance();
+    let mut unsat_bonds: BondContainer<usize> = rvb.get_instance();
+    let mut n_sat = 0;
+    let mut n_unsat = 0;
+    if cluster_size != 0 {
+        vars.iter()
+            .cloned()
+            .filter(|v| cluster_state[var_to_subvar(*v).unwrap()])
+            .for_each(|v| {
+                edges.bonds_for_var(v).iter().cloned().for_each(|b| {
+                    let ov = edges.other_var_for_bond(v, b).unwrap();
+                    if !cluster_state[var_to_subvar(ov).unwrap()] {
+                        if is_sat(b, substate) {
+                            sat_bonds.insert(b);
+                        } else {
+                            unsat_bonds.insert(b);
+                        }
+                    }
+                })
+            });
+    }
+
+    // Jump to cluster start, requires propagating state. Since not inside a cluster it's
+    // safe to use just the boundary.
+    while let Some(mut p) = psel {
+        // Skip ahead.
+        if cluster_size == 0 {
+            debug_assert_eq!(sat_bonds.len(), 0);
+            debug_assert_eq!(unsat_bonds.len(), 0);
+            debug_assert_eq!(n_sat, 0);
+            debug_assert_eq!(n_unsat, 0);
+            // Jump to next nonzero spot.
+            if next_cluster_index < cluster_flips.len() {
+                // psel can be set but won't be read.
+                // psel = Some(p);
+                p = cluster_flips[next_cluster_index];
+
+                rvb.get_propagated_substate_with_hint(
+                    p,
+                    substate,
+                    state,
+                    vars,
+                    boundary_tops.iter().cloned(),
+                );
+            } else {
+                // Done with clusters, jump to the end.
+                break;
             }
         }
-    }
+        debug_assert!(sat_bonds.iter().cloned().all(|b| is_sat(b, substate)));
+        debug_assert!(unsat_bonds.iter().cloned().all(|b| !is_sat(b, substate)));
 
-    /// Clear the set
-    pub fn clear(&mut self) {
-        let mut keys = self.keys.take().unwrap();
-        keys.iter().for_each(|k| {
-            let bond = k.clone().into();
-            self.map[bond] = None
+        let node = rvb.get_node_ref(p).unwrap();
+        let op = node.get_op_ref();
+        let is_cluster_bound =
+            next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
+        let will_change_bonds = !op.is_diagonal() || is_cluster_bound;
+
+        if will_change_bonds {
+            // Commit the counts so far.
+            mult *= calculate_mult(&sat_bonds, &unsat_bonds, n_sat, n_unsat);
+            n_sat = 0;
+            n_unsat = 0;
+            // Break early if we reach 0 probability.
+            if mult < std::f64::EPSILON {
+                break;
+            }
+        }
+
+        debug_assert!(
+            {
+                let any_in_cluster = op
+                    .get_vars()
+                    .iter()
+                    .filter_map(|v| var_to_subvar(*v))
+                    .any(|subvar| cluster_state[subvar]);
+                let any_in_bound = op
+                    .get_vars()
+                    .iter()
+                    .filter_map(|v| var_to_subvar(*v))
+                    .any(|subvar| !cluster_state[subvar]);
+                let b = op.get_bond();
+                match (any_in_cluster, any_in_bound) {
+                    (true, true) => sat_bonds.contains(&b) || unsat_bonds.contains(&b),
+                    _ => true,
+                }
+            },
+            "If op spans cluster and boundary it should appear in one of the bond sets."
+        );
+
+        // Count which bond it belongs to.
+        let b = op.get_bond();
+        if sat_bonds.contains(&b) {
+            n_sat += 1;
+        } else if unsat_bonds.contains(&b) {
+            n_unsat += 1;
+        }
+
+        // We are at a cluster boundary, flips cluster state and bonds.
+        if is_cluster_bound {
+            debug_assert!(op.is_constant());
+            cluster_size = (cluster_size as i64
+                + toggle_cluster_and_bonds(
+                    op,
+                    cluster_state,
+                    substate,
+                    is_sat,
+                    (&mut sat_bonds, &mut unsat_bonds),
+                    &var_to_subvar,
+                    edges,
+                )) as usize;
+            next_cluster_index += 1;
+        }
+
+        if !op.is_diagonal() {
+            // Update state and bonds.
+            toggle_state_and_bonds(
+                op,
+                substate,
+                &mut sat_bonds,
+                &mut unsat_bonds,
+                &var_to_subvar,
+                edges,
+            );
+        }
+        // Move on
+        psel = rvb.get_next_p(node);
+    }
+    // Commit remaining stuff.
+    mult *= calculate_mult(&sat_bonds, &unsat_bonds, n_sat, n_unsat);
+
+    rvb.return_instance(sat_bonds);
+    rvb.return_instance(unsat_bonds);
+
+    mult
+}
+
+fn toggle_cluster_and_bonds<O: Op, F, SAT, EN>(
+    op: &O,
+    cluster_state: &mut [bool],
+    substate: &[bool],
+    is_sat: SAT,
+    (sat_bonds, unsat_bonds): (&mut BondContainer<usize>, &mut BondContainer<usize>),
+    var_to_subvar: F,
+    edges: &EN,
+) -> i64
+where
+    F: Fn(usize) -> Option<usize>,
+    SAT: Fn(usize, &[bool]) -> bool,
+    EN: EdgeNavigator + ?Sized,
+{
+    let toggle = |bonds: &mut BondContainer<usize>, b: usize| {
+        if bonds.contains(&b) {
+            bonds.remove(&b);
+        } else {
+            bonds.insert(b);
+        }
+    };
+    let mut cluster_delta = 0;
+    op.get_vars()
+        .iter()
+        .filter_map(|v| var_to_subvar(*v).map(|subvar| (*v, subvar)))
+        .for_each(|(v, subvar)| {
+            cluster_state[subvar] = !cluster_state[subvar];
+            cluster_delta = if cluster_state[subvar] {
+                cluster_delta + 1
+            } else {
+                cluster_delta - 1
+            };
+            // Update bonds.
+            edges.bonds_for_var(v).iter().cloned().for_each(|b| {
+                if is_sat(b, substate) {
+                    toggle(sat_bonds, b)
+                } else {
+                    toggle(unsat_bonds, b)
+                };
+            });
         });
-        keys.clear();
-        self.keys = Some(keys);
+    cluster_delta
+}
+
+fn toggle_state_and_bonds<O: Op, F, EN>(
+    op: &O,
+    substate: &mut [bool],
+    sat_bonds: &mut BondContainer<usize>,
+    unsat_bonds: &mut BondContainer<usize>,
+    var_to_subvar: F,
+    edges: &EN,
+) where
+    F: Fn(usize) -> Option<usize>,
+    EN: EdgeNavigator + ?Sized,
+{
+    op.get_vars()
+        .iter()
+        .cloned()
+        .zip(op.get_inputs().iter().cloned())
+        .zip(op.get_outputs().iter().cloned())
+        .filter_map(
+            |((v, bin), bout)| {
+                if bin == bout {
+                    None
+                } else {
+                    Some((v, bout))
+                }
+            },
+        )
+        .filter_map(|(v, bout)| {
+            var_to_subvar(v)
+                .zip(Some(bout))
+                .map(|(subvar, bout)| (v, subvar, bout))
+        })
+        .for_each(|(v, subvar, b)| {
+            substate[subvar] = b;
+            edges.bonds_for_var(v).iter().for_each(|b| {
+                // Swap bonds.
+                if sat_bonds.contains(b) {
+                    sat_bonds.remove(b);
+                    unsat_bonds.insert(*b);
+                } else if unsat_bonds.contains(b) {
+                    unsat_bonds.remove(b);
+                    sat_bonds.insert(*b);
+                }
+            })
+        });
+}
+
+fn remove_doubles<T: Eq + Copy>(v: &mut Vec<T>) {
+    let mut ii = 0;
+    let mut jj = 0;
+    while jj + 1 < v.len() {
+        if v[jj] == v[jj + 1] {
+            jj += 2;
+        } else {
+            v[ii] = v[jj];
+            ii += 1;
+            jj += 1;
+        }
+    }
+    if jj < v.len() {
+        v[ii] = v[jj];
+        ii += 1;
+        jj += 1;
+    }
+    while jj > ii {
+        v.pop();
+        jj -= 1;
+    }
+}
+
+fn build_cluster<Fact: ?Sized, EN, R: Rng>(
+    mut cluster_size: usize,
+    (init_var, init_flip): (usize, Option<usize>),
+    (nvars, cutoff): (usize, usize),
+    (cluster_vars, cluster_flips): (&mut Vec<usize>, &mut Vec<Option<usize>>),
+    (boundary_vars, boundary_flips_pos): (&mut Vec<usize>, &mut Vec<Option<usize>>),
+    (var_starts, var_lengths): (&[usize], &[usize]),
+    constant_ps: &[usize],
+    edges: &EN,
+    fact: &mut Fact,
+    rng: &mut R,
+) where
+    Fact: Factory<Vec<bool>> + Factory<Vec<usize>> + Factory<Vec<Option<usize>>>,
+    EN: EdgeNavigator,
+{
+    let mut empty_var_in_cluster: Vec<bool> = fact.get_instance();
+    let mut op_p_in_cluster: Vec<bool> = fact.get_instance();
+    empty_var_in_cluster.resize(nvars, false);
+    op_p_in_cluster.resize(cutoff, false);
+
+    boundary_vars.push(init_var);
+    boundary_flips_pos.push(init_flip);
+    if let Some(init_flip) = init_flip {
+        op_p_in_cluster[constant_ps[init_flip]] = true;
+    } else {
+        empty_var_in_cluster[init_var] = true;
     }
 
-    /// Get number of elements in set.
-    pub fn len(&self) -> usize {
-        self.keys.as_ref().unwrap().len()
+    while cluster_size > 0 && !boundary_vars.is_empty() {
+        let to_pop = rng.gen_range(0, boundary_vars.len());
+        let v = pop_index(boundary_vars, to_pop).unwrap();
+        let flip = pop_index(boundary_flips_pos, to_pop).unwrap();
+
+        // Check that popped values make sense.
+        debug_assert!(flip.map(|f| f >= var_starts[v]).unwrap_or(true));
+        debug_assert!(flip
+            .map(|f| f < var_starts[v] + var_lengths[v])
+            .unwrap_or(var_lengths[v] == 0));
+
+        cluster_vars.push(v);
+        cluster_flips.push(flip);
+
+        // Add above and below.
+        if let Some(flip) = flip {
+            let relflip = flip - var_starts[v];
+            let flip_dec = (relflip + var_lengths[v] - 1) % var_lengths[v] + var_starts[v];
+            let flip_inc = (relflip + 1) % var_lengths[v] + var_starts[v];
+            if !op_p_in_cluster[constant_ps[flip_dec]] {
+                op_p_in_cluster[constant_ps[flip_dec]] = true;
+
+                boundary_vars.push(v);
+                boundary_flips_pos.push(Some(flip_dec));
+            }
+            if !op_p_in_cluster[constant_ps[flip_inc]] {
+                op_p_in_cluster[constant_ps[flip_inc]] = true;
+
+                boundary_vars.push(v);
+                boundary_flips_pos.push(Some(flip_inc));
+            }
+        }
+
+        // Add neighbors to what we just added.
+        edges.bonds_for_var(v).iter().for_each(|b| {
+            let ov = edges.other_var_for_bond(v, *b).unwrap();
+            if var_lengths[ov] == 0 {
+                if !empty_var_in_cluster[ov] {
+                    empty_var_in_cluster[ov] = true;
+
+                    boundary_vars.push(ov);
+                    boundary_flips_pos.push(None);
+                }
+            } else {
+                let pis = var_starts[ov]..var_starts[ov] + var_lengths[ov];
+                if let Some(flip) = flip {
+                    let relflip = flip - var_starts[v];
+                    let flip_inc = (relflip + 1) % var_lengths[v] + var_starts[v];
+
+                    let pstart = constant_ps[flip];
+                    let pend = constant_ps[flip_inc];
+                    find_overlapping_starts(pstart, pend, cutoff, &constant_ps[pis])
+                        .map(|i| i + var_starts[ov])
+                        .for_each(|flip_pos| {
+                            if !op_p_in_cluster[constant_ps[flip_pos]] {
+                                op_p_in_cluster[constant_ps[flip_pos]] = true;
+
+                                boundary_vars.push(ov);
+                                boundary_flips_pos.push(Some(flip_pos));
+                            }
+                        })
+                } else {
+                    // Add them all.
+                    pis.for_each(|pi| {
+                        if !op_p_in_cluster[constant_ps[pi]] {
+                            op_p_in_cluster[constant_ps[pi]] = true;
+
+                            boundary_vars.push(ov);
+                            boundary_flips_pos.push(Some(pi));
+                        }
+                    })
+                }
+            }
+        });
+
+        cluster_size -= 1;
     }
 
-    /// Check if empty.
-    pub fn is_empty(&self) -> bool {
-        self.keys.as_ref().unwrap().is_empty()
-    }
+    fact.return_instance(empty_var_in_cluster);
+    fact.return_instance(op_p_in_cluster);
+}
 
-    /// Iterate through items.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.keys.as_ref().unwrap().iter()
+fn pop_index<T>(v: &mut Vec<T>, index: usize) -> Option<T> {
+    let len = v.len();
+    if index < len {
+        v.swap(index, len - 1);
+        v.pop()
+    } else {
+        None
+    }
+}
+
+fn find_overlapping_starts(
+    p_start: usize,
+    p_end: usize,
+    cutoff: usize,
+    flip_positions: &[usize],
+) -> impl Iterator<Item = usize> + '_ {
+    debug_assert_ne!(flip_positions.len(), 0);
+    let bin_found = flip_positions.binary_search(&p_start).unwrap_err();
+    let prev_bin_found = (bin_found + flip_positions.len() - 1) % flip_positions.len();
+    let lowest_ps = flip_positions[prev_bin_found];
+    let offset_p_start = (p_start + cutoff - lowest_ps) % cutoff;
+    let offset_p_end = (p_end + cutoff - lowest_ps) % cutoff;
+    flip_positions[prev_bin_found..]
+        .iter()
+        .cloned()
+        .zip(prev_bin_found..)
+        .chain(
+            flip_positions[..prev_bin_found]
+                .iter()
+                .cloned()
+                .zip(0..prev_bin_found),
+        )
+        .take_while(move |(p, ip)| {
+            let check_start = (*p + cutoff - lowest_ps) % cutoff;
+            let next_p = flip_positions[(*ip + 1) % flip_positions.len()];
+            let check_end = (next_p + cutoff - lowest_ps) % cutoff;
+            let has_overlap_start = check_start < offset_p_start && offset_p_start < check_end;
+            let has_start_within = offset_p_start < check_start && check_start < offset_p_end;
+            let eq = (p_start == p_end) || (check_start == check_end);
+            let overlap = has_overlap_start || has_start_within;
+            eq || overlap
+        })
+        .map(|(_, ip)| ip)
+}
+
+fn find_constants<RVB>(
+    rvb: &RVB,
+    var_starts: &mut Vec<usize>,
+    var_lengths: &mut Vec<usize>,
+    constant_ps: &mut Vec<usize>,
+    vars_with_zero_ops: &mut Vec<usize>,
+) where
+    RVB: RVBUpdater + ?Sized,
+{
+    // TODO: can parallelize this!
+    // O(beta * n)
+    (0..rvb.get_nvars()).for_each(|v| {
+        let start = constant_ps.len();
+        var_starts.push(start);
+        rvb.constant_ops_on_var(v, constant_ps);
+        debug_assert!(
+            constant_ps.iter().cloned().all(|p| {
+                let op = rvb.get_node_ref(p).unwrap().get_op_ref();
+                op.get_vars().len() == 1
+            }),
+            "RVB cluster only supports constant ops with a single variable."
+        );
+        var_lengths.push(constant_ps.len() - start);
+        if constant_ps.len() == *var_starts.last().unwrap() {
+            vars_with_zero_ops.push(v);
+        }
+    });
+}
+
+/// Get returns n with chance 1/2^(n+1)
+/// Chance of failure is 1/2^(2^64) and should therefore be acceptable.
+pub fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
+    let mut acc = 0;
+    let mut v = r.next_u64();
+    loop {
+        if v == std::u64::MAX {
+            acc += 64;
+            v = r.next_u64();
+        } else {
+            while v & 1 == 1 {
+                acc += 1;
+                v >>= 1;
+            }
+            break acc;
+        }
+    }
+}
+
+fn calculate_mult(
+    sat: &BondContainer<usize>,
+    unsat: &BondContainer<usize>,
+    nf: i32,
+    na: i32,
+) -> f64 {
+    if nf == na || sat.len() == unsat.len() {
+        1.0
+    } else {
+        (sat.len() as f64 / unsat.len() as f64).powi(na - nf)
     }
 }
 
 #[cfg(test)]
 mod sc_tests {
     use super::*;
-    use rand::prelude::SmallRng;
-    use rand::SeedableRng;
+    use crate::sse::fast_ops::*;
+    use smallvec::smallvec;
 
     #[test]
-    fn test_bond_container() {
-        let mut bc = BondContainer::<usize>::default();
-        bc.insert(0);
-        assert_eq!(bc.pop_random(SmallRng::seed_from_u64(0)), Some(0));
+    fn test_overlapping_regions_simple() {
+        let cutoff = 10;
+        let flips = [0, 2, 4, 6, 8];
+        let p_start = 1;
+        let p_end = 7;
+        let overlaps = find_overlapping_starts(p_start, p_end, cutoff, &flips).collect::<Vec<_>>();
+        println!("{:?}", overlaps);
+        // [0 - 6]
+        assert_eq!(overlaps, vec![0, 1, 2, 3]);
     }
 
     #[test]
-    fn test_bond_container_more() {
-        let mut bc = BondContainer::<usize>::default();
-        bc.insert(0);
-        bc.insert(1);
-        bc.insert(2);
-        assert_eq!(bc.len(), 3);
-        let res = match bc.pop_random(SmallRng::seed_from_u64(0)) {
-            Some(0) | Some(1) | Some(2) => true,
-            _ => false,
-        };
-        assert!(res)
+    fn test_overlapping_regions() {
+        let cutoff = 10;
+        let flips = [0, 2, 4, 6, 8];
+        let p_start = 5;
+        let p_end = 7;
+        let overlaps = find_overlapping_starts(p_start, p_end, cutoff, &flips).collect::<Vec<_>>();
+        println!("{:?}", overlaps);
+        assert_eq!(overlaps, vec![2, 3]);
+    }
+
+    #[test]
+    fn test_wrap_around() {
+        let cutoff = 10;
+        let flips = [0, 2, 4, 6, 8];
+        let p_start = 7;
+        let p_end = 1;
+        let overlaps = find_overlapping_starts(p_start, p_end, cutoff, &flips).collect::<Vec<_>>();
+        println!("{:?}", overlaps);
+        assert_eq!(overlaps, vec![3, 4, 0]);
+    }
+
+    #[test]
+    fn test_remove_dups() {
+        let mut v = vec![0, 0, 1, 2, 3, 3];
+        remove_doubles(&mut v);
+        assert_eq!(v, vec![1, 2])
+    }
+
+    #[test]
+    fn test_remove_dups_again() {
+        let mut v = vec![0, 0, 1, 2, 2, 3];
+        remove_doubles(&mut v);
+        assert_eq!(v, vec![1, 3])
+    }
+
+    struct EN {
+        bonds_for_var: Vec<Vec<usize>>,
+        bonds: Vec<((usize, usize), bool)>,
+    }
+
+    impl EdgeNavigator for EN {
+        fn n_bonds(&self) -> usize {
+            self.bonds.len()
+        }
+
+        fn bonds_for_var(&self, var: usize) -> &[usize] {
+            &self.bonds_for_var[var]
+        }
+
+        fn vars_for_bond(&self, bond: usize) -> (usize, usize) {
+            self.bonds[bond].0
+        }
+
+        fn bond_prefers_aligned(&self, bond: usize) -> bool {
+            self.bonds[bond].1
+        }
+    }
+
+    fn large_joined_manager() -> (FastOps, EN) {
+        (
+            FastOps::new_from_ops(
+                2,
+                vec![
+                    (
+                        0,
+                        FastOp::offdiagonal(
+                            smallvec![0],
+                            2,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        1,
+                        FastOp::offdiagonal(
+                            smallvec![1],
+                            3,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        2,
+                        FastOp::offdiagonal(
+                            smallvec![0],
+                            2,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        3,
+                        FastOp::offdiagonal(
+                            smallvec![1],
+                            3,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        4,
+                        FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
+                    ),
+                    (
+                        5,
+                        FastOp::offdiagonal(
+                            smallvec![0],
+                            2,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        6,
+                        FastOp::offdiagonal(
+                            smallvec![1],
+                            3,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        7,
+                        FastOp::offdiagonal(
+                            smallvec![0],
+                            2,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                    (
+                        8,
+                        FastOp::offdiagonal(
+                            smallvec![1],
+                            3,
+                            smallvec![false],
+                            smallvec![false],
+                            true,
+                        ),
+                    ),
+                ]
+                .into_iter(),
+            ),
+            EN {
+                bonds_for_var: vec![vec![0, 1], vec![0, 1]],
+                bonds: vec![((0, 1), true), ((0, 1), false)],
+            },
+        )
+    }
+
+    #[test]
+    fn run_two_joined_check_flip_p() {
+        let (mut manager, edges) = large_joined_manager();
+        debug_print_diagonal(&manager, &[false, false]);
+
+        let p = calculate_flip_prob(
+            &mut manager,
+            (&[false, false], &mut [false, false]),
+            (&mut [false, false], &[3, 6]),
+            &[Some(2), Some(1)],
+            (&[0, 1], |v| Some(v)),
+            &edges,
+        );
+        println!("{}", p);
     }
 }

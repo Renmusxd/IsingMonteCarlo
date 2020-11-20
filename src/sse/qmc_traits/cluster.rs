@@ -1,7 +1,7 @@
-use crate::memory::allocator::{Factory, StackTuplizer};
 use crate::sse::qmc_traits::directed_loop::*;
 use crate::sse::qmc_traits::op_container::*;
 use crate::sse::qmc_types::*;
+use crate::util::allocator::{Factory, StackTuplizer};
 use rand::Rng;
 
 /// Add cluster updates to LoopUpdater.

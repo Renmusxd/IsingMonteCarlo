@@ -17,15 +17,8 @@ type VecEdge = Vec<usize>;
 
 /// Trait encompassing all requirements for op managers in QMCIsingGraph.
 pub trait IsingManager:
-    OpContainerConstructor + HeatBathDiagonalUpdater + RVBClusterUpdater + ClusterUpdater
+    OpContainerConstructor + HeatBathDiagonalUpdater + RVBUpdater + ClusterUpdater
 {
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-enum RVBType {
-    RANDOM,
-    CLUSTER,
 }
 
 /// A container to run QMC simulations.
@@ -42,7 +35,7 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     rng: Option<R>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
-    run_rvb_steps: Option<RVBType>,
+    run_rvb_steps: bool,
     // List of bonds.
     classical_bonds: Option<Vec<Vec<usize>>>,
     total_rvb_successes: usize,
@@ -114,7 +107,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             singlesite_energy_offset,
             rng: Some(rng),
             vars: (0..nvars).collect(),
-            run_rvb_steps: None,
+            run_rvb_steps: false,
             classical_bonds: None,
             total_rvb_successes: 0,
             rvb_clusters_counted: 0,
@@ -260,28 +253,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             edges: &self.edges,
         };
 
-        manager.rvb_update(&edges, &mut state, rng);
-
-        self.op_manager = Some(manager);
-        self.state = Some(state);
-        Ok(())
-    }
-
-    /// Perform a single rvb step.
-    pub fn single_rvb_cluster_step(&mut self) -> Result<(), String> {
-        let mut state = self.state.take().unwrap();
-        if self.classical_bonds.is_none() {
-            self.make_classical_bonds(state.len())?;
-        }
-        let mut manager = self.op_manager.take().unwrap();
-        let rng = self.rng.as_mut().unwrap();
-
-        let edges = EdgeNav {
-            var_to_bonds: self.classical_bonds.as_ref().unwrap(),
-            edges: &self.edges,
-        };
-
-        manager.rvb_cluster_update(&edges, &mut state, 1, rng);
+        manager.rvb_update(&edges, &mut state, 1, rng);
 
         self.op_manager = Some(manager);
         self.state = Some(state);
@@ -314,22 +286,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
     /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
     pub fn set_run_rvb(&mut self, run_rvb: bool) -> Result<(), String> {
-        self.run_rvb_steps = if run_rvb { Some(RVBType::RANDOM) } else { None };
-        if run_rvb && self.classical_bonds.is_none() {
-            let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
-            self.make_classical_bonds(nvars)
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
-    pub fn set_run_rvb_cluster(&mut self, run_rvb: bool) -> Result<(), String> {
-        self.run_rvb_steps = if run_rvb {
-            Some(RVBType::CLUSTER)
-        } else {
-            None
-        };
+        self.run_rvb_steps = run_rvb;
         if run_rvb && self.classical_bonds.is_none() {
             let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
             self.make_classical_bonds(nvars)
@@ -554,7 +511,7 @@ where
         };
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
-        if let Some(rvb_type) = &self.run_rvb_steps {
+        if self.run_rvb_steps {
             let edges = EdgeNav {
                 var_to_bonds: self.classical_bonds.as_ref().unwrap(),
                 edges: &self.edges,
@@ -562,19 +519,7 @@ where
             // Average cluster size is always 2.
             let steps_to_run = (state.len() + 1) / 2;
 
-            let succs = match rvb_type {
-                RVBType::CLUSTER => {
-                    manager.rvb_cluster_update(&edges, &mut state, steps_to_run, &mut rng)
-                }
-                RVBType::RANDOM => {
-                    let (_, succs) = (0..steps_to_run)
-                        .map(|_| manager.rvb_update(&edges, &mut state, &mut rng))
-                        .fold((0usize, 0usize), |(totvars, nsucc), (nvars, succ)| {
-                            (totvars + nvars, nsucc + if succ { 1 } else { 0 })
-                        });
-                    succs
-                }
-            };
+            let succs = manager.rvb_update(&edges, &mut state, steps_to_run, &mut rng);
             self.total_rvb_successes += succs;
             self.rvb_clusters_counted += steps_to_run;
         }
@@ -796,7 +741,7 @@ pub mod serialization {
         singlesite_energy_offset: f64,
         // Can be easily reconstructed
         nvars: usize,
-        run_rvb_steps: Option<RVBType>,
+        run_rvb_steps: bool,
         classical_bonds: Option<Vec<Vec<usize>>>,
         total_rvb_successes: usize,
         rvb_clusters_counted: usize,

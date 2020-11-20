@@ -57,7 +57,6 @@
 pub use qmc_debug::*;
 pub use qmc_ising::*;
 pub use qmc_runner::*;
-pub use qmc_traits::rvb::*;
 pub use qmc_traits::*;
 
 /// Calculate the autcorrelation calculations for bonds.

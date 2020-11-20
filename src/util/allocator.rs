@@ -9,9 +9,9 @@ pub trait Factory<T> {
     fn return_instance(&mut self, t: T);
 }
 
-/// Reset an instance while preserving its memory.
+/// Reset an instance while preserving its util.
 pub trait Reset {
-    /// Reset the instance, keep the memory location.
+    /// Reset the instance, keep the util location.
     fn reset(&mut self);
 }
 

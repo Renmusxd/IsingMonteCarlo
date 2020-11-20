@@ -51,7 +51,7 @@
 
 /// A limited classical monte carlo library for ising models.
 pub mod classical;
-/// Memory management, useful for building custom QMC backends.
-pub mod memory;
 /// QMC algorithms and traits.
 pub mod sse;
+/// Memory management, useful for building custom QMC backends.
+pub mod util;

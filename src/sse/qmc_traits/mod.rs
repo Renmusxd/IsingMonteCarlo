@@ -11,10 +11,8 @@ mod heatbath;
 pub mod op_container;
 /// QMC timesteps and analysis.
 pub mod qmc_stepper;
-/// Resonating bonds
-pub mod rvb;
 /// Reasonating bonds cluster.
-pub mod rvb_cluster;
+pub mod rvb;
 
 pub use cluster::*;
 pub use diagonal::*;
@@ -24,7 +22,6 @@ pub use heatbath::*;
 pub use op_container::*;
 pub use qmc_stepper::*;
 pub use rvb::*;
-pub use rvb_cluster::*;
 
 /// Check integrity of a struct.
 pub trait Verify {
