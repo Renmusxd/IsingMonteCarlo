@@ -91,7 +91,7 @@ pub trait DiagonalSubsection: OpContainer + LoopUpdater + DiagonalUpdater {
         vars: &[usize],
         hint: It,
     ) where
-        It: Iterator<Item = Option<usize>>;
+        It: IntoIterator<Item = Option<usize>>;
 
     /// Returns arg made for the mutation
     fn return_args(&mut self, args: Self::Args);
@@ -107,7 +107,7 @@ pub trait DiagonalSubsection: OpContainer + LoopUpdater + DiagonalUpdater {
         vars: &[usize],
         hint: It,
     ) where
-        It: Iterator<Item = Option<usize>>;
+        It: IntoIterator<Item = Option<usize>>;
 
     /// Iterate over ops at indices less than or equal to p. Applies function `f_at_p` only to the
     /// op at p. Applies `f` to all other ops above p.

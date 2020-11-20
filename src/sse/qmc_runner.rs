@@ -576,7 +576,10 @@ impl Interaction {
     }
 
     #[cfg(feature = "autocorrelations")]
-    fn at_diag_iter<It: Iterator<Item = bool>>(&self, it: It) -> Result<f64, String> {
+    fn at_diag_iter<It>(&self, it: It) -> Result<f64, String>
+    where
+        It: IntoIterator<Item = bool>,
+    {
         let index = if self.constant_along_diagonal {
             0 // Any index works.
         } else {
@@ -628,8 +631,11 @@ impl Interaction {
         Self::index_from_iter(outputs.iter().chain(inputs.iter()).cloned())
     }
 
-    fn index_from_iter<It: Iterator<Item = bool>>(it: It) -> usize {
-        it.fold(0usize, |mut acc, b| {
+    fn index_from_iter<It>(it: It) -> usize
+    where
+        It: IntoIterator<Item = bool>,
+    {
+        it.into_iter().fold(0usize, |mut acc, b| {
             acc <<= 1;
             acc |= if b { 1 } else { 0 };
             acc

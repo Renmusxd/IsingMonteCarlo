@@ -24,13 +24,19 @@ pub trait Op: Clone + Debug {
         C: Into<Self::SubState>;
 
     /// Make vars (this is here mostly due to rust bug 38078)
-    fn make_vars<V: Iterator<Item = usize>>(vars: V) -> Self::Vars {
-        vars.collect()
+    fn make_vars<V>(vars: V) -> Self::Vars
+    where
+        V: IntoIterator<Item = usize>,
+    {
+        vars.into_iter().collect()
     }
 
     /// Make substate (this is here mostly due to rust bug 38078)
-    fn make_substate<S: Iterator<Item = bool>>(state: S) -> Self::SubState {
-        state.collect()
+    fn make_substate<S>(state: S) -> Self::SubState
+    where
+        S: IntoIterator<Item = bool>,
+    {
+        state.into_iter().collect()
     }
 
     /// Get the relative index of a variable.

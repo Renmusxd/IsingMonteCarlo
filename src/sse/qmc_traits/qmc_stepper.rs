@@ -62,8 +62,9 @@ pub trait QMCStepper {
     ) -> f64
     where
         F: Fn(T, &[bool]),
-        I: Iterator<Item = T>,
+        I: IntoIterator<Item = T>,
     {
+        let zip_with = zip_with.into_iter();
         let (_, e) = self.timesteps_measure(
             t,
             beta,

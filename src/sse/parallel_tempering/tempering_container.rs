@@ -254,8 +254,11 @@ where
     }
 }
 
-fn unwrap_chunk<T, It: Iterator<Item = T>>(it: It) -> (T, T) {
-    let mut graphs: SmallVec<[T; 2]> = it.collect();
+fn unwrap_chunk<T, It>(it: It) -> (T, T)
+where
+    It: IntoIterator<Item = T>,
+{
+    let mut graphs: SmallVec<[T; 2]> = it.into_iter().collect();
     assert_eq!(graphs.len(), 2);
     let gb: T = graphs.pop().unwrap();
     let ga: T = graphs.pop().unwrap();
@@ -726,16 +729,19 @@ pub mod serialization {
         }
 
         /// Convert into a tempering container using the iterator of rngs.
-        pub fn into_tempering_container<R1: Rng, R2: Rng, It: Iterator<Item = R2>>(
+        pub fn into_tempering_container<R1: Rng, R2: Rng, It>(
             self,
             container_rng: R1,
             graph_rngs: It,
-        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M>> {
+        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M>>
+        where
+            It: IntoIterator<Item = R2>,
+        {
             TemperingContainer {
                 graphs: self
                     .graphs
                     .into_iter()
-                    .zip(graph_rngs)
+                    .zip(graph_rngs.into_iter())
                     .map(|((g, beta), rng)| (g.into_qmc(rng), beta))
                     .collect(),
                 rng: Some(container_rng),

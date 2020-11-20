@@ -80,7 +80,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -93,7 +93,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -106,7 +106,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -119,7 +119,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -132,7 +132,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -145,7 +145,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 100.0;
         g.timesteps(1000, beta);
@@ -158,7 +158,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 100.0;
         g.timesteps(1000, beta);
@@ -171,7 +171,7 @@ mod tests {
         let rng = SmallRng::seed_from_u64(1234);
         let mut g =
             QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb_cluster(true).unwrap();
 
         let beta = 100.0;
         g.timesteps(1000, beta);

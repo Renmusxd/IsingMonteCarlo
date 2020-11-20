@@ -15,10 +15,11 @@ impl BondWeights {
     /// Make a new BondWeights using an iterator of each individual bond's weight.
     pub fn new<It>(max_bond_weights: It) -> Self
     where
-        It: Iterator<Item = f64>,
+        It: IntoIterator<Item = f64>,
     {
         let max_weight_and_cumulative =
             max_bond_weights
+                .into_iter()
                 .enumerate()
                 .fold(vec![], |mut acc, (b, w)| {
                     if acc.is_empty() {

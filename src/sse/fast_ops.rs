@@ -71,15 +71,21 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
     }
 
     /// Make a new Manager from an interator of ops, and number of variables.
-    pub fn new_from_ops<I: Iterator<Item = (usize, O)>>(nvars: usize, ps_and_ops: I) -> Self {
+    pub fn new_from_ops<I>(nvars: usize, ps_and_ops: I) -> Self
+    where
+        I: IntoIterator<Item = (usize, O)>,
+    {
         let mut man = Self::new_from_nvars(nvars);
         man.clear_and_install_ops(ps_and_ops);
         man
     }
 
-    fn clear_and_install_ops<I: Iterator<Item = (usize, O)>>(&mut self, ps_and_ops: I) {
+    fn clear_and_install_ops<I>(&mut self, ps_and_ops: I)
+    where
+        I: IntoIterator<Item = (usize, O)>,
+    {
         let nvars = self.var_ends.len();
-        let ps_and_ops = ps_and_ops.collect::<Vec<_>>();
+        let ps_and_ops = ps_and_ops.into_iter().collect::<Vec<_>>();
         if ps_and_ops.is_empty() {
             return;
         }
@@ -283,6 +289,7 @@ impl MutateArgs for FastOpMutateArgs {
 
 impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
     type Args = FastOpMutateArgs;
+
     fn mutate_p<T, F>(&mut self, f: F, p: usize, t: T, mut args: Self::Args) -> (T, Self::Args)
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
@@ -752,7 +759,7 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         vars: &[usize],
         hint: It,
     ) where
-        It: Iterator<Item = Option<usize>>,
+        It: IntoIterator<Item = Option<usize>>,
     {
         let psel = p;
         let iter_and_set = |mut pcheck: usize,
@@ -792,7 +799,8 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         };
 
         // Need to find an op for each var that has ops on worldline.
-        hint.zip(vars.iter().cloned())
+        hint.into_iter()
+            .zip(vars.iter().cloned())
             .enumerate()
             .for_each(|(subvar, (phint, var))| {
                 debug_assert!(
@@ -883,7 +891,7 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         vars: &[usize],
         hint: It,
     ) where
-        It: Iterator<Item = Option<usize>>,
+        It: IntoIterator<Item = Option<usize>>,
     {
         let psel = p;
         let iter_and_set = |mut pcheck: usize,
@@ -920,7 +928,8 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         };
 
         // Need to find an op for each var that has ops on worldline.
-        hint.zip(vars.iter().cloned())
+        hint.into_iter()
+            .zip(vars.iter().cloned())
             .enumerate()
             .for_each(|(subvar, (phint, var))| {
                 debug_assert!(

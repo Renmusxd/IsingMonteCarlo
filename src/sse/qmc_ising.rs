@@ -248,26 +248,44 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
     /// Perform a single rvb step.
     pub fn single_rvb_step(&mut self) -> Result<(), String> {
-        unimplemented!();
+        let mut state = self.state.take().unwrap();
+        if self.classical_bonds.is_none() {
+            self.make_classical_bonds(state.len())?;
+        }
+        let mut manager = self.op_manager.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
 
-        // TODO add single rvb step.
-        // let mut state = self.state.take().unwrap();
-        // if self.classical_bonds.is_none() {
-        //     self.make_classical_bonds(state.len())?;
-        // }
-        // let mut manager = self.op_manager.take().unwrap();
-        // let rng = self.rng.as_mut().unwrap();
-        //
-        // let edges = EdgeNav {
-        //     var_to_bonds: self.classical_bonds.as_ref().unwrap(),
-        //     edges: &self.edges,
-        // };
-        //
-        // manager.rvb_update(&edges, &mut state, rng);
-        //
-        // self.op_manager = Some(manager);
-        // self.state = Some(state);
-        // Ok(())
+        let edges = EdgeNav {
+            var_to_bonds: self.classical_bonds.as_ref().unwrap(),
+            edges: &self.edges,
+        };
+
+        manager.rvb_update(&edges, &mut state, rng);
+
+        self.op_manager = Some(manager);
+        self.state = Some(state);
+        Ok(())
+    }
+
+    /// Perform a single rvb step.
+    pub fn single_rvb_cluster_step(&mut self) -> Result<(), String> {
+        let mut state = self.state.take().unwrap();
+        if self.classical_bonds.is_none() {
+            self.make_classical_bonds(state.len())?;
+        }
+        let mut manager = self.op_manager.take().unwrap();
+        let rng = self.rng.as_mut().unwrap();
+
+        let edges = EdgeNav {
+            var_to_bonds: self.classical_bonds.as_ref().unwrap(),
+            edges: &self.edges,
+        };
+
+        manager.rvb_cluster_update(&edges, &mut state, 1, rng);
+
+        self.op_manager = Some(manager);
+        self.state = Some(state);
+        Ok(())
     }
 
     /// Build classical bonds list, assume all js are the same magnitude.
