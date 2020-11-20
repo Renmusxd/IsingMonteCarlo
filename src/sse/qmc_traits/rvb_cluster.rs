@@ -11,8 +11,7 @@ pub trait RVBClusterUpdater: RVBUpdater + DiagonalSubsection + Factory<Vec<Optio
         state: &mut [bool],
         updates: usize,
         rng: &mut R,
-    ) {
-        // TODO: can parallelize this!
+    ) -> usize {
         let mut var_starts: Vec<usize> = self.get_instance();
         let mut var_lengths: Vec<usize> = self.get_instance();
         let mut constant_ps: Vec<usize> = self.get_instance();
@@ -20,23 +19,15 @@ pub trait RVBClusterUpdater: RVBUpdater + DiagonalSubsection + Factory<Vec<Optio
         let mut vars_with_zero_ops: Vec<usize> = self.get_instance();
 
         // O(beta * n)
-        (0..self.get_nvars()).for_each(|v| {
-            let start = constant_ps.len();
-            var_starts.push(start);
-            self.constant_ops_on_var(v, &mut constant_ps);
-            debug_assert!(
-                constant_ps.iter().cloned().all(|p| {
-                    let op = self.get_node_ref(p).unwrap().get_op_ref();
-                    op.get_vars().len() == 1
-                }),
-                "RVB cluster only supports constant ops with a single variable."
-            );
-            var_lengths.push(constant_ps.len() - start);
-            if constant_ps.len() == *var_starts.last().unwrap() {
-                vars_with_zero_ops.push(v);
-            }
-        });
+        find_constants(
+            self,
+            &mut var_starts,
+            &mut var_lengths,
+            &mut constant_ps,
+            &mut vars_with_zero_ops,
+        );
 
+        let mut num_succ = 0;
         for _ in 0..updates {
             // Pick starting flip.
             let choice = rng.gen_range(0, constant_ps.len() + vars_with_zero_ops.len());
@@ -146,14 +137,11 @@ pub trait RVBClusterUpdater: RVBUpdater + DiagonalSubsection + Factory<Vec<Optio
 
             let p_to_flip = calculate_flip_prob(
                 self,
-                state,
-                &mut substate,
-                &mut cluster_starting_state,
-                &cluster_toggle_ps,
+                (state, &mut substate),
+                (&mut cluster_starting_state, &cluster_toggle_ps),
                 &subvar_boundary_tops,
-                &subvars,
+                (&subvars, |v| var_to_subvar[v]),
                 edges,
-                |v| var_to_subvar[v],
             );
             let should_mutate = if p_to_flip > 1.0 {
                 true
@@ -165,14 +153,11 @@ pub trait RVBClusterUpdater: RVBUpdater + DiagonalSubsection + Factory<Vec<Optio
                 // Great, mutate the graph.
                 mutate_graph(
                     self,
-                    state,
-                    &mut substate,
-                    &mut cluster_starting_state,
-                    &cluster_toggle_ps,
+                    (state, &mut substate),
+                    (&mut cluster_starting_state, &cluster_toggle_ps),
                     &subvar_boundary_tops,
-                    &subvars,
+                    (&subvars, |v| var_to_subvar[v]),
                     edges,
-                    |v| var_to_subvar[v],
                     rng,
                 );
                 let starting_cluster = cluster_starting_state
@@ -191,6 +176,7 @@ pub trait RVBClusterUpdater: RVBUpdater + DiagonalSubsection + Factory<Vec<Optio
                             state[v] = state[v] != c;
                         });
                 }
+                num_succ += 1;
             }
             self.return_instance(var_to_subvar);
             self.return_instance(subvar_boundary_tops);
@@ -204,20 +190,18 @@ pub trait RVBClusterUpdater: RVBUpdater + DiagonalSubsection + Factory<Vec<Optio
         self.return_instance(constant_ps);
         self.return_instance(var_lengths);
         self.return_instance(var_starts);
+        num_succ
     }
 }
 
 /// Returns true if substate is changed.
 fn mutate_graph<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng>(
     rvb: &mut RVB,
-    state: &[bool],
-    substate: &mut [bool],
-    cluster_state: &mut [bool],
-    cluster_flips: &[usize],         // ps in sorted order
+    (state, substate): (&[bool], &mut [bool]),
+    (cluster_state, cluster_flips): (&mut [bool], &[usize]),
     boundary_tops: &[Option<usize>], // top for each of vars.
-    vars: &[usize],
+    (vars, var_to_subvar): (&[usize], VS),
     edges: &EN,
-    var_to_subvar: VS,
     rng: &mut R,
 ) where
     VS: Fn(usize) -> Option<usize>,
@@ -416,8 +400,7 @@ fn mutate_graph<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized,
                                 cluster_state,
                                 substate,
                                 is_sat,
-                                sat_bonds,
-                                unsat_bonds,
+                                (sat_bonds, unsat_bonds),
                                 &var_to_subvar,
                                 edges,
                             );
@@ -477,41 +460,39 @@ fn mutate_graph<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized,
                             // If out of known region or if diagonal and not flipped by cluster.
                             if !any_subvars || (!any_in_cluster && op.is_diagonal()) {
                                 None
-                            } else {
-                                if any_in_cluster {
-                                    let mut new_op = op.clone();
-                                    let (ins, outs) = new_op.get_mut_inputs_and_outputs();
-                                    ins.iter_mut().for_each(|b| *b = !*b);
-                                    outs.iter_mut().for_each(|b| *b = !*b);
+                            } else if any_in_cluster {
+                                let mut new_op = op.clone();
+                                let (ins, outs) = new_op.get_mut_inputs_and_outputs();
+                                ins.iter_mut().for_each(|b| *b = !*b);
+                                outs.iter_mut().for_each(|b| *b = !*b);
 
-                                    if !op.is_diagonal() {
-                                        // Update state and bonds.
-                                        toggle_state_and_bonds(
-                                            &new_op,
-                                            substate,
-                                            sat_bonds,
-                                            unsat_bonds,
-                                            &var_to_subvar,
-                                            edges,
-                                        );
-                                    }
-
-                                    Some(Some(new_op))
-                                } else {
-                                    if !op.is_diagonal() {
-                                        // Update state and bonds.
-                                        toggle_state_and_bonds(
-                                            op,
-                                            substate,
-                                            sat_bonds,
-                                            unsat_bonds,
-                                            &var_to_subvar,
-                                            edges,
-                                        );
-                                    }
-
-                                    None
+                                if !op.is_diagonal() {
+                                    // Update state and bonds.
+                                    toggle_state_and_bonds(
+                                        &new_op,
+                                        substate,
+                                        sat_bonds,
+                                        unsat_bonds,
+                                        &var_to_subvar,
+                                        edges,
+                                    );
                                 }
+
+                                Some(Some(new_op))
+                            } else {
+                                if !op.is_diagonal() {
+                                    // Update state and bonds.
+                                    toggle_state_and_bonds(
+                                        op,
+                                        substate,
+                                        sat_bonds,
+                                        unsat_bonds,
+                                        &var_to_subvar,
+                                        edges,
+                                    );
+                                }
+
+                                None
                             }
                         };
 
@@ -545,14 +526,11 @@ fn mutate_graph<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized,
 
 fn calculate_flip_prob<RVB: RVBClusterUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized>(
     rvb: &mut RVB,
-    state: &[bool],
-    substate: &mut [bool],
-    cluster_state: &mut [bool],
-    cluster_flips: &[usize],         // ps in sorted order
+    (state, substate): (&[bool], &mut [bool]),
+    (cluster_state, cluster_flips): (&mut [bool], &[usize]),
     boundary_tops: &[Option<usize>], // top for each of vars.
-    vars: &[usize],
+    (vars, var_to_subvar): (&[usize], VS),
     edges: &EN,
-    var_to_subvar: VS,
 ) -> f64
 where
     VS: Fn(usize) -> Option<usize>,
@@ -678,8 +656,7 @@ where
                     cluster_state,
                     substate,
                     is_sat,
-                    &mut sat_bonds,
-                    &mut unsat_bonds,
+                    (&mut sat_bonds, &mut unsat_bonds),
                     &var_to_subvar,
                     edges,
                 )) as usize;
@@ -714,8 +691,7 @@ fn toggle_cluster_and_bonds<O: Op, F, SAT, EN>(
     cluster_state: &mut [bool],
     substate: &[bool],
     is_sat: SAT,
-    sat_bonds: &mut BondContainer<usize>,
-    unsat_bonds: &mut BondContainer<usize>,
+    (sat_bonds, unsat_bonds): (&mut BondContainer<usize>, &mut BondContainer<usize>),
     var_to_subvar: F,
     edges: &EN,
 ) -> i64
@@ -975,6 +951,35 @@ fn find_overlapping_starts(
             eq || overlap
         })
         .map(|(_, ip)| ip)
+}
+
+fn find_constants<RVB>(
+    rvb: &RVB,
+    var_starts: &mut Vec<usize>,
+    var_lengths: &mut Vec<usize>,
+    constant_ps: &mut Vec<usize>,
+    vars_with_zero_ops: &mut Vec<usize>,
+) where
+    RVB: RVBClusterUpdater + ?Sized,
+{
+    // TODO: can parallelize this!
+    // O(beta * n)
+    (0..rvb.get_nvars()).for_each(|v| {
+        let start = constant_ps.len();
+        var_starts.push(start);
+        rvb.constant_ops_on_var(v, constant_ps);
+        debug_assert!(
+            constant_ps.iter().cloned().all(|p| {
+                let op = rvb.get_node_ref(p).unwrap().get_op_ref();
+                op.get_vars().len() == 1
+            }),
+            "RVB cluster only supports constant ops with a single variable."
+        );
+        var_lengths.push(constant_ps.len() - start);
+        if constant_ps.len() == *var_starts.last().unwrap() {
+            vars_with_zero_ops.push(v);
+        }
+    });
 }
 
 #[cfg(test)]

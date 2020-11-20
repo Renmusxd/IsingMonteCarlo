@@ -21,6 +21,13 @@ pub trait IsingManager:
 {
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+enum RVBType {
+    RANDOM,
+    CLUSTER,
+}
+
 /// A container to run QMC simulations.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
@@ -35,7 +42,7 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     rng: Option<R>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
-    run_rvb_steps: bool,
+    run_rvb_steps: Option<RVBType>,
     // List of bonds.
     classical_bonds: Option<Vec<Vec<usize>>>,
     total_rvb_successes: usize,
@@ -107,7 +114,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             singlesite_energy_offset,
             rng: Some(rng),
             vars: (0..nvars).collect(),
-            run_rvb_steps: false,
+            run_rvb_steps: None,
             classical_bonds: None,
             total_rvb_successes: 0,
             rvb_clusters_counted: 0,
@@ -243,6 +250,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     pub fn single_rvb_step(&mut self) -> Result<(), String> {
         unimplemented!();
 
+        // TODO add single rvb step.
         // let mut state = self.state.take().unwrap();
         // if self.classical_bonds.is_none() {
         //     self.make_classical_bonds(state.len())?;
@@ -288,8 +296,23 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
     /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
     pub fn set_run_rvb(&mut self, run_rvb: bool) -> Result<(), String> {
-        self.run_rvb_steps = run_rvb;
-        if self.run_rvb_steps && self.classical_bonds.is_none() {
+        self.run_rvb_steps = if run_rvb { Some(RVBType::RANDOM) } else { None };
+        if run_rvb && self.classical_bonds.is_none() {
+            let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
+            self.make_classical_bonds(nvars)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
+    pub fn set_run_rvb_cluster(&mut self, run_rvb: bool) -> Result<(), String> {
+        self.run_rvb_steps = if run_rvb {
+            Some(RVBType::CLUSTER)
+        } else {
+            None
+        };
+        if run_rvb && self.classical_bonds.is_none() {
             let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
             self.make_classical_bonds(nvars)
         } else {
@@ -513,7 +536,7 @@ where
         };
         self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
-        if self.run_rvb_steps {
+        if let Some(rvb_type) = &self.run_rvb_steps {
             let edges = EdgeNav {
                 var_to_bonds: self.classical_bonds.as_ref().unwrap(),
                 edges: &self.edges,
@@ -521,15 +544,21 @@ where
             // Average cluster size is always 2.
             let steps_to_run = (state.len() + 1) / 2;
 
-            manager.rvb_cluster_update(&edges, &mut state, steps_to_run, &mut rng);
-            //
-            // let (_, succs) = (0..steps_to_run)
-            //     .map(|_| manager.rvb_update(&edges, &mut state, &mut rng))
-            //     .fold((0usize, 0usize), |(totvars, nsucc), (nvars, succ)| {
-            //         (totvars + nvars, nsucc + if succ { 1 } else { 0 })
-            //     });
-            // self.total_rvb_successes += succs;
-            // self.rvb_clusters_counted += steps_to_run;
+            let succs = match rvb_type {
+                RVBType::CLUSTER => {
+                    manager.rvb_cluster_update(&edges, &mut state, steps_to_run, &mut rng)
+                }
+                RVBType::RANDOM => {
+                    let (_, succs) = (0..steps_to_run)
+                        .map(|_| manager.rvb_update(&edges, &mut state, &mut rng))
+                        .fold((0usize, 0usize), |(totvars, nsucc), (nvars, succ)| {
+                            (totvars + nvars, nsucc + if succ { 1 } else { 0 })
+                        });
+                    succs
+                }
+            };
+            self.total_rvb_successes += succs;
+            self.rvb_clusters_counted += steps_to_run;
         }
 
         manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
@@ -749,7 +778,7 @@ pub mod serialization {
         singlesite_energy_offset: f64,
         // Can be easily reconstructed
         nvars: usize,
-        run_rvb_steps: bool,
+        run_rvb_steps: Option<RVBType>,
         classical_bonds: Option<Vec<Vec<usize>>>,
         total_rvb_successes: usize,
         rvb_clusters_counted: usize,
