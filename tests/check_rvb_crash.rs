@@ -265,21 +265,20 @@ fn run_four() {
 
 #[test]
 fn run_two_unit_cell() {
-    // for i in 0..16 {
-    let i = 0;
-    let edges = two_unit_cell();
-    let nvars = 8;
-    let rng = SmallRng::seed_from_u64(i);
-    let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
-        edges,
-        1.0,
-        nvars,
-        rng,
-        Some(vec![false; nvars]),
-    );
-    ising.timesteps(1000, 1.0);
-    ising.set_run_rvb(true).unwrap();
-    ising.timesteps(1000, 1.0);
-    assert!(ising.verify());
-    // }
+    for i in 0..16 {
+        let edges = two_unit_cell();
+        let nvars = 8;
+        let rng = SmallRng::seed_from_u64(i);
+        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            edges,
+            1.0,
+            nvars,
+            rng,
+            Some(vec![false; nvars]),
+        );
+        ising.timesteps(1000, 1.0);
+        ising.set_run_rvb(true).unwrap();
+        ising.timesteps(1000, 1.0);
+        assert!(ising.verify());
+    }
 }

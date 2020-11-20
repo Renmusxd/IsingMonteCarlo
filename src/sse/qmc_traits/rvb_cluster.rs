@@ -1165,14 +1165,11 @@ mod sc_tests {
 
         let p = calculate_flip_prob(
             &mut manager,
-            &[false, false],
-            &mut [false, false],
-            &mut [false, false],
-            &[3, 6],             // ps in sorted order
-            &[Some(2), Some(1)], // top for each of vars.
-            &[0, 1],
+            (&[false, false], &mut [false, false]),
+            (&mut [false, false], &[3, 6]),
+            &[Some(2), Some(1)],
+            (&[0, 1], |v| Some(v)),
             &edges,
-            |v| Some(v),
         );
         println!("{}", p);
     }
