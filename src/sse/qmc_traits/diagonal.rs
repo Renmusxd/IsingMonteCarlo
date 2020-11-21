@@ -1,34 +1,14 @@
 use crate::sse::qmc_traits::op_container::*;
 use rand::Rng;
 
-/// A hamiltonian for the graph.
-#[derive(Debug)]
-pub struct Hamiltonian<'a, H, E>
-where
-    H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    E: Fn(usize) -> (&'a [usize], bool),
-{
+/// An object which provides all required details of the hamiltonian.
+pub trait Hamiltonian<'a> {
     /// Maps (vars, bond, inputs, outputs) to a float matrix element.
-    pub(crate) hamiltonian: H,
-    /// The number of bonds which exist.
-    pub(crate) num_edges: usize,
+    fn hamiltonian(&self, vars: &[usize], bond: usize, inputs: &[bool], outputs: &[bool]) -> f64;
     /// Give edges for a bond, and if the bond is a constant.
-    pub(crate) edge_fn: E,
-}
-
-impl<'a, H, E> Hamiltonian<'a, H, E>
-where
-    H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    E: Fn(usize) -> (&'a [usize], bool),
-{
-    /// Construct a new hamiltonian with a function, edge lookup function, and the number of bonds.
-    pub fn new(hamiltonian: H, edge_fn: E, num_edges: usize) -> Self {
-        Hamiltonian {
-            hamiltonian,
-            edge_fn,
-            num_edges,
-        }
-    }
+    fn edge_fn(&self, bond: usize) -> (&'a [usize], bool);
+    /// The number of bonds which exist.
+    fn num_edges(&self) -> usize;
 }
 
 /// Perform diagonal updates to an op container.
@@ -101,16 +81,13 @@ pub trait DiagonalUpdater: OpContainer {
     }
 
     /// Perform a diagonal update step with thread rng.
-    fn make_diagonal_update<'b, H, E>(
+    fn make_diagonal_update<'b, H: Hamiltonian<'b>>(
         &mut self,
         cutoff: usize,
         beta: f64,
         state: &[bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
-    ) where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+        hamiltonian: &H,
+    ) {
         self.make_diagonal_update_with_rng(
             cutoff,
             beta,
@@ -121,33 +98,27 @@ pub trait DiagonalUpdater: OpContainer {
     }
 
     /// Perform a diagonal update step.
-    fn make_diagonal_update_with_rng<'b, H, E, R: Rng>(
+    fn make_diagonal_update_with_rng<'b, H: Hamiltonian<'b>, R: Rng>(
         &mut self,
         cutoff: usize,
         beta: f64,
         state: &[bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
+        hamiltonian: &H,
         rng: &mut R,
-    ) where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+    ) {
         let mut state = state.to_vec();
         self.make_diagonal_update_with_rng_and_state_ref(cutoff, beta, &mut state, hamiltonian, rng)
     }
 
     /// Perform a diagonal update step using in place edits to state.
-    fn make_diagonal_update_with_rng_and_state_ref<'b, H, E, R: Rng>(
+    fn make_diagonal_update_with_rng_and_state_ref<'b, H: Hamiltonian<'b>, R: Rng>(
         &mut self,
         cutoff: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
+        hamiltonian: &H,
         rng: &mut R,
-    ) where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+    ) {
         self.mutate_ps(0, cutoff, (state, rng), |s, op, (state, rng)| {
             let op = metropolis_single_diagonal_update(
                 op,
@@ -168,21 +139,17 @@ pub trait DiagonalUpdater: OpContainer {
 }
 
 /// Perform a single metropolis update.
-fn metropolis_single_diagonal_update<'b, O: Op, H, E, R: Rng>(
+fn metropolis_single_diagonal_update<'b, O: Op, H: Hamiltonian<'b>, R: Rng>(
     op: Option<&O>,
     cutoff: usize,
     n: usize,
     beta: f64,
     state: &mut [bool],
-    hamiltonian: &Hamiltonian<'b, H, E>,
+    hamiltonian: &H,
     rng: &mut R,
-) -> Option<Option<O>>
-where
-    H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-    E: Fn(usize) -> (&'b [usize], bool),
-{
+) -> Option<Option<O>> {
     let b = match op {
-        None => rng.gen_range(0, hamiltonian.num_edges),
+        None => rng.gen_range(0, hamiltonian.num_edges()),
         Some(op) if op.is_diagonal() => op.get_bond(),
         Some(op) => {
             op.get_vars()
@@ -192,13 +159,13 @@ where
             return None;
         }
     };
-    let (vars, constant) = (hamiltonian.edge_fn)(b);
+    let (vars, constant) = hamiltonian.edge_fn(b);
     let substate = vars.iter().map(|v| state[*v]).collect::<O::SubState>();
-    let mat_element = (hamiltonian.hamiltonian)(vars, b, substate.as_ref(), substate.as_ref());
+    let mat_element = hamiltonian.hamiltonian(vars, b, substate.as_ref(), substate.as_ref());
 
     // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
     // or A. W. Sandvik, Phys. Rev. B 59, 14157 (1999)
-    let numerator = beta * (hamiltonian.num_edges as f64) * mat_element;
+    let numerator = beta * (hamiltonian.num_edges() as f64) * mat_element;
     let denominator = (cutoff - n) as f64;
 
     match op {

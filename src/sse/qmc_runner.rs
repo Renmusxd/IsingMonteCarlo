@@ -1,5 +1,6 @@
 use crate::classical::graph::GraphState;
 use crate::sse::fast_ops::*;
+use crate::sse::ham::Ham;
 use crate::sse::qmc_traits::*;
 #[cfg(feature = "autocorrelations")]
 use crate::sse::QMCBondAutoCorrelations;
@@ -157,11 +158,11 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
 
         let num_bonds = bonds.len();
         let bonds_fn = |b: usize| -> (&[usize], bool) { (&bonds[b].vars, bonds[b].is_constant()) };
-        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
+        let ham = Ham::new(h, bonds_fn, num_bonds);
 
         if self.do_heatbath {
             if self.bond_weights.is_none() {
-                let bond_weights = M::make_bond_weights(h, num_bonds, |b| bonds_fn(b).0);
+                let bond_weights = M::make_bond_weights(&h, num_bonds, |b| bonds_fn(b).0);
                 self.bond_weights = Some(bond_weights);
             };
             let bond_weights = self.bond_weights.as_ref().unwrap();

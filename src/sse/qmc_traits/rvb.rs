@@ -42,12 +42,15 @@ pub trait RVBUpdater:
     /// An implementation by the same name is provided for LoopUpdaters
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
 
+    // TODO add some check for offdiagonal 2-site ops on border.
+
     /// Perform a resonating bond update.
     fn rvb_update<R: Rng, EN: EdgeNavigator>(
         &mut self,
         edges: &EN,
         state: &mut [bool],
         updates: usize,
+        // TODO add a hamiltonian here.
         rng: &mut R,
     ) -> usize {
         let mut var_starts: Vec<usize> = self.get_instance();
@@ -374,8 +377,16 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                             mut rng,
                         ) = acc;
 
-                        debug_assert!(sat_bonds.iter().cloned().all(|b| is_sat(b, substate)));
-                        debug_assert!(unsat_bonds.iter().cloned().all(|b| !is_sat(b, substate)));
+                        debug_assert!(sat_bonds
+                            .iter()
+                            .map(|(b, _)| b)
+                            .cloned()
+                            .all(|b| is_sat(b, substate)));
+                        debug_assert!(unsat_bonds
+                            .iter()
+                            .map(|(b, _)| b)
+                            .cloned()
+                            .all(|b| !is_sat(b, substate)));
 
                         let in_sat = sat_bonds.contains(&op.get_bond());
                         let in_unsat = unsat_bonds.contains(&op.get_bond());
@@ -386,7 +397,7 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                             debug_assert!(op.is_diagonal());
 
                             // Need to rotate
-                            let new_bond = if in_sat {
+                            let (new_bond, _) = if in_sat {
                                 unsat_bonds.get_random(&mut rng).unwrap()
                             } else {
                                 sat_bonds.get_random(&mut rng).unwrap()
@@ -634,8 +645,16 @@ where
                 break;
             }
         }
-        debug_assert!(sat_bonds.iter().cloned().all(|b| is_sat(b, substate)));
-        debug_assert!(unsat_bonds.iter().cloned().all(|b| !is_sat(b, substate)));
+        debug_assert!(sat_bonds
+            .iter()
+            .map(|(b, _)| b)
+            .cloned()
+            .all(|b| is_sat(b, substate)));
+        debug_assert!(unsat_bonds
+            .iter()
+            .map(|(b, _)| b)
+            .cloned()
+            .all(|b| !is_sat(b, substate)));
 
         let node = rvb.get_node_ref(p).unwrap();
         let op = node.get_op_ref();

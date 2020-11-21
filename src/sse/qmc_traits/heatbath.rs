@@ -78,17 +78,14 @@ impl BondWeights {
 /// Heatbath updates for a diagonal updater.
 pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
     /// Perform a single heatbath update.
-    fn make_heatbath_diagonal_update<'b, H, E>(
+    fn make_heatbath_diagonal_update<'b, H: Hamiltonian<'b>>(
         &mut self,
         cutoff: usize,
         beta: f64,
         state: &[bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
+        hamiltonian: &H,
         bond_weights: &BondWeights,
-    ) where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+    ) {
         self.make_heatbath_diagonal_update_with_rng(
             cutoff,
             beta,
@@ -100,18 +97,15 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
     }
 
     /// Perform a single heatbath update.
-    fn make_heatbath_diagonal_update_with_rng<'b, H, E, R: Rng>(
+    fn make_heatbath_diagonal_update_with_rng<'b, H: Hamiltonian<'b>, R: Rng>(
         &mut self,
         cutoff: usize,
         beta: f64,
         state: &[bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
+        hamiltonian: &H,
         bond_weights: &BondWeights,
         rng: &mut R,
-    ) where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+    ) {
         let mut state = state.to_vec();
         self.make_heatbath_diagonal_update_with_rng_and_state_ref(
             cutoff,
@@ -124,18 +118,15 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
     }
 
     /// Perform a single heatbath update.
-    fn make_heatbath_diagonal_update_with_rng_and_state_ref<'b, H, E, R: Rng>(
+    fn make_heatbath_diagonal_update_with_rng_and_state_ref<'b, H: Hamiltonian<'b>, R: Rng>(
         &mut self,
         cutoff: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian: &Hamiltonian<'b, H, E>,
+        hamiltonian: &H,
         bond_weights: &BondWeights,
         rng: &mut R,
-    ) where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+    ) {
         self.mutate_ps(0, cutoff, (state, rng), |s, op, (state, rng)| {
             let op = Self::heat_bath_single_diagonal_update(
                 op,
@@ -143,7 +134,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                 s.get_n(),
                 beta,
                 state,
-                (&hamiltonian, bond_weights),
+                (hamiltonian, bond_weights),
                 rng,
             );
             (op, (state, rng))
@@ -170,19 +161,15 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
     }
 
     /// Perform a single heatbath update.
-    fn heat_bath_single_diagonal_update<'b, H, E, R: Rng>(
+    fn heat_bath_single_diagonal_update<'b, H: Hamiltonian<'b>, R: Rng>(
         op: Option<&Self::Op>,
         cutoff: usize,
         n: usize,
         beta: f64,
         state: &mut [bool],
-        hamiltonian_and_weights: (&Hamiltonian<'b, H, E>, &BondWeights),
+        hamiltonian_and_weights: (&H, &BondWeights),
         rng: &mut R,
-    ) -> Option<Option<Self::Op>>
-    where
-        H: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
-        E: Fn(usize) -> (&'b [usize], bool),
-    {
+    ) -> Option<Option<Self::Op>> {
         let (hamiltonian, bond_weights) = hamiltonian_and_weights;
         let new_op = match op {
             None => {
@@ -193,11 +180,11 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                     let p = rng.gen_range(0.0, 1.0);
                     // Find the bond to use, weighted by their matrix element.
                     let (b, maxweight) = bond_weights.get_random_bond_and_max_weight(rng).unwrap();
-                    let (vars, constant) = (hamiltonian.edge_fn)(b);
+                    let (vars, constant) = hamiltonian.edge_fn(b);
                     let substate = Self::Op::make_substate(vars.iter().map(|v| state[*v]));
                     let vars = Self::Op::make_vars(vars.iter().cloned());
 
-                    let weight = (hamiltonian.hamiltonian)(
+                    let weight = hamiltonian.hamiltonian(
                         vars.as_ref(),
                         b,
                         substate.as_ref(),

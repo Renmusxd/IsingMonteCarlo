@@ -2,13 +2,15 @@ use crate::util::allocator::Reset;
 use rand::prelude::*;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// A HashSet with random sampling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct BondContainer<T: Clone + Into<usize>> {
     map: Vec<Option<usize>>,
-    keys: Option<Vec<T>>,
+    keys: Vec<(T, f64)>,
+    total_weight: f64,
 }
 
 impl<T: Clone + Into<usize>> Reset for BondContainer<T> {
@@ -17,37 +19,28 @@ impl<T: Clone + Into<usize>> Reset for BondContainer<T> {
     }
 }
 
-impl<T: Clone + Into<usize>> Default for BondContainer<T> {
-    fn default() -> Self {
-        Self {
-            map: Vec::default(),
-            keys: Some(Vec::default()),
-        }
-    }
-}
-
 impl<T: Clone + Into<usize>> BondContainer<T> {
-    /// Get a random entry from the HashSampler
-    pub fn get_random<R: Rng>(&self, mut r: R) -> Option<&T> {
-        let keys = self.keys.as_ref().unwrap();
-        if keys.is_empty() {
-            None
-        } else {
-            // Choose a key to remove
-            let index = r.gen_range(0, keys.len());
-            Some(&keys[index])
-        }
+    /// Return sum of all weights in BondContainer.
+    pub fn get_total_weight(&self) -> f64 {
+        self.total_weight
     }
 
-    /// Pop a random element.
-    pub fn pop_random<R: Rng>(&mut self, mut r: R) -> Option<T> {
-        let keys = self.keys.as_ref().unwrap();
-        if keys.is_empty() {
+    /// Get a random weighted entry.
+    pub fn get_random<R: Rng>(&self, mut r: R) -> Option<&(T, f64)> {
+        if self.keys.is_empty() {
             None
         } else {
             // Choose a key to remove
-            let keys_index = r.gen_range(0, keys.len());
-            Some(self.remove_index(keys_index))
+            let mut p = r.gen_range(0f64, self.total_weight);
+            let mut i = 0;
+            while i < self.keys.len() {
+                p -= self.keys[i].1;
+                if p <= 0. {
+                    break;
+                }
+                i += 1
+            }
+            Some(&self.keys[i])
         }
     }
 
@@ -63,19 +56,19 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
         }
     }
 
-    fn remove_index(&mut self, keys_index: usize) -> T {
+    fn remove_index(&mut self, keys_index: usize) -> (T, f64) {
         // Move key to last position.
-        let keys = self.keys.as_mut().unwrap();
-        let last_indx = keys.len() - 1;
-        keys.swap(keys_index, last_indx);
+        let last_indx = self.keys.len() - 1;
+        self.keys.swap(keys_index, last_indx);
         // Update address
-        let bond_number = keys[keys_index].clone().into();
+        let bond_number = self.keys[keys_index].0.clone().into();
         let old_indx = self.map[bond_number].as_mut().unwrap();
         *old_indx = keys_index;
         // Remove key
-        let out = self.keys.as_mut().unwrap().pop().unwrap();
+        let (out, weight) = self.keys.pop().unwrap();
         self.map[out.clone().into()] = None;
-        out
+        self.total_weight -= weight;
+        (out, weight)
     }
 
     /// Check if a given element has been inserted.
@@ -90,6 +83,8 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
 
     /// Insert an element.
     pub fn insert(&mut self, value: T) -> bool {
+        // TODO fix
+        let weight = 1.0;
         let entry_index = value.clone().into();
         if entry_index >= self.map.len() {
             self.map.resize(entry_index + 1, None);
@@ -97,9 +92,9 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
         match self.map[entry_index] {
             Some(_) => false,
             None => {
-                let keys = self.keys.as_mut().unwrap();
-                self.map[entry_index] = Some(keys.len());
-                keys.push(value);
+                self.map[entry_index] = Some(self.keys.len());
+                self.keys.push((value, weight));
+                self.total_weight += weight;
                 true
             }
         }
@@ -107,27 +102,28 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
 
     /// Clear the set
     pub fn clear(&mut self) {
-        let mut keys = self.keys.take().unwrap();
-        keys.iter().for_each(|k| {
+        let keys = &mut self.keys;
+        let map = &mut self.map;
+        keys.iter().map(|(t, _)| t).for_each(|k| {
             let bond = k.clone().into();
-            self.map[bond] = None
+            map[bond] = None
         });
         keys.clear();
-        self.keys = Some(keys);
+        self.total_weight = 0.;
     }
 
     /// Get number of elements in set.
     pub fn len(&self) -> usize {
-        self.keys.as_ref().unwrap().len()
+        self.keys.len()
     }
 
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
-        self.keys.as_ref().unwrap().is_empty()
+        self.keys.is_empty()
     }
 
     /// Iterate through items.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.keys.as_ref().unwrap().iter()
+    pub fn iter(&self) -> impl Iterator<Item = &(T, f64)> {
+        self.keys.iter()
     }
 }

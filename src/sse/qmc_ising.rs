@@ -2,6 +2,7 @@ use crate::classical::graph::{Edge, GraphState};
 #[cfg(feature = "autocorrelations")]
 pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
+use crate::sse::ham::Ham;
 use crate::sse::qmc_runner::{QMCManager, QMC};
 pub use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
@@ -194,7 +195,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         };
 
         // Start by editing the ops list
-        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
+        let ham = Ham::new(h, bonds_fn, num_bonds);
 
         if let Some(bond_weights) = &self.bond_weights {
             manager.make_heatbath_diagonal_update_with_rng_and_state_ref(
@@ -490,7 +491,7 @@ where
         };
 
         // Start by editing the ops list
-        let ham = Hamiltonian::new(h, bonds_fn, num_bonds);
+        let ham = Ham::new(h, bonds_fn, num_bonds);
         if let Some(bond_weights) = &self.bond_weights {
             manager.make_heatbath_diagonal_update_with_rng_and_state_ref(
                 self.cutoff,

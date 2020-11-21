@@ -82,6 +82,9 @@ pub mod qmc_types;
 #[cfg(feature = "tempering")]
 pub mod parallel_tempering;
 
+/// A default hamiltonian class for carrying around functions.
+pub(crate) mod ham;
+
 /// Debugging stuff.
 pub mod qmc_debug;
 
