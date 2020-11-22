@@ -58,21 +58,6 @@ impl BondWeights {
             .binary_search_by(|(_, _, c)| c.partial_cmp(&val).unwrap())
             .unwrap_or_else(|x| x)
     }
-
-    fn max_weight_for_bond(&self, b: usize) -> f64 {
-        self.max_weight_and_cumulative
-            .iter()
-            .find_map(
-                |(bond, maxweight, _)| {
-                    if *bond == b {
-                        Some(*maxweight)
-                    } else {
-                        None
-                    }
-                },
-            )
-            .unwrap()
-    }
 }
 
 /// Heatbath updates for a diagonal updater.
