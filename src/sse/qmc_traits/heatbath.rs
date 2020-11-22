@@ -190,16 +190,6 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                 let numerator = (cutoff - n + 1) as f64;
                 let denominator = numerator + beta * bond_weights.total().unwrap();
 
-                // TODO see if any modification is necessary here.
-                // let weight = (hamiltonian.hamiltonian)(
-                //     op.get_vars(),
-                //     op.get_bond(),
-                //     op.get_inputs(),
-                //     op.get_outputs(),
-                // );
-                // let maxweight = bond_weights.max_weight_for_bond(op.get_bond());
-                // let denominator = denominator * weight / maxweight;
-
                 if rng.gen_bool(numerator / denominator) {
                     Some(None)
                 } else {
