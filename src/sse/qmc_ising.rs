@@ -31,8 +31,7 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     state: Option<Vec<bool>>,
     cutoff: usize,
     op_manager: Option<M>,
-    twosite_energy_offset: f64,
-    singlesite_energy_offset: f64,
+    total_energy_offset: f64,
     rng: Option<R>,
     // This is just an array of the variables 0..nvars
     vars: Vec<usize>,
@@ -80,15 +79,10 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             .into_iter()
             .map(|((a, b), j)| (vec![a, b], j))
             .collect::<Vec<_>>();
-        let twosite_energy_offset = edges
-            .iter()
-            .fold(None, |acc, (_, j)| match acc {
-                None => Some(*j),
-                Some(acc) => Some(if *j < acc { *j } else { acc }),
-            })
-            .unwrap_or(0.0)
-            .abs();
-        let singlesite_energy_offset = transverse;
+        let edge_offset = edges.iter().map(|(_, j)| j.abs()).sum::<f64>();
+        let field_offset = nvars as f64 * transverse;
+        let total_energy_offset = edge_offset + field_offset;
+
         let mut ops = M::new_with_bonds(nvars, edges.len() + nvars);
         ops.set_cutoff(cutoff);
 
@@ -104,8 +98,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             state,
             op_manager: Some(ops),
             cutoff,
-            twosite_energy_offset,
-            singlesite_energy_offset,
+            total_energy_offset,
             rng: Some(rng),
             vars: (0..nvars).collect(),
             run_rvb_steps: false,
@@ -132,8 +125,6 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         HamInfo {
             edges: &self.edges,
             transverse: self.transverse,
-            singlesite_energy_offset: self.singlesite_energy_offset,
-            twosite_energy_offset: self.twosite_energy_offset,
         }
     }
 
@@ -146,17 +137,11 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         output_state: &[bool],
     ) -> f64 {
         match vars.len() {
-            1 => single_site_hamiltonian(
-                input_state[0],
-                output_state[0],
-                info.transverse,
-                info.singlesite_energy_offset,
-            ),
+            1 => single_site_hamiltonian(input_state[0], output_state[0], info.transverse),
             2 => two_site_hamiltonian(
                 (input_state[0], input_state[1]),
                 (output_state[0], output_state[1]),
                 info.edges[bond].1,
-                info.twosite_energy_offset,
             ),
             _ => unreachable!(),
         }
@@ -172,14 +157,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         let edges = &self.edges;
         let vars = &self.vars;
         let transverse = self.transverse;
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let hinfo = HamInfo {
-            edges,
-            transverse,
-            singlesite_energy_offset,
-            twosite_energy_offset,
-        };
+        let hinfo = HamInfo { edges, transverse };
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
@@ -249,40 +227,62 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
 
+        let nvars = state.len();
+        let edges = &self.edges;
+        let vars = &self.vars;
+        let transverse = self.transverse;
+        let hinfo = HamInfo { edges, transverse };
+        let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
+            Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
+        };
+
+        let num_bonds = edges.len() + nvars;
+        let bonds_fn = |b: usize| -> (&[usize], bool) {
+            if b < edges.len() {
+                (&edges[b].0, false)
+            } else {
+                let b = b - edges.len();
+                (&vars[b..b + 1], true)
+            }
+        };
+
+        // Start by editing the ops list
+        let ham = Ham::new(h, bonds_fn, num_bonds);
+
         let edges = EdgeNav {
             var_to_bonds: self.classical_bonds.as_ref().unwrap(),
             edges: &self.edges,
         };
 
-        manager.rvb_update(&edges, &mut state, 1, rng);
+        manager.rvb_update(
+            &edges,
+            &mut state,
+            1,
+            |bond, sa, sb| {
+                let (va, vb) = edges.vars_for_bond(bond);
+                ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
+            },
+            rng,
+        );
 
         self.op_manager = Some(manager);
         self.state = Some(state);
         Ok(())
     }
 
-    /// Build classical bonds list, assume all js are the same magnitude.
+    /// Build classical bonds list.
     fn make_classical_bonds(&mut self, nvars: usize) -> Result<(), String> {
-        let abs_j = self.edges[0].1.abs();
-        let all_eq = self
-            .edges
+        let mut edge_lookup = vec![vec![]; nvars];
+        self.edges
             .iter()
-            .all(|(_, j)| (j.abs() - abs_j).abs() < std::f64::EPSILON);
-        if all_eq {
-            let mut edge_lookup = vec![vec![]; nvars];
-            self.edges
-                .iter()
-                .map(|(edge, _)| (edge[0], edge[1]))
-                .enumerate()
-                .for_each(|(bond, (a, b))| {
-                    edge_lookup[a].push(bond);
-                    edge_lookup[b].push(bond);
-                });
-            self.classical_bonds = Some(edge_lookup);
-            Ok(())
-        } else {
-            Err("All bonds must have the same magnitude to enable RVB updates".to_string())
-        }
+            .map(|(edge, _)| (edge[0], edge[1]))
+            .enumerate()
+            .for_each(|(bond, (a, b))| {
+                edge_lookup[a].push(bond);
+                edge_lookup[b].push(bond);
+            });
+        self.classical_bonds = Some(edge_lookup);
+        Ok(())
     }
 
     /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
@@ -303,14 +303,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             let edges = &self.edges;
             let vars = &self.vars;
             let transverse = self.transverse;
-            let twosite_energy_offset = self.twosite_energy_offset;
-            let singlesite_energy_offset = self.singlesite_energy_offset;
-            let hinfo = HamInfo {
-                edges,
-                transverse,
-                singlesite_energy_offset,
-                twosite_energy_offset,
-            };
+            let hinfo = HamInfo { edges, transverse };
             let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
                 Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
             };
@@ -399,11 +392,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
     /// Get internal energy offset.
     pub fn get_offset(&self) -> f64 {
-        // Get total energy offset (num_vars * singlesite + num_edges * twosite)
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let nvars = self.vars.len();
-        twosite_energy_offset * self.edges.len() as f64 + singlesite_energy_offset * nvars as f64
+        self.total_energy_offset
     }
 
     /// Check if two instances can safely swap managers and initial states
@@ -468,14 +457,7 @@ where
         let edges = &self.edges;
         let vars = &self.vars;
         let transverse = self.transverse;
-        let twosite_energy_offset = self.twosite_energy_offset;
-        let singlesite_energy_offset = self.singlesite_energy_offset;
-        let hinfo = HamInfo {
-            edges,
-            transverse,
-            singlesite_energy_offset,
-            twosite_energy_offset,
-        };
+        let hinfo = HamInfo { edges, transverse };
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
@@ -520,7 +502,16 @@ where
             // Average cluster size is always 2.
             let steps_to_run = (state.len() + 1) / 2;
 
-            let succs = manager.rvb_update(&edges, &mut state, steps_to_run, &mut rng);
+            let succs = manager.rvb_update(
+                &edges,
+                &mut state,
+                steps_to_run,
+                |bond, sa, sb| {
+                    let (va, vb) = edges.vars_for_bond(bond);
+                    ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
+                },
+                &mut rng,
+            );
             self.total_rvb_successes += succs;
             self.rvb_clusters_counted += steps_to_run;
         }
@@ -571,14 +562,9 @@ where
     }
 }
 
-fn two_site_hamiltonian(
-    inputs: (bool, bool),
-    outputs: (bool, bool),
-    bond: f64,
-    energy_offset: f64,
-) -> f64 {
+fn two_site_hamiltonian(inputs: (bool, bool), outputs: (bool, bool), bond: f64) -> f64 {
     let matentry = if inputs == outputs {
-        energy_offset
+        bond.abs()
             + match inputs {
                 (false, false) => -bond,
                 (false, true) => bond,
@@ -588,20 +574,12 @@ fn two_site_hamiltonian(
     } else {
         0.0
     };
-    assert!(matentry >= 0.0);
+    debug_assert!(matentry >= 0.0);
     matentry
 }
 
-fn single_site_hamiltonian(
-    input_state: bool,
-    output_state: bool,
-    transverse: f64,
-    energy_offset: f64,
-) -> f64 {
-    match (input_state, output_state) {
-        (false, false) | (true, true) => energy_offset,
-        (false, true) | (true, false) => transverse,
-    }
+fn single_site_hamiltonian(_input_state: bool, _output_state: bool, transverse: f64) -> f64 {
+    transverse
 }
 
 /// Data required to evaluate the hamiltonian.
@@ -609,16 +587,11 @@ fn single_site_hamiltonian(
 pub struct HamInfo<'a> {
     edges: &'a [(VecEdge, f64)],
     transverse: f64,
-    singlesite_energy_offset: f64,
-    twosite_energy_offset: f64,
 }
 
 impl<'a> PartialEq for HamInfo<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.edges == other.edges
-            && self.transverse == other.transverse
-            && self.singlesite_energy_offset == other.singlesite_energy_offset
-            && self.twosite_energy_offset == other.twosite_energy_offset
+        self.edges == other.edges && self.transverse == other.transverse
     }
 }
 
@@ -637,8 +610,7 @@ where
             state: self.state.clone(),
             cutoff: self.cutoff,
             op_manager: self.op_manager.clone(),
-            twosite_energy_offset: self.twosite_energy_offset,
-            singlesite_energy_offset: self.singlesite_energy_offset,
+            total_energy_offset: self.total_energy_offset,
             rng: self.rng.clone(),
             vars: self.vars.clone(),
             run_rvb_steps: self.run_rvb_steps,
@@ -738,8 +710,7 @@ pub mod serialization {
         state: Option<Vec<bool>>,
         cutoff: usize,
         op_manager: Option<M>,
-        twosite_energy_offset: f64,
-        singlesite_energy_offset: f64,
+        total_energy_offset: f64,
         // Can be easily reconstructed
         nvars: usize,
         run_rvb_steps: bool,
@@ -762,8 +733,7 @@ pub mod serialization {
                 state: self.state,
                 cutoff: self.cutoff,
                 op_manager: self.op_manager,
-                twosite_energy_offset: self.twosite_energy_offset,
-                singlesite_energy_offset: self.singlesite_energy_offset,
+                total_energy_offset: self.total_energy_offset,
                 rng: Some(rng),
                 vars: (0..self.nvars).collect(),
                 run_rvb_steps: self.run_rvb_steps,
@@ -787,8 +757,7 @@ pub mod serialization {
                 state: self.state,
                 cutoff: self.cutoff,
                 op_manager: self.op_manager,
-                twosite_energy_offset: self.twosite_energy_offset,
-                singlesite_energy_offset: self.singlesite_energy_offset,
+                total_energy_offset: self.total_energy_offset,
                 nvars: self.vars.len(),
                 run_rvb_steps: self.run_rvb_steps,
                 classical_bonds: self.classical_bonds,

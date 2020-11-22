@@ -191,7 +191,6 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                         substate.as_ref(),
                     );
 
-                    // TODO double check this.
                     if p * maxweight < weight {
                         let op = Self::Op::diagonal(vars, b, substate, constant);
                         Some(Some(op))

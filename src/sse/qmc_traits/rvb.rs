@@ -45,14 +45,17 @@ pub trait RVBUpdater:
     // TODO add some check for offdiagonal 2-site ops on border.
 
     /// Perform a resonating bond update.
-    fn rvb_update<R: Rng, EN: EdgeNavigator>(
+    fn rvb_update<R: Rng, EN: EdgeNavigator, H>(
         &mut self,
         edges: &EN,
         state: &mut [bool],
         updates: usize,
-        // TODO add a hamiltonian here.
+        diagonal_edge_hamiltonian: H,
         rng: &mut R,
-    ) -> usize {
+    ) -> usize
+    where
+        H: Fn(usize, bool, bool) -> f64,
+    {
         let mut var_starts: Vec<usize> = self.get_instance();
         let mut var_lengths: Vec<usize> = self.get_instance();
         let mut constant_ps: Vec<usize> = self.get_instance();
@@ -182,11 +185,15 @@ pub trait RVBUpdater:
                 (&mut cluster_starting_state, &cluster_toggle_ps),
                 &subvar_boundary_tops,
                 (&subvars, |v| var_to_subvar[v]),
-                edges,
+                (&diagonal_edge_hamiltonian, edges),
             );
-            let should_mutate = if p_to_flip > 1.0 {
+            let should_mutate = if p_to_flip >= 1.0 {
                 true
             } else {
+                if p_to_flip < 0. {
+                    println!("P = {}", p_to_flip);
+                    debug_print_diagonal(self, state);
+                }
                 rng.gen_bool(p_to_flip)
             };
 
@@ -198,7 +205,7 @@ pub trait RVBUpdater:
                     (&mut cluster_starting_state, &cluster_toggle_ps),
                     &subvar_boundary_tops,
                     (&subvars, |v| var_to_subvar[v]),
-                    edges,
+                    (&diagonal_edge_hamiltonian, edges),
                     rng,
                 );
                 let starting_cluster = cluster_starting_state
@@ -236,16 +243,17 @@ pub trait RVBUpdater:
 }
 
 /// Returns true if substate is changed.
-fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng>(
+fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng, H>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
     (cluster_state, cluster_flips): (&mut [bool], &[usize]),
     boundary_tops: &[Option<usize>], // top for each of vars.
     (vars, var_to_subvar): (&[usize], VS),
-    edges: &EN,
+    (diagonal_hamiltonian, edges): (H, &EN),
     rng: &mut R,
 ) where
     VS: Fn(usize) -> Option<usize>,
+    H: Fn(usize, bool, bool) -> f64,
 {
     // Find all spots where cluster is empty.
     let mut jump_to: Vec<usize> = rvb.get_instance();
@@ -303,18 +311,8 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
         "Should have the same number of starts and ends."
     );
 
-    let is_sat = |bond: usize, substate: &[bool]| -> bool {
-        let p_aligned = edges.bond_prefers_aligned(bond);
-        let (a, b) = edges.vars_for_bond(bond);
-        let a = var_to_subvar(a).unwrap();
-        let b = var_to_subvar(b).unwrap();
-        let aligned = substate[a] == substate[b];
-        aligned == p_aligned
-    };
-
     // Now we have a series of pairs.
-    let mut sat_bonds: BondContainer<usize> = rvb.get_instance();
-    let mut unsat_bonds: BondContainer<usize> = rvb.get_instance();
+    let mut bonds: BondContainer<usize> = rvb.get_instance();
     let mut next_cluster_index = 0;
 
     vars.iter()
@@ -324,11 +322,11 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
             edges.bonds_for_var(v).iter().cloned().for_each(|b| {
                 let ov = edges.other_var_for_bond(v, b).unwrap();
                 if !cluster_state[var_to_subvar(ov).unwrap()] {
-                    if is_sat(b, substate) {
-                        sat_bonds.insert(b);
-                    } else {
-                        unsat_bonds.insert(b);
-                    }
+                    let (va, vb) = edges.vars_for_bond(b);
+                    let subva = var_to_subvar(va).unwrap();
+                    let subvb = var_to_subvar(vb).unwrap();
+                    let w = diagonal_hamiltonian(b, substate[subva], substate[subvb]);
+                    bonds.insert(b, w);
                 }
             })
         });
@@ -355,55 +353,24 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                 let mut args = rvb.get_empty_args(SubvarAccess::VARLIST(&vars));
                 rvb.fill_args_at_p_with_hint(from, &mut args, vars, boundary_tops.iter().cloned());
 
-                let acc = (
-                    next_cluster_index,
-                    &mut sat_bonds,
-                    &mut unsat_bonds,
-                    substate,
-                    cluster_state,
-                    rng,
-                );
+                let acc = (next_cluster_index, &mut bonds, substate, cluster_state, rng);
                 let ret = rvb.mutate_subsection_ops(
                     from,
                     until,
                     acc,
                     |_, op, p, acc| {
-                        let (
-                            mut next_cluster_index,
-                            sat_bonds,
-                            unsat_bonds,
-                            substate,
-                            cluster_state,
-                            mut rng,
-                        ) = acc;
-
-                        debug_assert!(sat_bonds
-                            .iter()
-                            .map(|(b, _)| b)
-                            .cloned()
-                            .all(|b| is_sat(b, substate)));
-                        debug_assert!(unsat_bonds
-                            .iter()
-                            .map(|(b, _)| b)
-                            .cloned()
-                            .all(|b| !is_sat(b, substate)));
-
-                        let in_sat = sat_bonds.contains(&op.get_bond());
-                        let in_unsat = unsat_bonds.contains(&op.get_bond());
+                        let (mut next_cluster_index, bonds, substate, cluster_state, mut rng) = acc;
+                        let in_bonds = bonds.contains(&op.get_bond());
                         let at_next_cluster_flip = next_cluster_index < cluster_flips.len()
                             && p == cluster_flips[next_cluster_index];
-                        let newop = if in_sat || in_unsat {
+                        let newop = if in_bonds {
                             // Rotatable ops must be diagonal.
                             debug_assert!(op.is_diagonal());
 
                             // Need to rotate
-                            let (new_bond, _) = if in_sat {
-                                unsat_bonds.get_random(&mut rng).unwrap()
-                            } else {
-                                sat_bonds.get_random(&mut rng).unwrap()
-                            };
+                            let new_bond = bonds.get_random(&mut rng).unwrap().0;
 
-                            let (new_a, new_b) = edges.vars_for_bond(*new_bond);
+                            let (new_a, new_b) = edges.vars_for_bond(new_bond);
                             let vars = RVB::Op::make_vars([new_a, new_b].iter().cloned());
                             let state = RVB::Op::make_substate(
                                 [new_a, new_b]
@@ -412,62 +379,50 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                                     .map(|v| var_to_subvar(v).unwrap())
                                     .map(|subvar| substate[subvar]),
                             );
-                            let new_op =
-                                RVB::Op::diagonal(vars, *new_bond, state, op.is_constant());
+                            let new_op = RVB::Op::diagonal(vars, new_bond, state, op.is_constant());
 
                             Some(Some(new_op))
-                        } else if at_next_cluster_flip {
-                            // We are at a cluster boundary, flips cluster state and bonds.
-                            debug_assert!(op.is_constant());
-                            // Cluster flips must be entirely in subvar region.
-                            debug_assert!(op
-                                .get_vars()
-                                .iter()
-                                .cloned()
-                                .all(|v| var_to_subvar(v).is_some()));
+                        } else {
+                            let new_op = if at_next_cluster_flip {
+                                // We are at a cluster boundary, flips cluster state and bonds.
+                                debug_assert!(op.is_constant());
+                                // Cluster flips must be entirely in subvar region.
+                                debug_assert!(op
+                                    .get_vars()
+                                    .iter()
+                                    .cloned()
+                                    .all(|v| var_to_subvar(v).is_some()));
 
-                            let new_op = op.clone_and_edit_in_out(|ins, outs| {
-                                op.get_vars()
+                                let new_op = op.clone_and_edit_in_out(|ins, outs| {
+                                    op.get_vars()
+                                        .iter()
+                                        .cloned()
+                                        .map(|v| var_to_subvar(v).unwrap())
+                                        .zip(ins.iter_mut().zip(outs.iter_mut()))
+                                        .for_each(|(subvar, (bin, bout))| {
+                                            // Flip if cluster_state is true.
+                                            *bin = *bin != cluster_state[subvar];
+                                            // Flip if cluster_state _will be_ true.
+                                            *bout = *bout != !cluster_state[subvar];
+                                        });
+                                });
+                                new_op
+                                    .get_vars()
                                     .iter()
                                     .cloned()
                                     .map(|v| var_to_subvar(v).unwrap())
-                                    .zip(ins.iter_mut().zip(outs.iter_mut()))
-                                    .for_each(|(subvar, (bin, bout))| {
-                                        // Flip if cluster_state is true.
-                                        *bin = *bin != cluster_state[subvar];
-                                        // Flip if cluster_state _will be_ true.
-                                        *bout = *bout != !cluster_state[subvar];
+                                    .zip(new_op.get_outputs().iter().cloned())
+                                    .for_each(|(subvar, bout)| {
+                                        cluster_state[subvar] = !cluster_state[subvar];
+                                        substate[subvar] = bout
                                     });
-                            });
-                            // Having changed substate now sat_bonds and unsat_bonds are invalid
-                            // near this op, luckily flipping the cluster will remove all the
-                            // invalid bonds.
 
-                            toggle_cluster_and_bonds(
-                                op,
-                                cluster_state,
-                                substate,
-                                is_sat,
-                                (sat_bonds, unsat_bonds),
-                                &var_to_subvar,
-                                edges,
-                            );
-                            toggle_state_and_bonds(
-                                &new_op,
-                                substate,
-                                sat_bonds,
-                                unsat_bonds,
-                                &var_to_subvar,
-                                edges,
-                            );
-
-                            next_cluster_index += 1;
-                            Some(Some(new_op))
-                        } else {
-                            // Flip appropriate inputs/outputs.
-                            // If any are out, then all are out - otherwise would be in sat or unsat
-                            debug_assert!(
-                                {
+                                next_cluster_index += 1;
+                                Some(Some(new_op))
+                            } else {
+                                // Flip appropriate inputs/outputs.
+                                // If any are out, then all are out - otherwise would be in sat or unsat
+                                debug_assert!({
                                     let all_in = op.get_vars().iter().cloned().all(|v| {
                                         var_to_subvar(v)
                                             .map(|subvar| cluster_state[subvar])
@@ -490,129 +445,177 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                                         println!("all_in: {}\tall_out: {}", all_in, all_out);
                                     }
                                     succ
-                                },
-                                "All variables must be in or out, and at least one of those two."
-                            );
-
-                            let any_subvars = op
-                                .get_vars()
-                                .iter()
-                                .cloned()
-                                .any(|v| var_to_subvar(v).is_some());
-                            let any_in_cluster = op
-                                .get_vars()
-                                .iter()
-                                .cloned()
-                                .filter_map(&var_to_subvar)
-                                .any(|subvar| cluster_state[subvar]);
-                            // If out of known region or if diagonal and not flipped by cluster.
-                            if !any_subvars || (!any_in_cluster && op.is_diagonal()) {
-                                None
-                            } else if any_in_cluster {
-                                let new_op = op.clone_and_edit_in_out_symmetric(|state| {
-                                    state.iter_mut().for_each(|b| *b = !*b);
                                 });
 
-                                if !op.is_diagonal() {
-                                    // Update state and bonds.
-                                    toggle_state_and_bonds(
-                                        &new_op,
-                                        substate,
-                                        sat_bonds,
-                                        unsat_bonds,
-                                        &var_to_subvar,
-                                        edges,
-                                    );
-                                }
+                                let any_subvars = op
+                                    .get_vars()
+                                    .iter()
+                                    .cloned()
+                                    .any(|v| var_to_subvar(v).is_some());
+                                let any_in_cluster = op
+                                    .get_vars()
+                                    .iter()
+                                    .cloned()
+                                    .filter_map(&var_to_subvar)
+                                    .any(|subvar| cluster_state[subvar]);
+                                // If out of known region or if diagonal and not flipped by cluster.
+                                if !any_subvars || (!any_in_cluster && op.is_diagonal()) {
+                                    None
+                                } else {
+                                    let new_op = if any_in_cluster {
+                                        debug_assert!(op
+                                            .get_vars()
+                                            .iter()
+                                            .cloned()
+                                            .all(|v| var_to_subvar(v).is_some()));
 
-                                Some(Some(new_op))
-                            } else {
-                                if !op.is_diagonal() {
-                                    // Update state and bonds.
-                                    toggle_state_and_bonds(
-                                        op,
-                                        substate,
-                                        sat_bonds,
-                                        unsat_bonds,
-                                        &var_to_subvar,
-                                        edges,
-                                    );
-                                }
+                                        let new_op = op.clone_and_edit_in_out_symmetric(|state| {
+                                            state.iter_mut().for_each(|b| *b = !*b);
+                                        });
 
-                                None
-                            }
+                                        if !new_op.is_diagonal() {
+                                            // Update state
+                                            new_op
+                                                .get_vars()
+                                                .iter()
+                                                .cloned()
+                                                .map(|v| var_to_subvar(v).unwrap())
+                                                .zip(new_op.get_outputs().iter().cloned())
+                                                .for_each(|(subvar, bout)| {
+                                                    substate[subvar] = bout;
+                                                });
+                                        }
+
+                                        Some(Some(new_op))
+                                    } else {
+                                        if !op.is_diagonal() {
+                                            // Update state
+                                            op.get_vars()
+                                                .iter()
+                                                .cloned()
+                                                .filter_map(|v| var_to_subvar(v))
+                                                .zip(op.get_outputs().iter().cloned())
+                                                .for_each(|(subvar, bout)| {
+                                                    substate[subvar] = bout;
+                                                });
+                                        }
+                                        None
+                                    };
+
+                                    new_op
+                                }
+                            };
+
+                            // Now update bonds
+                            op.get_vars()
+                                .iter()
+                                .cloned()
+                                .filter_map(|v| var_to_subvar(v).map(|subvar| (v, subvar)))
+                                .for_each(|(v, subvar)| {
+                                    edges
+                                        .bonds_for_var(v)
+                                        .iter()
+                                        .cloned()
+                                        .filter_map(|b| {
+                                            let ov = edges.other_var_for_bond(v, b).unwrap();
+                                            var_to_subvar(ov).map(|o_subvar| (b, subvar, o_subvar))
+                                        })
+                                        .for_each(|(b, subvar, o_subvar)| {
+                                            if cluster_state[subvar] == cluster_state[o_subvar] {
+                                                // Remove bond from borders.
+                                                if bonds.contains(&b) {
+                                                    bonds.remove(&b);
+                                                }
+                                            } else {
+                                                let (va, vb) = edges.vars_for_bond(b);
+                                                let subva = var_to_subvar(va).unwrap();
+                                                let subvb = var_to_subvar(vb).unwrap();
+                                                let w = diagonal_hamiltonian(
+                                                    b,
+                                                    substate[subva],
+                                                    substate[subvb],
+                                                );
+                                                bonds.insert(b, w);
+                                            }
+                                        })
+                                });
+
+                            new_op
                         };
 
                         (
                             newop,
-                            (
-                                next_cluster_index,
-                                sat_bonds,
-                                unsat_bonds,
-                                substate,
-                                cluster_state,
-                                rng,
-                            ),
+                            (next_cluster_index, bonds, substate, cluster_state, rng),
                         )
                     },
                     Some(args),
                 );
                 next_cluster_index = ret.0;
-                let substate = ret.3;
-                let cluster_state = ret.4;
-                let rng = ret.5;
+                let substate = ret.2;
+                let cluster_state = ret.3;
+                let rng = ret.4;
                 (substate, cluster_state, rng)
             },
         );
-    rvb.return_instance(sat_bonds);
-    rvb.return_instance(unsat_bonds);
+    rvb.return_instance(bonds);
 
     rvb.return_instance(jump_to);
     rvb.return_instance(continue_until);
 }
 
-fn calculate_flip_prob<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized>(
+fn calculate_flip_prob<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
     (cluster_state, cluster_flips): (&mut [bool], &[usize]),
     boundary_tops: &[Option<usize>], // top for each of vars.
     (vars, var_to_subvar): (&[usize], VS),
-    edges: &EN,
+    (diagonal_hamiltonian, edges): (H, &EN),
 ) -> f64
 where
     VS: Fn(usize) -> Option<usize>,
+    H: Fn(usize, bool, bool) -> f64,
 {
     let mut cluster_size = cluster_state.iter().cloned().filter(|x| *x).count();
     let mut psel = rvb.get_first_p();
     let mut next_cluster_index = 0;
     let mut mult = 1.0;
 
-    let is_sat = |bond: usize, substate: &[bool]| -> bool {
-        let p_aligned = edges.bond_prefers_aligned(bond);
-        let (a, b) = edges.vars_for_bond(bond);
-        let a = var_to_subvar(a).unwrap();
-        let b = var_to_subvar(b).unwrap();
-        let aligned = substate[a] == substate[b];
-        aligned == p_aligned
+    let ws_for_flip = |b: usize, subvar_to_flip: usize, substate: &[bool]| {
+        let (va, vb) = edges.vars_for_bond(b);
+        let suba = var_to_subvar(va).unwrap();
+        let subb = var_to_subvar(vb).unwrap();
+        debug_assert!(subvar_to_flip == suba || subvar_to_flip == subb);
+
+        let ba = substate[suba];
+        let bb = substate[subb];
+        let w_before = diagonal_hamiltonian(b, ba, bb);
+
+        let (ba, bb) = if subvar_to_flip == suba {
+            (!ba, bb)
+        } else {
+            (ba, !bb)
+        };
+
+        let w_after = diagonal_hamiltonian(b, ba, bb);
+        (w_before, w_after)
     };
 
-    let mut sat_bonds: BondContainer<usize> = rvb.get_instance();
-    let mut unsat_bonds: BondContainer<usize> = rvb.get_instance();
-    let mut n_sat = 0;
-    let mut n_unsat = 0;
+    let mut bonds_before: BondContainer<usize> = rvb.get_instance();
+    let mut bonds_after: BondContainer<usize> = rvb.get_instance();
+    let mut n_bonds = 0;
     if cluster_size != 0 {
         vars.iter()
             .cloned()
-            .filter(|v| cluster_state[var_to_subvar(*v).unwrap()])
-            .for_each(|v| {
+            .map(|v| (v, var_to_subvar(v).unwrap()))
+            .filter(|(_, subvar)| cluster_state[*subvar])
+            .for_each(|(v, subvar)| {
                 edges.bonds_for_var(v).iter().cloned().for_each(|b| {
                     let ov = edges.other_var_for_bond(v, b).unwrap();
-                    if !cluster_state[var_to_subvar(ov).unwrap()] {
-                        if is_sat(b, substate) {
-                            sat_bonds.insert(b);
-                        } else {
-                            unsat_bonds.insert(b);
-                        }
+                    let o_subvar = var_to_subvar(ov).unwrap();
+                    if !cluster_state[o_subvar] {
+                        let (wbef, waft) = ws_for_flip(b, subvar, substate);
+                        bonds_before.insert(b, wbef);
+                        bonds_after.insert(b, waft);
                     }
                 })
             });
@@ -623,10 +626,9 @@ where
     while let Some(mut p) = psel {
         // Skip ahead.
         if cluster_size == 0 {
-            debug_assert_eq!(sat_bonds.len(), 0);
-            debug_assert_eq!(unsat_bonds.len(), 0);
-            debug_assert_eq!(n_sat, 0);
-            debug_assert_eq!(n_unsat, 0);
+            debug_assert_eq!(bonds_before.len(), 0);
+            debug_assert_eq!(bonds_after.len(), 0);
+            debug_assert_eq!(n_bonds, 0);
             // Jump to next nonzero spot.
             if next_cluster_index < cluster_flips.len() {
                 // psel can be set but won't be read.
@@ -645,189 +647,119 @@ where
                 break;
             }
         }
-        debug_assert!(sat_bonds
-            .iter()
-            .map(|(b, _)| b)
-            .cloned()
-            .all(|b| is_sat(b, substate)));
-        debug_assert!(unsat_bonds
-            .iter()
-            .map(|(b, _)| b)
-            .cloned()
-            .all(|b| !is_sat(b, substate)));
 
         let node = rvb.get_node_ref(p).unwrap();
         let op = node.get_op_ref();
-        let is_cluster_bound =
-            next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
-        let will_change_bonds = !op.is_diagonal() || is_cluster_bound;
 
-        if will_change_bonds {
-            // Commit the counts so far.
-            mult *= calculate_mult(&sat_bonds, &unsat_bonds, n_sat, n_unsat);
-            n_sat = 0;
-            n_unsat = 0;
-            // Break early if we reach 0 probability.
-            if mult < std::f64::EPSILON {
-                break;
+        // Check if op is anywhere near the cluster.
+        let near_cluster = op
+            .get_vars()
+            .iter()
+            .cloned()
+            .any(|v| var_to_subvar(v).is_some());
+        if near_cluster {
+            let is_cluster_bound =
+                next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
+            let will_flip_spins = !op.is_diagonal();
+            let will_change_bonds = will_flip_spins || is_cluster_bound;
+
+            // Count which bond it belongs to.
+            let b = op.get_bond();
+            if bonds_before.contains(&b) {
+                debug_assert!(!is_cluster_bound);
+                debug_assert!(!will_flip_spins);
+                debug_assert!(bonds_after.contains(&b));
+                n_bonds += 1;
+            } else {
+                // We are at a cluster boundary, flips cluster state and bonds.
+                if is_cluster_bound {
+                    debug_assert!(op.is_constant());
+                    debug_assert_eq!(op.get_vars().len(), 1);
+
+                    let v = op.get_vars()[0];
+                    let subvar = var_to_subvar(v).unwrap();
+
+                    cluster_state[subvar] = !cluster_state[subvar];
+                    if cluster_state[subvar] {
+                        cluster_size += 1
+                    } else {
+                        cluster_size -= 1
+                    };
+                    next_cluster_index += 1;
+                }
+
+                if will_flip_spins {
+                    op.get_vars()
+                        .iter()
+                        .cloned()
+                        .zip(op.get_outputs().iter().cloned())
+                        .filter_map(|(v, bout)| {
+                            var_to_subvar(v)
+                                .zip(Some(bout))
+                                .map(|(subvar, bout)| (subvar, bout))
+                        })
+                        .for_each(|(subvar, bout)| {
+                            substate[subvar] = bout;
+                        });
+                }
+
+                if will_change_bonds {
+                    // Commit the counts so far.
+                    mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
+                    n_bonds = 0;
+                    // Break early if we reach 0 probability.
+                    if mult < std::f64::EPSILON {
+                        break;
+                    }
+
+                    // Now update bonds
+                    op.get_vars()
+                        .iter()
+                        .cloned()
+                        .filter_map(|v| var_to_subvar(v).map(|subvar| (v, subvar)))
+                        .for_each(|(v, subvar)| {
+                            edges
+                                .bonds_for_var(v)
+                                .iter()
+                                .cloned()
+                                .filter_map(|b| {
+                                    let ov = edges.other_var_for_bond(v, b).unwrap();
+                                    var_to_subvar(ov).map(|o_subvar| (b, subvar, o_subvar))
+                                })
+                                .for_each(|(b, subvar, o_subvar)| {
+                                    if cluster_state[subvar] == cluster_state[o_subvar] {
+                                        // Remove bond from borders.
+                                        if bonds_before.contains(&b) {
+                                            bonds_before.remove(&b);
+                                            bonds_after.remove(&b);
+                                        }
+                                    } else {
+                                        let subvar = if cluster_state[subvar] {
+                                            subvar
+                                        } else {
+                                            o_subvar
+                                        };
+                                        let (wbef, waft) = ws_for_flip(b, subvar, substate);
+                                        // Insert or update weight.
+                                        bonds_before.insert(b, wbef);
+                                        bonds_after.insert(b, waft);
+                                    }
+                                })
+                        });
+                }
             }
         }
 
-        debug_assert!(
-            {
-                let any_in_cluster = op
-                    .get_vars()
-                    .iter()
-                    .filter_map(|v| var_to_subvar(*v))
-                    .any(|subvar| cluster_state[subvar]);
-                let any_in_bound = op
-                    .get_vars()
-                    .iter()
-                    .filter_map(|v| var_to_subvar(*v))
-                    .any(|subvar| !cluster_state[subvar]);
-                let b = op.get_bond();
-                match (any_in_cluster, any_in_bound) {
-                    (true, true) => sat_bonds.contains(&b) || unsat_bonds.contains(&b),
-                    _ => true,
-                }
-            },
-            "If op spans cluster and boundary it should appear in one of the bond sets."
-        );
-
-        // Count which bond it belongs to.
-        let b = op.get_bond();
-        if sat_bonds.contains(&b) {
-            n_sat += 1;
-        } else if unsat_bonds.contains(&b) {
-            n_unsat += 1;
-        }
-
-        // We are at a cluster boundary, flips cluster state and bonds.
-        if is_cluster_bound {
-            debug_assert!(op.is_constant());
-            cluster_size = (cluster_size as i64
-                + toggle_cluster_and_bonds(
-                    op,
-                    cluster_state,
-                    substate,
-                    is_sat,
-                    (&mut sat_bonds, &mut unsat_bonds),
-                    &var_to_subvar,
-                    edges,
-                )) as usize;
-            next_cluster_index += 1;
-        }
-
-        if !op.is_diagonal() {
-            // Update state and bonds.
-            toggle_state_and_bonds(
-                op,
-                substate,
-                &mut sat_bonds,
-                &mut unsat_bonds,
-                &var_to_subvar,
-                edges,
-            );
-        }
         // Move on
         psel = rvb.get_next_p(node);
     }
     // Commit remaining stuff.
-    mult *= calculate_mult(&sat_bonds, &unsat_bonds, n_sat, n_unsat);
+    mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
 
-    rvb.return_instance(sat_bonds);
-    rvb.return_instance(unsat_bonds);
+    rvb.return_instance(bonds_before);
+    rvb.return_instance(bonds_after);
 
     mult
-}
-
-fn toggle_cluster_and_bonds<O: Op, F, SAT, EN>(
-    op: &O,
-    cluster_state: &mut [bool],
-    substate: &[bool],
-    is_sat: SAT,
-    (sat_bonds, unsat_bonds): (&mut BondContainer<usize>, &mut BondContainer<usize>),
-    var_to_subvar: F,
-    edges: &EN,
-) -> i64
-where
-    F: Fn(usize) -> Option<usize>,
-    SAT: Fn(usize, &[bool]) -> bool,
-    EN: EdgeNavigator + ?Sized,
-{
-    let toggle = |bonds: &mut BondContainer<usize>, b: usize| {
-        if bonds.contains(&b) {
-            bonds.remove(&b);
-        } else {
-            bonds.insert(b);
-        }
-    };
-    let mut cluster_delta = 0;
-    op.get_vars()
-        .iter()
-        .filter_map(|v| var_to_subvar(*v).map(|subvar| (*v, subvar)))
-        .for_each(|(v, subvar)| {
-            cluster_state[subvar] = !cluster_state[subvar];
-            cluster_delta = if cluster_state[subvar] {
-                cluster_delta + 1
-            } else {
-                cluster_delta - 1
-            };
-            // Update bonds.
-            edges.bonds_for_var(v).iter().cloned().for_each(|b| {
-                if is_sat(b, substate) {
-                    toggle(sat_bonds, b)
-                } else {
-                    toggle(unsat_bonds, b)
-                };
-            });
-        });
-    cluster_delta
-}
-
-fn toggle_state_and_bonds<O: Op, F, EN>(
-    op: &O,
-    substate: &mut [bool],
-    sat_bonds: &mut BondContainer<usize>,
-    unsat_bonds: &mut BondContainer<usize>,
-    var_to_subvar: F,
-    edges: &EN,
-) where
-    F: Fn(usize) -> Option<usize>,
-    EN: EdgeNavigator + ?Sized,
-{
-    op.get_vars()
-        .iter()
-        .cloned()
-        .zip(op.get_inputs().iter().cloned())
-        .zip(op.get_outputs().iter().cloned())
-        .filter_map(
-            |((v, bin), bout)| {
-                if bin == bout {
-                    None
-                } else {
-                    Some((v, bout))
-                }
-            },
-        )
-        .filter_map(|(v, bout)| {
-            var_to_subvar(v)
-                .zip(Some(bout))
-                .map(|(subvar, bout)| (v, subvar, bout))
-        })
-        .for_each(|(v, subvar, b)| {
-            substate[subvar] = b;
-            edges.bonds_for_var(v).iter().for_each(|b| {
-                // Swap bonds.
-                if sat_bonds.contains(b) {
-                    sat_bonds.remove(b);
-                    unsat_bonds.insert(*b);
-                } else if unsat_bonds.contains(b) {
-                    unsat_bonds.remove(b);
-                    sat_bonds.insert(*b);
-                }
-            })
-        });
 }
 
 fn remove_doubles<T: Eq + Copy>(v: &mut Vec<T>) {
@@ -1057,15 +989,30 @@ pub fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
 }
 
 fn calculate_mult(
-    sat: &BondContainer<usize>,
-    unsat: &BondContainer<usize>,
-    nf: i32,
-    na: i32,
+    bonds_before: &BondContainer<usize>,
+    bonds_after: &BondContainer<usize>,
+    n: usize,
 ) -> f64 {
-    if nf == na || sat.len() == unsat.len() {
+    let close = (bonds_before.get_total_weight() - bonds_after.get_total_weight()).abs()
+        < std::f64::EPSILON;
+    if n == 0 || close {
         1.0
     } else {
-        (sat.len() as f64 / unsat.len() as f64).powi(na - nf)
+        let new_mult =
+            (bonds_after.get_total_weight() / bonds_before.get_total_weight()).powi(n as i32);
+        debug_assert!({
+            let valid = new_mult >= 0.;
+            if !valid {
+                println!(
+                    "Negative multiplier: {}\t{}\t{}",
+                    bonds_after.get_total_weight(),
+                    bonds_before.get_total_weight(),
+                    n
+                );
+            }
+            valid
+        });
+        new_mult
     }
 }
 
@@ -1256,7 +1203,18 @@ mod sc_tests {
             (&mut [false, false], &[3, 6]),
             &[Some(2), Some(1)],
             (&[0, 1], |v| Some(v)),
-            &edges,
+            (
+                |b, sa, sb| {
+                    let pref = edges.bond_prefers_aligned(b);
+                    let aligned = sa == sb;
+                    if aligned == pref {
+                        0.0
+                    } else {
+                        1.0
+                    }
+                },
+                &edges,
+            ),
         );
         println!("{}", p);
     }

@@ -68,7 +68,23 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
         let (out, weight) = self.keys.pop().unwrap();
         self.map[out.clone().into()] = None;
         self.total_weight -= weight;
+        self.correct_total_weight();
+
         (out, weight)
+    }
+
+    fn correct_total_weight(&mut self) {
+        if self.total_weight < 0. {
+            self.total_weight = 0.;
+            debug_assert!({
+                let weight_sum = self.keys.iter().map(|(_, w)| *w).sum::<f64>();
+                let valid = weight_sum.abs() <= std::f64::EPSILON * self.keys.len() as f64;
+                if !valid {
+                    println!("Weight sum: {}", weight_sum);
+                }
+                valid
+            });
+        }
     }
 
     /// Check if a given element has been inserted.
@@ -81,16 +97,20 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
         }
     }
 
-    /// Insert an element.
-    pub fn insert(&mut self, value: T) -> bool {
-        // TODO fix
-        let weight = 1.0;
+    /// Insert an element. Returns true if the element is new.
+    pub fn insert(&mut self, value: T, weight: f64) -> bool {
         let entry_index = value.clone().into();
         if entry_index >= self.map.len() {
             self.map.resize(entry_index + 1, None);
         }
         match self.map[entry_index] {
-            Some(_) => false,
+            Some(index) => {
+                let old_weight = self.keys[index].1;
+                self.keys[index].1 = weight;
+                self.total_weight += weight - old_weight;
+                self.correct_total_weight();
+                false
+            }
             None => {
                 self.map[entry_index] = Some(self.keys.len());
                 self.keys.push((value, weight));

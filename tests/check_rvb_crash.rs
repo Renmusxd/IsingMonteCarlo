@@ -84,7 +84,21 @@ fn run_single_var() {
     let mut state = vec![false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, 1, &mut rng);
+        manager.rvb_update(
+            &edges,
+            &mut state,
+            1,
+            |b, sa, sb| {
+                let pref = edges.bond_prefers_aligned(b);
+                let aligned = sa == sb;
+                if aligned == pref {
+                    0.0
+                } else {
+                    1.0
+                }
+            },
+            &mut rng,
+        );
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -121,7 +135,28 @@ fn run_two_independent_vars() {
     let mut state = vec![false, false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, 1, &mut rng);
+        manager.rvb_update(
+            &edges,
+            &mut state,
+            1,
+            |b, sa, sb| {
+                let pref = edges.bond_prefers_aligned(b);
+                let aligned = sa == sb;
+                if aligned == pref {
+                    0.0
+                } else {
+                    1.0
+                }
+            },
+            &mut rng,
+        );
+        assert!({
+            let ver = manager.verify(&state);
+            if !ver {
+                debug_print_diagonal(&manager, &state);
+            }
+            ver
+        });
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -162,7 +197,21 @@ fn run_two_joined_vars() {
     let mut state = vec![false, false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, 1, &mut rng);
+        manager.rvb_update(
+            &edges,
+            &mut state,
+            1,
+            |b, sa, sb| {
+                let pref = edges.bond_prefers_aligned(b);
+                let aligned = sa == sb;
+                if aligned == pref {
+                    0.0
+                } else {
+                    1.0
+                }
+            },
+            &mut rng,
+        );
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -219,7 +268,21 @@ fn run_two_joined_vars_double() {
     let mut state = vec![false, false];
     let mut rng = SmallRng::seed_from_u64(0);
     (0..100).for_each(|_| {
-        manager.rvb_update(&edges, &mut state, 1, &mut rng);
+        manager.rvb_update(
+            &edges,
+            &mut state,
+            1,
+            |b, sa, sb| {
+                let pref = edges.bond_prefers_aligned(b);
+                let aligned = sa == sb;
+                if aligned == pref {
+                    0.0
+                } else {
+                    1.0
+                }
+            },
+            &mut rng,
+        );
     });
     println!("{:?}", state);
     assert!(manager.verify(&state));
@@ -269,6 +332,29 @@ fn run_two_unit_cell() {
         let edges = two_unit_cell();
         let nvars = 8;
         let rng = SmallRng::seed_from_u64(i);
+        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            edges,
+            1.0,
+            nvars,
+            rng,
+            Some(vec![false; nvars]),
+        );
+        ising.timesteps(1000, 1.0);
+        ising.set_run_rvb(true).unwrap();
+        ising.timesteps(1000, 1.0);
+        assert!(ising.verify());
+    }
+}
+
+#[test]
+fn run_two_unit_cell_random_bonds() {
+    for i in 0..16 {
+        let mut rng = SmallRng::seed_from_u64(i);
+        let edges = two_unit_cell()
+            .into_iter()
+            .map(|(vs, j)| (vs, j * rng.gen_range(0.5, 2.0)))
+            .collect();
+        let nvars = 8;
         let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,

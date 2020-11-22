@@ -191,7 +191,7 @@ fn metropolis_single_diagonal_update<'b, O: Op, H: Hamiltonian<'b>, R: Rng>(
 }
 
 /// Print a diagonal updater using a state.
-pub fn debug_print_diagonal<D: DiagonalUpdater>(diagonal: &D, state: &[bool]) {
+pub fn debug_print_diagonal<D: DiagonalUpdater + ?Sized>(diagonal: &D, state: &[bool]) {
     let nvars = diagonal.get_nvars();
     for _ in 0..nvars {
         print!("=");
