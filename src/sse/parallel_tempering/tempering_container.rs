@@ -661,6 +661,7 @@ pub mod rayon_tempering {
                 let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
                     edges.clone(),
                     0.1,
+                    0.,
                     10,
                     rng,
                     None,
@@ -769,8 +770,14 @@ mod swap_test {
         let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
         for _ in 0..2 {
             let rng = SmallRng::seed_from_u64(0u64);
-            let qmc =
-                DefaultQMCIsingGraph::<SmallRng>::new_with_rng(edges.clone(), 0.1, 10, rng, None);
+            let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+                edges.clone(),
+                0.1,
+                0.,
+                10,
+                rng,
+                None,
+            );
             temper.add_qmc_stepper(qmc, 10.0)?;
         }
         temper.timesteps(1);
@@ -790,8 +797,14 @@ mod swap_test {
         let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
         for _ in 0..2 {
             let rng = SmallRng::seed_from_u64(0u64);
-            let qmc =
-                DefaultQMCIsingGraph::<SmallRng>::new_with_rng(edges.clone(), 0.1, 10, rng, None);
+            let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+                edges.clone(),
+                0.1,
+                0.,
+                10,
+                rng,
+                None,
+            );
             temper.add_qmc_stepper(qmc, 10.0)?;
         }
 

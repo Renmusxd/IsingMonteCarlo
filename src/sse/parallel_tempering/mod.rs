@@ -14,6 +14,7 @@
 //!     let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
 //!         edges.clone(),
 //!         0.1,
+//!         0.,
 //!         10,
 //!         rng,
 //!         None,

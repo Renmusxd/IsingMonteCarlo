@@ -7,7 +7,7 @@ where
     E: Fn(usize) -> (&'a [usize], bool),
 {
     h: H,
-    n_edges: usize,
+    n_bonds: usize,
     e_fn: E,
 }
 
@@ -17,10 +17,10 @@ where
     E: Fn(usize) -> (&'a [usize], bool),
 {
     /// Construct a new hamiltonian with a function, edge lookup function, and the number of bonds.
-    pub(crate) fn new(hamiltonian: H, edge_fn: E, num_edges: usize) -> Self {
+    pub(crate) fn new(hamiltonian: H, edge_fn: E, num_bonds: usize) -> Self {
         Self {
             h: hamiltonian,
-            n_edges: num_edges,
+            n_bonds: num_bonds,
             e_fn: edge_fn,
         }
     }
@@ -39,7 +39,7 @@ where
         (self.e_fn)(bond)
     }
 
-    fn num_edges(&self) -> usize {
-        self.n_edges
+    fn num_bonds(&self) -> usize {
+        self.n_bonds
     }
 }

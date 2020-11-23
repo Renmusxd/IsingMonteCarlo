@@ -28,6 +28,7 @@ pub trait IsingManager:
 pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
     edges: Vec<(VecEdge, f64)>,
     transverse: f64,
+    longitudinal: f64,
     state: Option<Vec<bool>>,
     cutoff: usize,
     op_manager: Option<M>,
@@ -48,21 +49,30 @@ pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
 pub fn new_qmc(
     edges: Vec<(Edge, f64)>,
     transverse: f64,
+    longitudinal: f64,
     cutoff: usize,
     state: Option<Vec<bool>>,
 ) -> DefaultQMCIsingGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, cutoff, rng, state)
+    DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(
+        edges,
+        transverse,
+        longitudinal,
+        cutoff,
+        rng,
+        state,
+    )
 }
 
 /// Build a new qmc graph with thread rng from a classical graph.
 pub fn new_qmc_from_graph(
     graph: GraphState,
     transverse: f64,
+    longitudinal: f64,
     cutoff: usize,
 ) -> DefaultQMCIsingGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, cutoff, rng)
+    DefaultQMCIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, longitudinal, cutoff, rng)
 }
 
 impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
@@ -70,6 +80,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     pub fn new_with_rng<Rg: Rng>(
         edges: Vec<(Edge, f64)>,
         transverse: f64,
+        longitudinal: f64,
         cutoff: usize,
         rng: Rg,
         state: Option<Vec<bool>>,
@@ -80,10 +91,22 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             .map(|((a, b), j)| (vec![a, b], j))
             .collect::<Vec<_>>();
         let edge_offset = edges.iter().map(|(_, j)| j.abs()).sum::<f64>();
-        let field_offset = nvars as f64 * transverse;
-        let total_energy_offset = edge_offset + field_offset;
+        let trans_offset = nvars as f64 * transverse;
+        let long_offset = if longitudinal < 0. {
+            nvars as f64 * longitudinal.abs()
+        } else {
+            0.
+        };
+        let total_energy_offset = edge_offset + trans_offset + long_offset;
 
-        let mut ops = M::new_with_bonds(nvars, edges.len() + nvars);
+        let nbonds = edges.len()
+            + nvars
+            + if longitudinal.abs() > std::f64::EPSILON {
+                nvars
+            } else {
+                0
+            };
+        let mut ops = M::new_with_bonds(nvars, nbonds);
         ops.set_cutoff(cutoff);
 
         let state = match state {
@@ -95,6 +118,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         QMCIsingGraph::<Rg, M> {
             edges,
             transverse,
+            longitudinal,
             state,
             op_manager: Some(ops),
             cutoff,
@@ -113,11 +137,19 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     pub fn new_from_graph<Rg: Rng>(
         graph: GraphState,
         transverse: f64,
+        longitudinal: f64,
         cutoff: usize,
         rng: Rg,
     ) -> QMCIsingGraph<Rg, M> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
-        Self::new_with_rng(graph.edges, transverse, cutoff, rng, graph.state)
+        Self::new_with_rng(
+            graph.edges,
+            transverse,
+            longitudinal,
+            cutoff,
+            rng,
+            graph.state,
+        )
     }
 
     /// Make the hamiltonian struct.
@@ -125,6 +157,8 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         HamInfo {
             edges: &self.edges,
             transverse: self.transverse,
+            longitudinal: self.longitudinal,
+            nvars: self.get_nvars(),
         }
     }
 
@@ -137,7 +171,10 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         output_state: &[bool],
     ) -> f64 {
         match vars.len() {
-            1 => single_site_hamiltonian(input_state[0], output_state[0], info.transverse),
+            1 if bond < info.edges.len() + info.nvars => {
+                transverse_hamiltonian(input_state[0], output_state[0], info.transverse)
+            }
+            1 => longitudinal_hamiltonian(input_state[0], output_state[0], info.longitudinal),
             2 => two_site_hamiltonian(
                 (input_state[0], input_state[1]),
                 (output_state[0], output_state[1]),
@@ -157,24 +194,39 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         let edges = &self.edges;
         let vars = &self.vars;
         let transverse = self.transverse;
-        let hinfo = HamInfo { edges, transverse };
+        let longitudinal = self.longitudinal;
+        let hinfo = HamInfo {
+            edges,
+            transverse,
+            longitudinal,
+            nvars,
+        };
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
 
-        let num_bonds = edges.len() + nvars;
+        let num_bonds = edges.len()
+            + nvars
+            + if longitudinal.abs() > std::f64::EPSILON {
+                nvars
+            } else {
+                0
+            };
         let bonds_fn = |b: usize| -> (&[usize], bool) {
+            // 0 to edges.len() are 2-site
             if b < edges.len() {
                 (&edges[b].0, false)
-            } else {
+            } else if b < edges.len() + nvars {
                 let b = b - edges.len();
                 (&vars[b..b + 1], true)
+            } else {
+                let b = b - nvars - edges.len();
+                (&vars[b..b + 1], false)
             }
         };
 
         // Start by editing the ops list
         let ham = Ham::new(h, bonds_fn, num_bonds);
-
         if let Some(bond_weights) = &self.bond_weights {
             manager.make_heatbath_diagonal_update_with_rng_and_state_ref(
                 self.cutoff,
@@ -202,11 +254,32 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     /// Take a single offdiagonal step.
     pub fn single_offdiagonal_step(&mut self) {
         let mut state = self.state.take().unwrap();
+        let nvars = self.get_nvars();
         let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
 
-        // Start by editing the ops list
-        manager.flip_each_cluster_ising_symmetry_rng(0.5, rng, &mut state);
+        let nedges = self.edges.len();
+
+        if self.longitudinal.abs() > std::f64::EPSILON {
+            manager.flip_each_cluster_rng(
+                0.5,
+                rng,
+                &mut state,
+                Some(|node: &M::Node| -> f64 {
+                    let bond = node.get_op_ref().get_bond();
+                    let is_long_field_bond = bond > nedges + nvars;
+                    if !is_long_field_bond {
+                        1.0
+                    } else {
+                        // We can assume the longitudinal bond is not currently in the 0 weight
+                        // state since it wouldn't be in the graph.
+                        0.0
+                    }
+                }),
+            );
+        } else {
+            manager.flip_each_cluster_ising_symmetry_rng(0.5, rng, &mut state);
+        }
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
@@ -229,20 +302,36 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
 
         let nvars = state.len();
         let edges = &self.edges;
+        let nedges = edges.len();
         let vars = &self.vars;
         let transverse = self.transverse;
-        let hinfo = HamInfo { edges, transverse };
+        let longitudinal = self.longitudinal;
+        let hinfo = HamInfo {
+            edges,
+            transverse,
+            longitudinal,
+            nvars,
+        };
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
 
-        let num_bonds = edges.len() + nvars;
+        let num_bonds = edges.len()
+            + nvars
+            + if longitudinal.abs() > std::f64::EPSILON {
+                nvars
+            } else {
+                0
+            };
         let bonds_fn = |b: usize| -> (&[usize], bool) {
             if b < edges.len() {
                 (&edges[b].0, false)
-            } else {
+            } else if b < edges.len() + nvars {
                 let b = b - edges.len();
                 (&vars[b..b + 1], true)
+            } else {
+                let b = b - nvars - edges.len();
+                (&vars[b..b + 1], false)
             }
         };
 
@@ -254,16 +343,40 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             edges: &self.edges,
         };
 
-        manager.rvb_update(
-            &edges,
-            &mut state,
-            1,
-            |bond, sa, sb| {
-                let (va, vb) = edges.vars_for_bond(bond);
-                ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
-            },
-            rng,
-        );
+        if self.longitudinal.abs() > std::f64::EPSILON {
+            manager.rvb_update_with_ising_weight(
+                &edges,
+                &mut state,
+                1,
+                |bond, sa, sb| {
+                    let (va, vb) = edges.vars_for_bond(bond);
+                    ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
+                },
+                |op| {
+                    let bond = op.get_bond();
+                    let is_long_field_bond = bond > nedges + nvars;
+                    if !is_long_field_bond {
+                        1.0
+                    } else {
+                        // We can assume the longitudinal bond is not currently in the 0 weight
+                        // state since it wouldn't be in the graph.
+                        0.0
+                    }
+                },
+                rng,
+            )
+        } else {
+            manager.rvb_update(
+                &edges,
+                &mut state,
+                1,
+                |bond, sa, sb| {
+                    let (va, vb) = edges.vars_for_bond(bond);
+                    ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
+                },
+                rng,
+            )
+        };
 
         self.op_manager = Some(manager);
         self.state = Some(state);
@@ -303,13 +416,26 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             let edges = &self.edges;
             let vars = &self.vars;
             let transverse = self.transverse;
-            let hinfo = HamInfo { edges, transverse };
+            let longitudinal = self.longitudinal;
+            let hinfo = HamInfo {
+                edges,
+                transverse,
+                longitudinal,
+                nvars,
+            };
             let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
                 Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
             };
 
-            let num_bonds = edges.len() + nvars;
+            let num_bonds = edges.len()
+                + nvars
+                + if longitudinal.abs() > std::f64::EPSILON {
+                    nvars
+                } else {
+                    0
+                };
             let bonds_fn = |b: usize| -> &[usize] {
+                // 0 to edges.len() are 2-site.
                 if b < edges.len() {
                     &edges[b].0
                 } else {
@@ -457,18 +583,33 @@ where
         let edges = &self.edges;
         let vars = &self.vars;
         let transverse = self.transverse;
-        let hinfo = HamInfo { edges, transverse };
+        let longitudinal = self.longitudinal;
+        let hinfo = HamInfo {
+            edges,
+            transverse,
+            longitudinal,
+            nvars,
+        };
         let h = |vars: &[usize], bond: usize, input_state: &[bool], output_state: &[bool]| {
             Self::hamiltonian(&hinfo, vars, bond, input_state, output_state)
         };
 
-        let num_bonds = edges.len() + nvars;
+        let num_bonds = edges.len()
+            + nvars
+            + if longitudinal.abs() > std::f64::EPSILON {
+                nvars
+            } else {
+                0
+            };
         let bonds_fn = |b: usize| -> (&[usize], bool) {
             if b < edges.len() {
                 (&edges[b].0, false)
-            } else {
+            } else if b < edges.len() + nvars {
                 let b = b - edges.len();
                 (&vars[b..b + 1], true)
+            } else {
+                let b = b - nvars - edges.len();
+                (&vars[b..b + 1], false)
             }
         };
 
@@ -492,8 +633,8 @@ where
                 &mut rng,
             );
         };
-        self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
+        let nedges = edges.len();
         if self.run_rvb_steps {
             let edges = EdgeNav {
                 var_to_bonds: self.classical_bonds.as_ref().unwrap(),
@@ -502,27 +643,71 @@ where
             // Average cluster size is always 2.
             let steps_to_run = (state.len() + 1) / 2;
 
-            let succs = manager.rvb_update(
-                &edges,
-                &mut state,
-                steps_to_run,
-                |bond, sa, sb| {
-                    let (va, vb) = edges.vars_for_bond(bond);
-                    ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
-                },
-                &mut rng,
-            );
+            let succs = if self.longitudinal.abs() > std::f64::EPSILON {
+                manager.rvb_update_with_ising_weight(
+                    &edges,
+                    &mut state,
+                    steps_to_run,
+                    |bond, sa, sb| {
+                        let (va, vb) = edges.vars_for_bond(bond);
+                        ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
+                    },
+                    |op| {
+                        let bond = op.get_bond();
+                        let is_long_field_bond = bond > nedges + nvars;
+                        if !is_long_field_bond {
+                            1.0
+                        } else {
+                            // We can assume the longitudinal bond is not currently in the 0 weight
+                            // state since it wouldn't be in the graph.
+                            0.0
+                        }
+                    },
+                    &mut rng,
+                )
+            } else {
+                manager.rvb_update(
+                    &edges,
+                    &mut state,
+                    steps_to_run,
+                    |bond, sa, sb| {
+                        let (va, vb) = edges.vars_for_bond(bond);
+                        ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
+                    },
+                    &mut rng,
+                )
+            };
             self.total_rvb_successes += succs;
             self.rvb_clusters_counted += steps_to_run;
         }
 
-        manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
-
+        if self.longitudinal.abs() > std::f64::EPSILON {
+            manager.flip_each_cluster_rng(
+                0.5,
+                &mut rng,
+                &mut state,
+                Some(|node: &M::Node| -> f64 {
+                    let bond = node.get_op_ref().get_bond();
+                    let is_long_field_bond = bond > nedges + nvars;
+                    if !is_long_field_bond {
+                        1.0
+                    } else {
+                        // We can assume the longitudinal bond is not currently in the 0 weight
+                        // state since it wouldn't be in the graph.
+                        0.0
+                    }
+                }),
+            );
+        } else {
+            manager.flip_each_cluster_ising_symmetry_rng(0.5, &mut rng, &mut state);
+        }
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
                 *state = rng.gen_bool(0.5);
             }
         });
+
+        self.cutoff = max(self.cutoff, manager.get_n() + manager.get_n() / 2);
 
         self.rng = Some(rng);
         self.op_manager = Some(manager);
@@ -563,7 +748,7 @@ where
 }
 
 fn two_site_hamiltonian(inputs: (bool, bool), outputs: (bool, bool), bond: f64) -> f64 {
-    let matentry = if inputs == outputs {
+    if inputs == outputs {
         bond.abs()
             + match inputs {
                 (false, false) => -bond,
@@ -573,13 +758,20 @@ fn two_site_hamiltonian(inputs: (bool, bool), outputs: (bool, bool), bond: f64) 
             }
     } else {
         0.0
-    };
-    debug_assert!(matentry >= 0.0);
-    matentry
+    }
 }
 
-fn single_site_hamiltonian(_input_state: bool, _output_state: bool, transverse: f64) -> f64 {
+fn transverse_hamiltonian(_input_state: bool, _output_state: bool, transverse: f64) -> f64 {
     transverse
+}
+
+fn longitudinal_hamiltonian(input_state: bool, output_state: bool, longitudinal: f64) -> f64 {
+    longitudinal.abs()
+        + match (input_state, output_state) {
+            (true, false) | (false, true) => 0.,
+            (true, true) => longitudinal,
+            (false, false) => -longitudinal,
+        }
 }
 
 /// Data required to evaluate the hamiltonian.
@@ -587,6 +779,8 @@ fn single_site_hamiltonian(_input_state: bool, _output_state: bool, transverse: 
 pub struct HamInfo<'a> {
     edges: &'a [(VecEdge, f64)],
     transverse: f64,
+    longitudinal: f64,
+    nvars: usize,
 }
 
 impl<'a> PartialEq for HamInfo<'a> {
@@ -607,6 +801,7 @@ where
         Self {
             edges: self.edges.clone(),
             transverse: self.transverse,
+            longitudinal: self.longitudinal,
             state: self.state.clone(),
             cutoff: self.cutoff,
             op_manager: self.op_manager.clone(),
@@ -643,6 +838,7 @@ where
         let state = self.state.as_ref().unwrap().to_vec();
         let mut qmc = QMC::<R, M>::new_with_state(nvars, rng, state, false);
         let transverse = self.transverse;
+        let longitudinal = self.longitudinal;
         self.edges.into_iter().for_each(|(vars, j)| {
             qmc.make_diagonal_interaction_and_offset(vec![-j, j, j, -j], vars)
                 .unwrap()
@@ -654,6 +850,12 @@ where
             )
             .unwrap()
         });
+        if longitudinal.abs() > std::f64::EPSILON {
+            (0..nvars).for_each(|var| {
+                qmc.make_interaction(vec![longitudinal, 0., 0., -longitudinal], vec![var])
+                    .unwrap()
+            });
+        }
         qmc.increase_cutoff_to(self.cutoff);
         qmc.set_manager(self.op_manager.unwrap());
         qmc
@@ -707,6 +909,7 @@ pub mod serialization {
     pub struct SerializeQMCGraph<M: IsingManager> {
         edges: Vec<(VecEdge, f64)>,
         transverse: f64,
+        longitudinal: f64,
         state: Option<Vec<bool>>,
         cutoff: usize,
         op_manager: Option<M>,
@@ -730,6 +933,7 @@ pub mod serialization {
             QMCIsingGraph {
                 edges: self.edges,
                 transverse: self.transverse,
+                longitudinal: self.longitudinal,
                 state: self.state,
                 cutoff: self.cutoff,
                 op_manager: self.op_manager,
@@ -754,6 +958,7 @@ pub mod serialization {
             SerializeQMCGraph {
                 edges: self.edges,
                 transverse: self.transverse,
+                longitudinal: self.longitudinal,
                 state: self.state,
                 cutoff: self.cutoff,
                 op_manager: self.op_manager,
@@ -781,6 +986,7 @@ pub mod serialization {
             let mut g = DefaultQMCIsingGraph::<IsaacRng>::new_with_rng(
                 vec![((0, 1), 1.0)],
                 1.0,
+                0.,
                 1,
                 rng,
                 None,
@@ -797,6 +1003,7 @@ pub mod serialization {
             let mut g = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
                 vec![((0, 1), 1.0)],
                 1.0,
+                0.,
                 1,
                 rng,
                 None,

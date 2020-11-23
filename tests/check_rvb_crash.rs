@@ -297,6 +297,7 @@ fn run_three() {
         let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
             edges,
             0.1,
+            0.,
             l * l,
             rng,
             Some(vec![false; l * l]),
@@ -316,6 +317,7 @@ fn run_four() {
         let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
             edges,
             0.1,
+            0.,
             l * l,
             rng,
             Some(vec![false; l * l]),
@@ -335,6 +337,7 @@ fn run_two_unit_cell() {
         let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
+            0.,
             nvars,
             rng,
             Some(vec![false; nvars]),
@@ -358,6 +361,7 @@ fn run_two_unit_cell_random_bonds() {
         let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
+            0.,
             nvars,
             rng,
             Some(vec![false; nvars]),

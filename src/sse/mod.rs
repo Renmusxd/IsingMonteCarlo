@@ -17,13 +17,14 @@
 //!   ((3, 0), 1.0)
 //! ];
 //! let transverse = 1.0;
+//! let longitudinal = 0.0;
 //! let beta = 1.0;
 //!
 //! // Make an ising model using default system prng.
 //! let rng = rand::thread_rng();
 //! let initial_state = Some(vec![false, false, false, false]);
 //! let initial_cutoff = 4;
-//! let mut g = DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, initial_cutoff, rng, initial_state);
+//! let mut g = DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, longitudinal, initial_cutoff, rng, initial_state);
 //!
 //! // Take timesteps
 //! g.timesteps(1000, beta);

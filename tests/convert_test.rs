@@ -12,6 +12,7 @@ fn convert_and_run() -> Result<(), ()> {
     let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
         edges,
         1.0,
+        0.,
         3,
         SmallRng::seed_from_u64(1234),
         Some(vec![true, true, true]),

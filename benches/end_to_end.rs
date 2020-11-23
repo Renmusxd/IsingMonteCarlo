@@ -43,8 +43,14 @@ mod tests {
     fn one_d(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(one_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            one_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         let beta = 1.0;
         g.timesteps(1000, beta);
         b.iter(|| g.timesteps(1, beta));
@@ -54,8 +60,14 @@ mod tests {
     fn two_d_04(b: &mut Bencher) {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
 
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -66,8 +78,14 @@ mod tests {
     fn two_d_08(b: &mut Bencher) {
         let l = 8;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
 
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -78,8 +96,14 @@ mod tests {
     fn two_d_16(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
 
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -90,8 +114,14 @@ mod tests {
     fn two_d_32(b: &mut Bencher) {
         let l = 32;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
 
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -102,8 +132,14 @@ mod tests {
     fn one_d_heatbath(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(one_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            one_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_enable_heatbath(true);
 
         let beta = 1.0;
@@ -115,8 +151,14 @@ mod tests {
     fn two_d_heatbath_04(b: &mut Bencher) {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_enable_heatbath(true);
 
         let beta = 1.0;
@@ -128,8 +170,14 @@ mod tests {
     fn two_d_heatbath_08(b: &mut Bencher) {
         let l = 8;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_enable_heatbath(true);
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -140,8 +188,14 @@ mod tests {
     fn two_d_heatbath_16(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_enable_heatbath(true);
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -152,8 +206,14 @@ mod tests {
     fn two_d_heatbath_32(b: &mut Bencher) {
         let l = 32;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_enable_heatbath(true);
         let beta = 1.0;
         g.timesteps(1000, beta);
@@ -164,8 +224,14 @@ mod tests {
     fn two_d_rvb_04(b: &mut Bencher) {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 10.0;
@@ -177,8 +243,14 @@ mod tests {
     fn two_d_rvb_08(b: &mut Bencher) {
         let l = 8;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 10.0;
@@ -190,8 +262,14 @@ mod tests {
     fn two_d_rvb_16(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 10.0;
@@ -203,8 +281,14 @@ mod tests {
     fn two_d_rvb_32(b: &mut Bencher) {
         let l = 32;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 10.0;
@@ -216,8 +300,14 @@ mod tests {
     fn two_d_rvb_cold_4(b: &mut Bencher) {
         let l = 4;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 100.0;
@@ -229,8 +319,14 @@ mod tests {
     fn two_d_rvb_cold_5(b: &mut Bencher) {
         let l = 5;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 100.0;
@@ -242,8 +338,14 @@ mod tests {
     fn two_d_rvb_cold_6(b: &mut Bencher) {
         let l = 6;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 100.0;
@@ -255,8 +357,14 @@ mod tests {
     fn two_d_rvb_cold_7(b: &mut Bencher) {
         let l = 7;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 100.0;
@@ -268,8 +376,14 @@ mod tests {
     fn two_d_rvb_cold_8(b: &mut Bencher) {
         let l = 8;
         let rng = SmallRng::seed_from_u64(1234);
-        let mut g =
-            QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(two_d_periodic(l), 1.0, l, rng, None);
+        let mut g = QMCIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
         g.set_run_rvb(true).unwrap();
 
         let beta = 100.0;

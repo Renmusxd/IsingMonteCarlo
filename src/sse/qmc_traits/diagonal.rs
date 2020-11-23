@@ -8,7 +8,7 @@ pub trait Hamiltonian<'a> {
     /// Give edges for a bond, and if the bond is a constant.
     fn edge_fn(&self, bond: usize) -> (&'a [usize], bool);
     /// The number of bonds which exist.
-    fn num_edges(&self) -> usize;
+    fn num_bonds(&self) -> usize;
 }
 
 /// Perform diagonal updates to an op container.
@@ -149,7 +149,7 @@ fn metropolis_single_diagonal_update<'b, O: Op, H: Hamiltonian<'b>, R: Rng>(
     rng: &mut R,
 ) -> Option<Option<O>> {
     let b = match op {
-        None => rng.gen_range(0, hamiltonian.num_edges()),
+        None => rng.gen_range(0, hamiltonian.num_bonds()),
         Some(op) if op.is_diagonal() => op.get_bond(),
         Some(op) => {
             op.get_vars()
@@ -165,7 +165,7 @@ fn metropolis_single_diagonal_update<'b, O: Op, H: Hamiltonian<'b>, R: Rng>(
 
     // This is based on equations 19a and 19b of arXiv:1909.10591v1 from 23 Sep 2019
     // or A. W. Sandvik, Phys. Rev. B 59, 14157 (1999)
-    let numerator = beta * (hamiltonian.num_edges() as f64) * mat_element;
+    let numerator = beta * (hamiltonian.num_bonds() as f64) * mat_element;
     let denominator = (cutoff - n) as f64;
 
     match op {

@@ -45,6 +45,11 @@ pub trait RVBUpdater:
     // TODO add some check for offdiagonal 2-site ops on border.
 
     /// Perform a resonating bond update.
+    /// `edges` lists all the 2-site bonds which define the lattice.
+    /// `state` is the propagated state at time 0.
+    /// `updates` is the number of updated to perform.
+    /// `diagonal_edge_hamiltonian` gives the weight of a diagonal edge given a spin state.
+    /// `rng` prng instance to use.
     fn rvb_update<R: Rng, EN: EdgeNavigator, H>(
         &mut self,
         edges: &EN,
@@ -55,6 +60,36 @@ pub trait RVBUpdater:
     ) -> usize
     where
         H: Fn(usize, bool, bool) -> f64,
+    {
+        self.rvb_update_with_ising_weight(
+            edges,
+            state,
+            updates,
+            diagonal_edge_hamiltonian,
+            |_| 1.0,
+            rng,
+        )
+    }
+
+    /// Perform a resonating bond update.
+    /// `edges` lists all the 2-site bonds which define the lattice.
+    /// `state` is the propagated state at time 0.
+    /// `updates` is the number of updated to perform.
+    /// `diagonal_edge_hamiltonian` gives the weight of a diagonal edge given a spin state.
+    /// `ising_ratio` provides the weight ratio of a node after a global ising flip to current.
+    /// `rng` prng instance to use.
+    fn rvb_update_with_ising_weight<R: Rng, EN: EdgeNavigator, H, F>(
+        &mut self,
+        edges: &EN,
+        state: &mut [bool],
+        updates: usize,
+        diagonal_edge_hamiltonian: H,
+        ising_ratio: F,
+        rng: &mut R,
+    ) -> usize
+    where
+        H: Fn(usize, bool, bool) -> f64,
+        F: Fn(&Self::Op) -> f64,
     {
         let mut var_starts: Vec<usize> = self.get_instance();
         let mut var_lengths: Vec<usize> = self.get_instance();
@@ -185,7 +220,7 @@ pub trait RVBUpdater:
                 (&mut cluster_starting_state, &cluster_toggle_ps),
                 &subvar_boundary_tops,
                 (&subvars, |v| var_to_subvar[v]),
-                (&diagonal_edge_hamiltonian, edges),
+                (&diagonal_edge_hamiltonian, &ising_ratio, edges),
             );
             let should_mutate = if p_to_flip >= 1.0 {
                 true
@@ -563,17 +598,18 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
     rvb.return_instance(continue_until);
 }
 
-fn calculate_flip_prob<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H>(
+fn calculate_flip_prob<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
     (cluster_state, cluster_flips): (&mut [bool], &[usize]),
     boundary_tops: &[Option<usize>], // top for each of vars.
     (vars, var_to_subvar): (&[usize], VS),
-    (diagonal_hamiltonian, edges): (H, &EN),
+    (diagonal_hamiltonian, ising_ratio, edges): (H, F, &EN),
 ) -> f64
 where
     VS: Fn(usize) -> Option<usize>,
     H: Fn(usize, bool, bool) -> f64,
+    F: Fn(&RVB::Op) -> f64,
 {
     let mut cluster_size = cluster_state.iter().cloned().filter(|x| *x).count();
     let mut psel = rvb.get_first_p();
@@ -662,6 +698,11 @@ where
                 next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
             let will_flip_spins = !op.is_diagonal();
             let will_change_bonds = will_flip_spins || is_cluster_bound;
+            let completely_in_cluster = op.get_vars().iter().cloned().all(|v| {
+                var_to_subvar(v)
+                    .map(|subvar| cluster_state[subvar])
+                    .unwrap_or(false)
+            });
 
             // Count which bond it belongs to.
             let b = op.get_bond();
@@ -669,6 +710,7 @@ where
                 debug_assert!(!is_cluster_bound);
                 debug_assert!(!will_flip_spins);
                 debug_assert!(bonds_after.contains(&b));
+                // TODO for offdiagonal edges just look at weight difference, no rotation.
                 n_bonds += 1;
             } else {
                 // We are at a cluster boundary, flips cluster state and bonds.
@@ -701,6 +743,14 @@ where
                         .for_each(|(subvar, bout)| {
                             substate[subvar] = bout;
                         });
+                }
+
+                if completely_in_cluster {
+                    let ising_flip_weight = ising_ratio(op);
+                    mult *= ising_flip_weight;
+                    if mult < std::f64::EPSILON {
+                        break;
+                    }
                 }
 
                 if will_change_bonds {
@@ -1213,6 +1263,7 @@ mod sc_tests {
                         1.0
                     }
                 },
+                |_| 1.0,
                 &edges,
             ),
         );
