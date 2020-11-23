@@ -140,7 +140,17 @@ where
         let transverse_ratio =
             (h.get_transverse_field() / self.get_transverse_field()).powi(t_count);
 
-        bond_ratio * transverse_ratio
+        if self.get_longitudinal_field().abs() > std::f64::EPSILON {
+            let nvars = self.get_nvars();
+            let l_count = (0..nvars)
+                .map(|v| self.get_manager_ref().get_count(v + nvars + nedges))
+                .sum::<usize>() as i32;
+            let longitudinal_ratio =
+                (h.get_longitudinal_field() / self.get_longitudinal_field()).powi(l_count);
+            bond_ratio * transverse_ratio * longitudinal_ratio
+        } else {
+            bond_ratio * transverse_ratio
+        }
     }
 }
 

@@ -490,6 +490,11 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         self.transverse
     }
 
+    /// Get the longitudinal field on the system.
+    pub fn get_longitudinal_field(&self) -> f64 {
+        self.longitudinal
+    }
+
     /// Get the cutoff used for qmc calculations (pmax).
     pub fn get_cutoff(&self) -> usize {
         self.cutoff
