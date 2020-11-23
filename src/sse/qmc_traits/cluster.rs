@@ -108,6 +108,7 @@ pub trait ClusterUpdater:
         // If the ising symmetry is broken calculate out weight terms.
         if let Some(f) = weight_change_on_global_flip {
             let mut flips_weights: Vec<f64> = self.get_instance();
+            flips_weights.resize(n_clusters, 1.0);
             boundaries
                 .iter()
                 .enumerate()
@@ -197,15 +198,16 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
     let mut interior_frontier = StackTuplizer::<usize, Leg>::new(c);
 
     let node = c.get_node_ref(p).unwrap();
-    if node.get_op().get_vars().len() > 1 {
+    let op = node.get_op_ref();
+    if !op.is_constant() {
         // Add all legs
         debug_assert_eq!(boundaries.at(p), (&None, &None));
-        let op = node.get_op_ref();
         let inputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Inputs));
         let outputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Outputs));
         let all_legs = inputs_legs.chain(outputs_legs);
         interior_frontier.extend(all_legs.map(|l| (p, l)));
     } else {
+        debug_assert_eq!(op.get_vars().len(), 1);
         interior_frontier.push((p, leg))
     };
 

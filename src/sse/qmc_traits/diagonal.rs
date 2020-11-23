@@ -222,7 +222,7 @@ pub fn debug_print_diagonal<D: DiagonalUpdater + ?Sized>(diagonal: &D, state: &[
             for _ in last_var..nvars {
                 print!("|");
             }
-            println!("\tp={}\t{:?}", p, op.get_vars());
+            println!("\tp={}\t{}: {:?}", p, op.get_bond(), op.get_vars());
         } else {
             for _ in 0..nvars {
                 print!("|");
