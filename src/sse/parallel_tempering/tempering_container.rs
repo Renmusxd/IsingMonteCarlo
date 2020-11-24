@@ -651,7 +651,7 @@ pub mod rayon_tempering {
         use rand::SeedableRng;
 
         #[test]
-        fn test_basic() -> Result<(), &'static str> {
+        fn test_basic() -> Result<(), String> {
             let rng1 = SmallRng::seed_from_u64(0u64);
 
             let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
@@ -762,7 +762,7 @@ mod swap_test {
     use rand::SeedableRng;
 
     #[test]
-    fn test_basic() -> Result<(), &'static str> {
+    fn test_basic() -> Result<(), String> {
         let rng1 = SmallRng::seed_from_u64(0u64);
 
         let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
@@ -789,7 +789,7 @@ mod swap_test {
     }
 
     #[test]
-    fn test_bondstrength() -> Result<(), &'static str> {
+    fn test_bondstrength() -> Result<(), String> {
         let rng1 = SmallRng::seed_from_u64(0u64);
 
         let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
@@ -820,7 +820,7 @@ mod swap_test {
     }
 
     #[test]
-    fn test_convert() -> Result<(), &'static str> {
+    fn test_convert() -> Result<(), String> {
         let rng1 = SmallRng::seed_from_u64(0u64);
 
         let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
