@@ -211,6 +211,7 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
     /// Flip spins using quantum cluster updates if QMC has ising symmetry.
     pub fn cluster_update(&mut self) -> Result<(), &str> {
         if self.breaks_ising_symmetry {
+            // TODO remove this restriction.
             Err("Cannot perform cluster updates on graphs that break ising symmetry.")
         } else {
             let mut m = self.manager.take().unwrap();
@@ -264,6 +265,7 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
 
     /// Should the model do cluster updates.
     pub fn should_do_cluster_update(&self) -> bool {
+        // TODO remove ising symmetry restriction.
         !self.breaks_ising_symmetry && self.has_cluster_edges
     }
 
@@ -303,8 +305,13 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
     }
 
     /// Check if two instances can safely swap managers and initial states
-    pub fn can_swap_managers(&self, other: &Self) -> bool {
-        self.bonds == other.bonds
+    pub fn can_swap_managers(&self, other: &Self) -> Result<(), String> {
+        // TODO check if bonds are multiples of each other
+        if self.bonds == other.bonds {
+            Ok(())
+        } else {
+            Err("Bonds not equal".to_string())
+        }
     }
 
     /// Swap managers and initial states

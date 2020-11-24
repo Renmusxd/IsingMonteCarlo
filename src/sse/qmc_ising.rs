@@ -542,8 +542,33 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     }
 
     /// Check if two instances can safely swap managers and initial states
-    pub fn can_swap_managers(&self, other: &Self) -> bool {
-        self.edges == other.edges
+    pub fn can_swap_managers(&self, other: &Self) -> Result<(), String> {
+        self.edges
+            .iter()
+            .zip(other.edges.iter())
+            .try_for_each(|(s, o)| {
+                let (sedge, sj) = s;
+                let (oedge, oj) = o;
+
+                if sedge != oedge {
+                    Err(format!("Edge {:?} not equal to {:?}", sedge, oedge))
+                } else if sj.signum() != oj.signum() {
+                    Err(format!(
+                        "For edge {:?}: bonds must be of same sign {} / {}",
+                        sedge, sj, oj
+                    ))
+                } else {
+                    Ok(())
+                }
+            })?;
+        if self.longitudinal.signum() != other.longitudinal.signum() {
+            Err(format!(
+                "Longitudinal fields are not of the same sign: {} / {}",
+                self.longitudinal, other.longitudinal
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Swap managers and initial states

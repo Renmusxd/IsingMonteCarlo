@@ -8,7 +8,7 @@ use rand::Rng;
 /// Allows QMC objects to swap internal state and op managers
 pub trait SwapManagers {
     /// Checks if graphs can be swapped. Transitive/Commutative properties apply.
-    fn can_swap_graphs(&self, other: &Self) -> bool;
+    fn can_swap_graphs(&self, other: &Self) -> Result<(), String>;
 
     /// Swap op graphs with another struct.
     fn swap_graphs(&mut self, other: &mut Self);
@@ -75,7 +75,7 @@ where
     R: Rng,
     M: QMCManager,
 {
-    fn can_swap_graphs(&self, other: &Self) -> bool {
+    fn can_swap_graphs(&self, other: &Self) -> Result<(), String> {
         self.can_swap_managers(other)
     }
 
@@ -97,7 +97,7 @@ where
     R: Rng,
     M: IsingManager,
 {
-    fn can_swap_graphs(&self, other: &Self) -> bool {
+    fn can_swap_graphs(&self, other: &Self) -> Result<(), String> {
         self.can_swap_managers(other)
     }
 

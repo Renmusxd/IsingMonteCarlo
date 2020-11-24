@@ -62,15 +62,15 @@ where
 
     /// Add a QMC instance to the tempering container. Returns an Err if the added QMCStepper
     /// cannot be swapped with the existing steppers.
-    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), &'static str> {
-        if !self.graphs.is_empty() && !self.graphs[0].0.can_swap_graphs(&q) {
-            Err("Added graph not compatible with other graphs.")
-        } else {
-            self.graph_ham_eq_a = None;
-            self.graph_ham_eq_b = None;
-            self.graphs.push((q, beta));
-            Ok(())
-        }
+    pub fn add_qmc_stepper(&mut self, q: Q, beta: f64) -> Result<(), String> {
+        self.graphs
+            .last()
+            .map(|(g, _)| g.can_swap_graphs(&q))
+            .unwrap_or(Ok(()))?;
+        self.graph_ham_eq_a = None;
+        self.graph_ham_eq_b = None;
+        self.graphs.push((q, beta));
+        Ok(())
     }
 
     /// Perform a series of qmc timesteps on each graph.
@@ -781,6 +781,37 @@ mod swap_test {
             temper.add_qmc_stepper(qmc, 10.0)?;
         }
         temper.timesteps(1);
+        assert!(temper.verify());
+
+        temper.tempering_step();
+        assert!(temper.verify());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bondstrength() -> Result<(), &'static str> {
+        let rng1 = SmallRng::seed_from_u64(0u64);
+
+        let edges = vec![((0, 1), 1.0), ((1, 2), 1.0), ((2, 3), 1.0), ((3, 4), 1.0)];
+
+        let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
+        for i in 1..10 {
+            let rng = SmallRng::seed_from_u64(0u64);
+            let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+                edges
+                    .iter()
+                    .cloned()
+                    .map(|(e, j)| (e, j * i as f64 / 10.))
+                    .collect(),
+                0.1,
+                0.,
+                10,
+                rng,
+                None,
+            );
+            temper.add_qmc_stepper(qmc, 10.0)?;
+        }
+        temper.timesteps(1000);
         assert!(temper.verify());
 
         temper.tempering_step();
