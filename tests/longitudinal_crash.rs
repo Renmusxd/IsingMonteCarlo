@@ -49,7 +49,44 @@ fn run_simple() {
             rng,
             Some(vec![false; 2]),
         );
+        ising.timesteps(1000, 1.0);
+        assert!(ising.verify());
+    }
+}
+
+#[test]
+fn run_simple_rvb() {
+    for i in 0..16 {
+        let edges = vec![((0, 1), 1.0)];
+        let rng = SmallRng::seed_from_u64(i);
+        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            edges,
+            1.0,
+            1.0,
+            2,
+            rng,
+            Some(vec![false; 2]),
+        );
         ising.set_run_rvb(true).unwrap();
+        ising.timesteps(1000, 1.0);
+        assert!(ising.verify());
+    }
+}
+
+#[test]
+fn run_simple_heatbath() {
+    for i in 0..16 {
+        let edges = vec![((0, 1), 1.0)];
+        let rng = SmallRng::seed_from_u64(i);
+        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            edges,
+            1.0,
+            1.0,
+            2,
+            rng,
+            Some(vec![false; 2]),
+        );
+        ising.set_enable_heatbath(true);
         ising.timesteps(1000, 1.0);
         assert!(ising.verify());
     }

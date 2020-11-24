@@ -91,13 +91,8 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
             .map(|((a, b), j)| (vec![a, b], j))
             .collect::<Vec<_>>();
         let edge_offset = edges.iter().map(|(_, j)| j.abs()).sum::<f64>();
-        let trans_offset = nvars as f64 * transverse;
-        let long_offset = if longitudinal < 0. {
-            nvars as f64 * longitudinal.abs()
-        } else {
-            0.
-        };
-        let total_energy_offset = edge_offset + trans_offset + long_offset;
+        let field_offset = nvars as f64 * (transverse + longitudinal.abs());
+        let total_energy_offset = edge_offset + field_offset;
 
         let nbonds = edges.len()
             + nvars
@@ -170,16 +165,23 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         input_state: &[bool],
         output_state: &[bool],
     ) -> f64 {
-        match vars.len() {
-            1 if bond < info.edges.len() + info.nvars => {
+        match bond {
+            bond if bond < info.edges.len() => {
+                debug_assert_eq!(vars.len(), 2);
+                two_site_hamiltonian(
+                    (input_state[0], input_state[1]),
+                    (output_state[0], output_state[1]),
+                    info.edges[bond].1,
+                )
+            }
+            bond if bond < info.edges.len() + info.nvars => {
+                debug_assert_eq!(vars.len(), 1);
                 transverse_hamiltonian(input_state[0], output_state[0], info.transverse)
             }
-            1 => longitudinal_hamiltonian(input_state[0], output_state[0], info.longitudinal),
-            2 => two_site_hamiltonian(
-                (input_state[0], input_state[1]),
-                (output_state[0], output_state[1]),
-                info.edges[bond].1,
-            ),
+            bond if bond < info.edges.len() + 2 * info.nvars => {
+                debug_assert_eq!(vars.len(), 1);
+                longitudinal_hamiltonian(input_state[0], output_state[0], info.longitudinal)
+            }
             _ => unreachable!(),
         }
     }
@@ -261,18 +263,25 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         let nedges = self.edges.len();
 
         if self.longitudinal.abs() > std::f64::EPSILON {
+            let long = self.longitudinal;
             manager.flip_each_cluster_rng(
                 0.5,
                 rng,
                 &mut state,
                 Some(|node: &M::Node| -> f64 {
                     let bond = node.get_op_ref().get_bond();
-                    let is_long_field_bond = bond > nedges + nvars;
+                    let is_long_field_bond = bond >= nedges + nvars;
                     if !is_long_field_bond {
                         1.0
                     } else {
                         // We can assume the longitudinal bond is not currently in the 0 weight
                         // state since it wouldn't be in the graph.
+                        debug_assert_eq!(node.get_op_ref().get_vars().len(), 1);
+                        debug_assert!(node.get_op_ref().is_diagonal());
+                        debug_assert!({
+                            let op = node.get_op_ref();
+                            op.get_inputs()[0] == (long > 0.)
+                        });
                         0.0
                     }
                 }),
@@ -344,6 +353,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         };
 
         if self.longitudinal.abs() > std::f64::EPSILON {
+            let long = self.longitudinal;
             manager.rvb_update_with_ising_weight(
                 &edges,
                 &mut state,
@@ -354,12 +364,15 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
                 },
                 |op| {
                     let bond = op.get_bond();
-                    let is_long_field_bond = bond > nedges + nvars;
+                    let is_long_field_bond = bond >= nedges + nvars;
                     if !is_long_field_bond {
                         1.0
                     } else {
                         // We can assume the longitudinal bond is not currently in the 0 weight
                         // state since it wouldn't be in the graph.
+                        debug_assert_eq!(op.get_vars().len(), 1);
+                        debug_assert!(op.is_diagonal());
+                        debug_assert!(op.get_inputs()[0] == (long > 0.));
                         0.0
                     }
                 },
@@ -435,11 +448,13 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
                     0
                 };
             let bonds_fn = |b: usize| -> &[usize] {
-                // 0 to edges.len() are 2-site.
                 if b < edges.len() {
                     &edges[b].0
-                } else {
+                } else if b < edges.len() + nvars {
                     let b = b - edges.len();
+                    &vars[b..b + 1]
+                } else {
+                    let b = b - nvars - edges.len();
                     &vars[b..b + 1]
                 }
             };
@@ -659,12 +674,15 @@ where
                     },
                     |op| {
                         let bond = op.get_bond();
-                        let is_long_field_bond = bond > nedges + nvars;
+                        let is_long_field_bond = bond >= nedges + nvars;
                         if !is_long_field_bond {
                             1.0
                         } else {
                             // We can assume the longitudinal bond is not currently in the 0 weight
                             // state since it wouldn't be in the graph.
+                            debug_assert_eq!(op.get_vars().len(), 1);
+                            debug_assert!(op.is_diagonal());
+                            debug_assert!(op.get_inputs()[0] == (self.longitudinal > 0.));
                             0.0
                         }
                     },
@@ -693,12 +711,18 @@ where
                 &mut state,
                 Some(|node: &M::Node| -> f64 {
                     let bond = node.get_op_ref().get_bond();
-                    let is_long_field_bond = bond > nedges + nvars;
+                    let is_long_field_bond = bond >= nedges + nvars;
                     if !is_long_field_bond {
                         1.0
                     } else {
                         // We can assume the longitudinal bond is not currently in the 0 weight
                         // state since it wouldn't be in the graph.
+                        debug_assert_eq!(node.get_op_ref().get_vars().len(), 1);
+                        debug_assert!(node.get_op_ref().is_diagonal());
+                        debug_assert!({
+                            let op = node.get_op_ref();
+                            op.get_inputs()[0] == (self.longitudinal > 0.)
+                        });
                         0.0
                     }
                 }),
@@ -744,11 +768,36 @@ where
     M: IsingManager,
 {
     fn verify(&self) -> bool {
-        self.op_manager
-            .as_ref()
-            .zip(self.state.as_ref())
-            .map(|(m, state)| m.verify(state))
-            .unwrap_or(false)
+        let ham_info = self.make_haminfo();
+        if let Some(m) = self.op_manager.as_ref() {
+            let all_pos = m
+                .try_iterate_ops(0, self.get_cutoff(), (), |_, op, _, _| {
+                    let w = Self::hamiltonian(
+                        &ham_info,
+                        op.get_vars().as_ref(),
+                        op.get_bond(),
+                        op.get_inputs().as_ref(),
+                        op.get_outputs().as_ref(),
+                    );
+                    if w.abs() > std::f64::EPSILON {
+                        Ok(())
+                    } else {
+                        Err(())
+                    }
+                })
+                .is_ok();
+
+            let m_verify = self
+                .op_manager
+                .as_ref()
+                .zip(self.state.as_ref())
+                .map(|(m, state)| m.verify(state))
+                .unwrap_or(false);
+
+            all_pos && m_verify
+        } else {
+            false
+        }
     }
 }
 
