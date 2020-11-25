@@ -208,7 +208,8 @@ impl GraphState {
                         j * old_coupling / 2.0
                     })
                     .sum();
-                acc + total_e
+                let bias_e = if *si { -self.biases[i] } else { self.biases[i] };
+                acc + total_e + bias_e
             })
         } else {
             std::f64::NAN

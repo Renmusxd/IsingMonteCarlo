@@ -24,6 +24,8 @@ impl<T> Reset for Vec<T> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub(crate) struct Allocator<T: Default + Reset> {
+    // Only save length, that's really all we care about.
+    #[cfg_attr(feature = "serialize", serde(with = "numeric_serialize"))]
     instances: Vec<T>,
     gen_more: bool,
 }
@@ -126,5 +128,28 @@ impl<A, B> StackTuplizer<A, B> {
 
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (&mut A, &mut B)> {
         self.a_vec.iter_mut().zip(self.b_vec.iter_mut())
+    }
+}
+
+#[cfg(feature = "serialize")]
+mod numeric_serialize {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<T, S>(t: &[T], s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        T: Default,
+    {
+        let n = t.len();
+        s.serialize_u64(n as u64)
+    }
+
+    pub(crate) fn deserialize<'de, T, D>(d: D) -> Result<Vec<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Default,
+    {
+        let s: u64 = Deserialize::deserialize(d)?;
+        Ok((0..s).map(|_| T::default()).collect())
     }
 }

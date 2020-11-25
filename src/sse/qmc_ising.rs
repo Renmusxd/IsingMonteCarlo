@@ -1091,6 +1091,7 @@ pub mod serialization {
             let mut v: Vec<u8> = Vec::default();
             let sg: DefaultSerializeQMCGraph = g.into();
             serde_json::to_writer_pretty(&mut v, &sg).unwrap();
+            println!("{}", String::from_utf8(v.clone()).unwrap());
 
             let rng = SmallRng::seed_from_u64(1234);
             let sg: DefaultSerializeQMCGraph = serde_json::from_slice(&v).unwrap();
