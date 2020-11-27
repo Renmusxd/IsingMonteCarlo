@@ -94,13 +94,8 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         let field_offset = nvars as f64 * (transverse + longitudinal.abs());
         let total_energy_offset = edge_offset + field_offset;
 
-        let nbonds = edges.len()
-            + nvars
-            + if longitudinal.abs() > std::f64::EPSILON {
-                nvars
-            } else {
-                0
-            };
+        // Allow for extra bonds in case this is used in tempering.
+        let nbonds = edges.len() + nvars + nvars;
         let mut ops = M::new_with_bonds(nvars, nbonds);
         ops.set_cutoff(cutoff);
 
