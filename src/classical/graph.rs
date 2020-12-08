@@ -7,6 +7,7 @@ pub struct GraphState {
     pub(crate) binding_mat: Vec<Vec<(usize, f64)>>,
     pub(crate) biases: Vec<f64>,
     pub(crate) state: Option<Vec<bool>>,
+    cumulative_weight: Option<(Vec<f64>, f64)>,
 }
 
 impl Debug for GraphState {
@@ -53,6 +54,7 @@ impl GraphState {
             binding_mat,
             biases: biases.to_vec(),
             state: Some(state),
+            cumulative_weight: None,
         }
     }
 
@@ -95,8 +97,19 @@ impl GraphState {
         binding_mat: &[Vec<(usize, f64)>],
         biases: &[f64],
         state: &mut [bool],
+        cumulative_edge_weights: Option<(&[f64], f64)>,
     ) {
-        let indx_edge = rng.gen_range(0, edges.len());
+        let indx_edge = if let Some((cumulative_edge_weights, totalw)) = cumulative_edge_weights {
+            let p = rng.gen_range(0., totalw);
+            let indx = cumulative_edge_weights
+                .binary_search_by(|v| v.partial_cmp(&p).expect("Couldn't compare values"));
+            match indx {
+                Ok(indx) => indx,
+                Err(indx) => indx,
+            }
+        } else {
+            rng.gen_range(0, edges.len())
+        };
         let ((va, vb), _) = edges[indx_edge];
 
         let delta_e = |va: usize, vb: usize| -> f64 {
@@ -129,9 +142,27 @@ impl GraphState {
         }
     }
 
+    /// Use the weights of edges to decide how frequently to flip them.
+    pub fn enable_edge_importance_sampling(&mut self, enable: bool) {
+        self.cumulative_weight = if enable {
+            let v = Vec::with_capacity(self.edges.len());
+            let (v, totalw) =
+                self.edges
+                    .iter()
+                    .map(|(_, w)| *w)
+                    .fold((v, 0.), |(mut accv, accw), w| {
+                        accv.push(accw + w);
+                        (accv, accw + w)
+                    });
+            Some((v, totalw))
+        } else {
+            None
+        }
+    }
+
     /// Randomly choose if a step should be made based on temperature and energy change.
     pub fn should_flip(rng: &mut ThreadRng, beta: f64, delta_e: f64) -> bool {
-        // If dE < 0 then it will always flip, don't bother calculating odds.
+        // If dE <= 0 then it will always flip, don't bother calculating odds.
         if delta_e > 0.0 {
             let chance = (-beta * delta_e).exp();
             rng.gen::<f64>() < chance
@@ -165,6 +196,9 @@ impl GraphState {
                     &self.binding_mat,
                     &self.biases,
                     &mut spin_state,
+                    self.cumulative_weight
+                        .as_ref()
+                        .map(|(v, w)| (v.as_slice(), *w)),
                 ),
                 _ => unreachable!(),
             }
@@ -185,7 +219,7 @@ impl GraphState {
         self.state.clone().unwrap()
     }
 
-    /// Get a refof the spin state.
+    /// Get a ref of the spin state.
     pub fn state_ref(&self) -> &[bool] {
         self.state.as_ref().unwrap()
     }
