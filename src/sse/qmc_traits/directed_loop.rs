@@ -114,6 +114,24 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
             let mut outputs = op.clone_outputs();
             adjust_states(inputs.as_mut(), outputs.as_mut(), entrance);
             adjust_states(inputs.as_mut(), outputs.as_mut(), exit);
+            // Check that bounces return correct unchanged state.
+            debug_assert!({
+                let bounce = entrance == exit;
+                if bounce {
+                    inputs
+                        .as_ref()
+                        .iter()
+                        .zip(op.get_inputs().iter())
+                        .all(|(a, b)| a == b)
+                        && outputs
+                            .as_ref()
+                            .iter()
+                            .zip(op.get_outputs().iter())
+                            .all(|(a, b)| a == b)
+                } else {
+                    true
+                }
+            });
             // Call the supplied hamiltonian.
             hamiltonian(
                 &op.get_vars(),
@@ -234,12 +252,9 @@ where
         })
         .unwrap_err();
 
-    let mut inputs = sel_opnode.get_op_ref().clone_inputs();
-    let mut outputs = sel_opnode.get_op_ref().clone_outputs();
-    adjust_states(inputs.as_mut(), outputs.as_mut(), entrance_leg);
-
     // Change the op now that we passed through.
     sel_opnode.get_op_mut().edit_in_out(|ins, outs| {
+        adjust_states(ins, outs, entrance_leg);
         adjust_states(ins, outs, exit_leg);
     });
 
@@ -248,7 +263,7 @@ where
     let sel_op = sel_opnode.get_op_ref();
 
     // Check if we closed the loop before going to next opnode.
-    if (sel_op_pos, exit_leg) == initial_op_and_leg {
+    let res = if (sel_op_pos, exit_leg) == initial_op_and_leg {
         LoopResult::Return
     } else {
         // Get the next opnode and entrance leg, let us know if it changes the initial/final.
@@ -274,14 +289,13 @@ where
             }
         };
         let new_entrance_leg = (next_rel, exit_leg.1.reverse());
-
-        legs.dissolve(l);
-
         // If back where we started, close loop and return state changes.
         if (next_p, new_entrance_leg) == initial_op_and_leg {
             LoopResult::Return
         } else {
             LoopResult::Iterate(next_p, new_entrance_leg)
         }
-    }
+    };
+    legs.dissolve(l);
+    res
 }
