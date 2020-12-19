@@ -606,6 +606,10 @@ impl<'a, 'b> EdgeNavigator for EdgeNav<'a, 'b> {
     fn bond_prefers_aligned(&self, bond: usize) -> bool {
         self.edges[bond].1 < 0.0
     }
+
+    fn bond_mag(&self, b: usize) -> f64 {
+        self.edges[b].1.abs()
+    }
 }
 
 impl<R, M> QMCStepper for QMCIsingGraph<R, M>

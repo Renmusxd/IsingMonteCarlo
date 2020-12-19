@@ -97,6 +97,16 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
         }
     }
 
+    /// Get the weight of the value if it's in the container.
+    pub fn get_weight(&self, value: &T) -> Option<f64> {
+        let t = value.clone().into();
+        if t >= self.map.len() {
+            None
+        } else {
+            self.map[t].map(|indx| self.keys[indx].1)
+        }
+    }
+
     /// Insert an element. Returns true if the element is new.
     pub fn insert(&mut self, value: T, weight: f64) -> bool {
         let entry_index = value.clone().into();

@@ -13,6 +13,8 @@ pub trait EdgeNavigator {
     fn vars_for_bond(&self, bond: usize) -> (usize, usize);
     /// Does the bond prefer aligned variables or antialigned.
     fn bond_prefers_aligned(&self, bond: usize) -> bool;
+    /// Get the magnitude of the largest entry for the bond matrix
+    fn bond_mag(&self, b: usize) -> f64;
     /// Get the other variable attached by a bond
     fn other_var_for_bond(&self, var: usize, bond: usize) -> Option<usize> {
         let (a, b) = self.vars_for_bond(bond);
@@ -32,6 +34,7 @@ pub trait RVBUpdater:
     + Factory<Vec<usize>>
     + Factory<Vec<bool>>
     + Factory<BondContainer<usize>>
+    + Factory<BondContainer<VarPos>>
     + Factory<Vec<Option<usize>>>
 {
     /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
@@ -124,22 +127,26 @@ pub trait RVBUpdater:
 
             let mut cluster_vars: Vec<usize> = self.get_instance();
             let mut cluster_flips: Vec<Option<usize>> = self.get_instance();
-            let mut boundary_vars: Vec<usize> = self.get_instance();
-            let mut boundary_flips_pos: Vec<Option<usize>> = self.get_instance();
 
             let cluster_size = contiguous_bits(rng) + 1;
+
+            let mut cbm = WeightedBoundaryManager::new_from_factory(self);
             build_cluster(
                 cluster_size,
                 (v, flip),
-                (self.get_nvars(), self.get_cutoff()),
+                self.get_cutoff(),
                 (&mut cluster_vars, &mut cluster_flips),
-                (&mut boundary_vars, &mut boundary_flips_pos),
                 (&var_starts, &var_lengths),
                 &constant_ps,
                 edges,
-                self,
+                &mut cbm,
                 rng,
             );
+
+            let mut boundary_vars: Vec<usize> = self.get_instance();
+            let mut boundary_flips_pos: Vec<Option<usize>> = self.get_instance();
+            cbm.dissolve_into(self, &mut boundary_vars, &mut boundary_flips_pos);
+
             let mut cluster_starting_state: Vec<bool> = self.get_instance();
             let mut cluster_toggle_ps: Vec<usize> = self.get_instance();
             let mut subvars: Vec<usize> = self.get_instance();
@@ -835,38 +842,131 @@ fn remove_doubles<T: Eq + Copy>(v: &mut Vec<T>) {
     }
 }
 
-fn build_cluster<Fact: ?Sized, EN, R: Rng>(
+trait ClusterBoundaryManager {
+    fn pop_index<R: Rng>(&mut self, rng: &mut R) -> (usize, Option<usize>, f64);
+    fn push_adjacent(&mut self, var: usize, pos: Option<usize>, weight: Option<f64>);
+    fn is_empty(&self) -> bool;
+}
+
+/// Variable / P positions pairs.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct VarPos {
+    v: usize,
+    p: Option<usize>,
+}
+
+impl Into<usize> for VarPos {
+    fn into(self) -> usize {
+        self.p.unwrap_or(self.v)
+    }
+}
+
+struct WeightedBoundaryManager {
+    boundary_flips: BondContainer<VarPos>,
+    boundary_noflips: BondContainer<VarPos>,
+    var_pos_popped: Vec<bool>,
+    var_nopos_popped: Vec<bool>,
+}
+
+impl WeightedBoundaryManager {
+    fn new_from_factory<F>(f: &mut F) -> Self
+    where
+        F: Factory<BondContainer<VarPos>> + Factory<Vec<bool>> + ?Sized,
+    {
+        Self {
+            boundary_flips: f.get_instance(),
+            boundary_noflips: f.get_instance(),
+            var_pos_popped: f.get_instance(),
+            var_nopos_popped: f.get_instance(),
+        }
+    }
+
+    fn dissolve_into<F>(
+        self,
+        f: &mut F,
+        boundary_vars: &mut Vec<usize>,
+        boundary_flips: &mut Vec<Option<usize>>,
+    ) where
+        F: Factory<BondContainer<VarPos>> + Factory<Vec<bool>> + ?Sized,
+    {
+        self.boundary_flips
+            .iter()
+            .chain(self.boundary_noflips.iter())
+            .for_each(|(varpos, _)| {
+                boundary_vars.push(varpos.v);
+                boundary_flips.push(varpos.p);
+            });
+        f.return_instance(self.boundary_flips);
+        f.return_instance(self.boundary_noflips);
+        f.return_instance(self.var_pos_popped);
+        f.return_instance(self.var_nopos_popped);
+    }
+}
+
+impl ClusterBoundaryManager for WeightedBoundaryManager {
+    fn pop_index<R: Rng>(&mut self, rng: &mut R) -> (usize, Option<usize>, f64) {
+        let total_weight =
+            self.boundary_flips.get_total_weight() + self.boundary_noflips.get_total_weight();
+        let f_ratio = self.boundary_flips.get_total_weight() / total_weight;
+        let pick_flips = rng.gen_bool(f_ratio);
+        let (boundary, poss) = if pick_flips {
+            (&mut self.boundary_flips, &mut self.var_pos_popped)
+        } else {
+            (&mut self.boundary_noflips, &mut self.var_nopos_popped)
+        };
+        let (v, w) = boundary.get_random(rng).unwrap().clone();
+        let indx: usize = v.clone().into();
+        poss[indx] = true;
+        boundary.remove(&v);
+
+        (v.v, v.p, w)
+    }
+
+    fn push_adjacent(&mut self, var: usize, pos: Option<usize>, weight: Option<f64>) {
+        let weight = weight.unwrap_or(1.0);
+        let (boundary, poss) = if pos.is_some() {
+            (&mut self.boundary_flips, &mut self.var_pos_popped)
+        } else {
+            (&mut self.boundary_noflips, &mut self.var_nopos_popped)
+        };
+
+        let varpos = VarPos { v: var, p: pos };
+
+        // If this hasn't already been popped.
+        let indx: usize = varpos.clone().into();
+        if indx >= poss.len() {
+            poss.resize(indx + 1, false);
+        }
+        if !poss[indx] {
+            let weight = boundary.get_weight(&varpos).unwrap_or(0.) + weight;
+            boundary.insert(varpos, weight);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.boundary_flips.is_empty() && self.boundary_noflips.is_empty()
+    }
+}
+
+fn build_cluster<EN, CBM, R>(
     mut cluster_size: usize,
     (init_var, init_flip): (usize, Option<usize>),
-    (nvars, cutoff): (usize, usize),
+    cutoff: usize,
     (cluster_vars, cluster_flips): (&mut Vec<usize>, &mut Vec<Option<usize>>),
-    (boundary_vars, boundary_flips_pos): (&mut Vec<usize>, &mut Vec<Option<usize>>),
     (var_starts, var_lengths): (&[usize], &[usize]),
     constant_ps: &[usize],
     edges: &EN,
-    fact: &mut Fact,
+    cbm: &mut CBM,
     rng: &mut R,
 ) where
-    Fact: Factory<Vec<bool>> + Factory<Vec<usize>> + Factory<Vec<Option<usize>>>,
     EN: EdgeNavigator,
+    CBM: ClusterBoundaryManager,
+    R: Rng,
 {
-    let mut empty_var_in_cluster: Vec<bool> = fact.get_instance();
-    let mut op_p_in_cluster: Vec<bool> = fact.get_instance();
-    empty_var_in_cluster.resize(nvars, false);
-    op_p_in_cluster.resize(cutoff, false);
+    cbm.push_adjacent(init_var, init_flip, None);
 
-    boundary_vars.push(init_var);
-    boundary_flips_pos.push(init_flip);
-    if let Some(init_flip) = init_flip {
-        op_p_in_cluster[constant_ps[init_flip]] = true;
-    } else {
-        empty_var_in_cluster[init_var] = true;
-    }
-
-    while cluster_size > 0 && !boundary_vars.is_empty() {
-        let to_pop = rng.gen_range(0, boundary_vars.len());
-        let v = pop_index(boundary_vars, to_pop).unwrap();
-        let flip = pop_index(boundary_flips_pos, to_pop).unwrap();
+    while cluster_size > 0 && !cbm.is_empty() {
+        let (v, flip, _) = cbm.pop_index(rng);
 
         // Check that popped values make sense.
         debug_assert!(flip.map(|f| f >= var_starts[v]).unwrap_or(true));
@@ -882,30 +982,17 @@ fn build_cluster<Fact: ?Sized, EN, R: Rng>(
             let relflip = flip - var_starts[v];
             let flip_dec = (relflip + var_lengths[v] - 1) % var_lengths[v] + var_starts[v];
             let flip_inc = (relflip + 1) % var_lengths[v] + var_starts[v];
-            if !op_p_in_cluster[constant_ps[flip_dec]] {
-                op_p_in_cluster[constant_ps[flip_dec]] = true;
 
-                boundary_vars.push(v);
-                boundary_flips_pos.push(Some(flip_dec));
-            }
-            if !op_p_in_cluster[constant_ps[flip_inc]] {
-                op_p_in_cluster[constant_ps[flip_inc]] = true;
-
-                boundary_vars.push(v);
-                boundary_flips_pos.push(Some(flip_inc));
-            }
+            cbm.push_adjacent(v, Some(flip_dec), None);
+            cbm.push_adjacent(v, Some(flip_inc), None);
         }
 
         // Add neighbors to what we just added.
         edges.bonds_for_var(v).iter().for_each(|b| {
+            let weight = edges.bond_mag(*b);
             let ov = edges.other_var_for_bond(v, *b).unwrap();
             if var_lengths[ov] == 0 {
-                if !empty_var_in_cluster[ov] {
-                    empty_var_in_cluster[ov] = true;
-
-                    boundary_vars.push(ov);
-                    boundary_flips_pos.push(None);
-                }
+                cbm.push_adjacent(ov, None, Some(weight));
             } else {
                 let pis = var_starts[ov]..var_starts[ov] + var_lengths[ov];
                 if let Some(flip) = flip {
@@ -917,41 +1004,18 @@ fn build_cluster<Fact: ?Sized, EN, R: Rng>(
                     find_overlapping_starts(pstart, pend, cutoff, &constant_ps[pis])
                         .map(|i| i + var_starts[ov])
                         .for_each(|flip_pos| {
-                            if !op_p_in_cluster[constant_ps[flip_pos]] {
-                                op_p_in_cluster[constant_ps[flip_pos]] = true;
-
-                                boundary_vars.push(ov);
-                                boundary_flips_pos.push(Some(flip_pos));
-                            }
+                            cbm.push_adjacent(ov, Some(flip_pos), Some(weight));
                         })
                 } else {
                     // Add them all.
                     pis.for_each(|pi| {
-                        if !op_p_in_cluster[constant_ps[pi]] {
-                            op_p_in_cluster[constant_ps[pi]] = true;
-
-                            boundary_vars.push(ov);
-                            boundary_flips_pos.push(Some(pi));
-                        }
+                        cbm.push_adjacent(ov, Some(pi), Some(weight));
                     })
                 }
             }
         });
 
         cluster_size -= 1;
-    }
-
-    fact.return_instance(empty_var_in_cluster);
-    fact.return_instance(op_p_in_cluster);
-}
-
-fn pop_index<T>(v: &mut Vec<T>, index: usize) -> Option<T> {
-    let len = v.len();
-    if index < len {
-        v.swap(index, len - 1);
-        v.pop()
-    } else {
-        None
     }
 }
 
@@ -1140,6 +1204,10 @@ mod sc_tests {
 
         fn bond_prefers_aligned(&self, bond: usize) -> bool {
             self.bonds[bond].1
+        }
+
+        fn bond_mag(&self, _b: usize) -> f64 {
+            1.0
         }
     }
 

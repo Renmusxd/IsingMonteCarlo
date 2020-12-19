@@ -59,6 +59,10 @@ impl EdgeNavigator for EN {
     fn bond_prefers_aligned(&self, bond: usize) -> bool {
         self.bonds[bond].1
     }
+
+    fn bond_mag(&self, _b: usize) -> f64 {
+        1.0
+    }
 }
 
 #[test]

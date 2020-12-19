@@ -46,6 +46,7 @@ pub struct FastOpsTemplate<O: Op> {
     option_usize_alloc: Allocator<Vec<Option<usize>>>,
     f64_alloc: Allocator<Vec<f64>>,
     bond_container_alloc: Allocator<BondContainer<usize>>,
+    bond_container_varpos_alloc: Allocator<BondContainer<VarPos>>,
 }
 
 impl<O: Op + Clone> FastOpsTemplate<O> {
@@ -64,6 +65,7 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             option_usize_alloc: Allocator::new_with_max_in_flight(4),
             f64_alloc: Allocator::new_with_max_in_flight(1),
             bond_container_alloc: Allocator::new_with_max_in_flight(2),
+            bond_container_varpos_alloc: Allocator::new_with_max_in_flight(2),
         }
     }
 
@@ -1242,6 +1244,15 @@ impl<O: Op + Clone> Factory<BondContainer<usize>> for FastOpsTemplate<O> {
 
     fn return_instance(&mut self, t: BondContainer<usize>) {
         self.bond_container_alloc.return_instance(t)
+    }
+}
+impl<O: Op + Clone> Factory<BondContainer<VarPos>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> BondContainer<VarPos> {
+        self.bond_container_varpos_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: BondContainer<VarPos>) {
+        self.bond_container_varpos_alloc.return_instance(t)
     }
 }
 
