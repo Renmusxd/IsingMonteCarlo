@@ -784,6 +784,10 @@ where
         let offset = self.get_offset();
         average_energy + offset
     }
+
+    fn get_bond_count(&self, bond: usize) -> usize {
+        self.get_manager_ref().get_count(bond)
+    }
 }
 
 impl<R, M> Verify for QMCIsingGraph<R, M>

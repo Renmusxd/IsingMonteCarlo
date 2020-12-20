@@ -10,6 +10,9 @@ pub trait QMCStepper {
     /// Get a reference to the state.
     fn state_ref(&self) -> &[bool];
 
+    /// Get the number of a given bond
+    fn get_bond_count(&self, bond: usize) -> usize;
+
     /// Take t qmc timesteps at beta.
     fn timesteps(&mut self, t: usize, beta: f64) -> f64 {
         let (_, average_energy) = self.timesteps_measure(t, beta, (), |_acc, _state| (), None);
@@ -64,27 +67,9 @@ pub trait QMCStepper {
         F: Fn(T, &[bool]),
         I: IntoIterator<Item = T>,
     {
-        let zip_with = zip_with.into_iter();
-        let (_, e) = self.timesteps_measure(
-            t,
-            beta,
-            Some(zip_with),
-            |zip_iter, state| {
-                if let Some(mut zip_iter) = zip_iter {
-                    let next = zip_iter.next();
-                    if let Some(next) = next {
-                        iter_fn(next, state);
-                        Some(zip_iter)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            },
-            sampling_freq,
-        );
-        e
+        self.timesteps_iter_zip_with_self(t, beta, sampling_freq, zip_with, |acc, s| {
+            iter_fn(acc, s.state_ref())
+        })
     }
 
     /// Take t qmc timesteps at beta and sample states, fold across states and output results.
@@ -99,18 +84,75 @@ pub trait QMCStepper {
     where
         F: Fn(T, &[bool]) -> T,
     {
+        self.timesteps_measure_with_self(
+            timesteps,
+            beta,
+            init_t,
+            |acc, s| state_fold(acc, s.state_ref()),
+            sampling_freq,
+        )
+    }
+
+    /// Take t qmc timesteps at beta and sample states, apply f to each and the zipped iterator.
+    fn timesteps_iter_zip_with_self<F, I, T>(
+        &mut self,
+        t: usize,
+        beta: f64,
+        sampling_freq: Option<usize>,
+        zip_with: I,
+        iter_fn: F,
+    ) -> f64
+    where
+        F: Fn(T, &Self),
+        I: IntoIterator<Item = T>,
+    {
+        let zip_with = zip_with.into_iter();
+        let (_, e) = self.timesteps_measure_with_self(
+            t,
+            beta,
+            Some(zip_with),
+            |zip_iter, s| {
+                if let Some(mut zip_iter) = zip_iter {
+                    let next = zip_iter.next();
+                    if let Some(next) = next {
+                        iter_fn(next, s);
+                        Some(zip_iter)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            },
+            sampling_freq,
+        );
+        e
+    }
+
+    /// Take t qmc timesteps at beta and sample states, fold across states and output results.
+    fn timesteps_measure_with_self<F, T>(
+        &mut self,
+        timesteps: usize,
+        beta: f64,
+        init_t: T,
+        state_fold: F,
+        sampling_freq: Option<usize>,
+    ) -> (T, f64)
+    where
+        F: Fn(T, &Self) -> T,
+    {
         let mut acc = init_t;
         let mut steps_measured = 0;
         let mut total_n = 0;
         let sampling_freq = sampling_freq.unwrap_or(1);
 
         for t in 0..timesteps {
-            let state_ref = self.timestep(beta);
+            self.timestep(beta);
 
             // Sample every `sampling_freq`
             // Ignore first one.
             if (t + 1) % sampling_freq == 0 {
-                acc = state_fold(acc, state_ref);
+                acc = state_fold(acc, self);
                 steps_measured += 1;
                 total_n += self.get_n();
             }

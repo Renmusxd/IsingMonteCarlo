@@ -1,4 +1,3 @@
-use qmc::classical::graph::Edge;
 use qmc::sse::fast_ops::*;
 use qmc::sse::*;
 use rand::prelude::*;

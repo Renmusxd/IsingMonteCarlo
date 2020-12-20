@@ -372,6 +372,10 @@ where
     fn state_ref(&self) -> &[bool] {
         self.state.as_ref().unwrap()
     }
+
+    fn get_bond_count(&self, bond: usize) -> usize {
+        self.get_manager_ref().get_count(bond)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
