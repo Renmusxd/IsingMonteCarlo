@@ -232,7 +232,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -251,7 +251,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 10.0;
         g.timesteps(1000, beta);
@@ -270,7 +270,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 10.0;
         g.timesteps(100, beta);
@@ -289,7 +289,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 10.0;
         g.timesteps(100, beta);
@@ -308,7 +308,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 100.0;
         g.timesteps(1000, beta);
@@ -327,7 +327,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 100.0;
         g.timesteps(1000, beta);
@@ -346,7 +346,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 100.0;
         g.timesteps(1000, beta);
@@ -365,7 +365,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 100.0;
         g.timesteps(1000, beta);
@@ -384,7 +384,7 @@ mod tests {
             rng,
             None,
         );
-        g.set_run_rvb(true).unwrap();
+        g.set_run_rvb(true);
 
         let beta = 100.0;
         g.timesteps(1000, beta);
