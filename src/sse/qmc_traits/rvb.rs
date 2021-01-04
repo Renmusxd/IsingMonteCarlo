@@ -914,7 +914,7 @@ impl ClusterBoundaryManager for WeightedBoundaryManager {
         } else {
             (&mut self.boundary_noflips, &mut self.var_nopos_popped)
         };
-        let (v, w) = boundary.get_random(rng).unwrap().clone();
+        let (v, w) = *boundary.get_random(rng).unwrap();
         let indx: usize = v.clone().into();
         poss[indx] = true;
         boundary.remove(&v);

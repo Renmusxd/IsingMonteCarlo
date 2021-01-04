@@ -1,6 +1,6 @@
 [package]
 name = "qmc"
-version = "2.11.0"
+version = "2.12.0"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"
@@ -12,10 +12,8 @@ license = "MIT"
 default = []
 # Calculate autocorrelation lengths for various functions of the sampled states.
 autocorrelations = ["rayon", "rustfft"]
-# Allow for interactions of various numbers of spins to be stored on the stack
-const_generics = ["smallvec/const_generics"]
 # Enable nightly features in dependencies
-nightly = ["smallvec/specialization", "smallvec/union", "const_generics"]
+nightly = ["smallvec/specialization", "smallvec/union"]
 # Compile and export parallel-tempering code
 tempering = ["itertools"]
 # Add parallelization to parallel-tempering code

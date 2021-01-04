@@ -299,7 +299,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     pub fn single_rvb_step(&mut self) -> Result<(), String> {
         let mut state = self.state.take().unwrap();
         if self.classical_bonds.is_none() {
-            self.make_classical_bonds(state.len())?;
+            self.make_classical_bonds(state.len());
         }
         let mut manager = self.op_manager.take().unwrap();
         let rng = self.rng.as_mut().unwrap();
@@ -392,7 +392,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
     }
 
     /// Build classical bonds list.
-    fn make_classical_bonds(&mut self, nvars: usize) -> Result<(), String> {
+    fn make_classical_bonds(&mut self, nvars: usize) {
         let mut edge_lookup = vec![vec![]; nvars];
         self.edges
             .iter()
@@ -403,17 +403,14 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
                 edge_lookup[b].push(bond);
             });
         self.classical_bonds = Some(edge_lookup);
-        Ok(())
     }
 
     /// Enable or disable automatic rvb steps. Errors if all js not equal magnitude.
-    pub fn set_run_rvb(&mut self, run_rvb: bool) -> Result<(), String> {
+    pub fn set_run_rvb(&mut self, run_rvb: bool) {
         self.run_rvb_steps = run_rvb;
         if run_rvb && self.classical_bonds.is_none() {
             let nvars = self.state.as_ref().map(|s| s.len()).unwrap();
             self.make_classical_bonds(nvars)
-        } else {
-            Ok(())
         }
     }
 

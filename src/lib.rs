@@ -48,8 +48,6 @@
 //! let (state, average_energy) = g.timesteps_sample(1000, beta, None);
 //! ```
 
-#![cfg_attr(feature = "const_generics", feature(min_const_generics))]
-
 /// A limited classical monte carlo library for ising models.
 pub mod classical;
 /// QMC algorithms and traits.
