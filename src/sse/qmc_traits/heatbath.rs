@@ -36,7 +36,7 @@ impl BondWeights {
 
     fn get_random_bond_and_max_weight<R: Rng>(&self, mut rng: R) -> Result<(usize, f64), &str> {
         if let Some(total) = self.total() {
-            let c = rng.gen_range(0., total);
+            let c = rng.gen_range(0. ..total);
             let index = self.index_for_cumulative(c);
             Ok((
                 self.max_weight_and_cumulative[index].0,
@@ -162,7 +162,7 @@ pub trait HeatBathDiagonalUpdater: DiagonalUpdater {
                 let denominator = (cutoff - n) as f64 + numerator;
                 if rng.gen_bool(numerator / denominator) {
                     // For usage later.
-                    let p = rng.gen_range(0.0, 1.0);
+                    let p = rng.gen_range(0. ..1.0);
                     // Find the bond to use, weighted by their matrix element.
                     let (b, maxweight) = bond_weights.get_random_bond_and_max_weight(rng).unwrap();
                     let (vars, constant) = hamiltonian.edge_fn(b);

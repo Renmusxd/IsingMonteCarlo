@@ -31,7 +31,7 @@ impl<T: Clone + Into<usize>> BondContainer<T> {
             None
         } else {
             // Choose a key to remove
-            let mut p = r.gen_range(0f64, self.total_weight);
+            let mut p = r.gen_range(0. ..self.total_weight);
             let mut i = 0;
             while i < self.keys.len() {
                 p -= self.keys[i].1;

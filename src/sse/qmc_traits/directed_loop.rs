@@ -144,12 +144,12 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
         if self.get_n() > 0 {
             let initial_n = initial_n
                 .map(|n| min(n, self.get_n()))
-                .unwrap_or_else(|| rng.gen_range(0, self.get_n()));
+                .unwrap_or_else(|| rng.gen_range(0..self.get_n()));
             let nth_p = self.get_nth_p(initial_n);
             // Get starting leg for pth op.
             let op = self.get_node_ref(nth_p).unwrap();
             let n_vars = op.get_op_ref().get_vars().len();
-            let initial_var = rng.gen_range(0, n_vars);
+            let initial_var = rng.gen_range(0..n_vars);
             let initial_direction = if rng.gen() {
                 OpSide::Inputs
             } else {
@@ -240,7 +240,7 @@ where
     );
 
     let total_weight: f64 = legs.iter().map(|(_, w)| *w).sum();
-    let choice = rng.gen_range(0.0, total_weight);
+    let choice = rng.gen_range(0. ..total_weight);
     let exit_leg = legs
         .iter()
         .try_fold(choice, |c, (leg, weight)| {

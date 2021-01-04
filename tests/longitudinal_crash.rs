@@ -159,7 +159,7 @@ fn run_two_unit_cell_random_bonds() {
         let mut rng = SmallRng::seed_from_u64(i);
         let edges = two_unit_cell()
             .into_iter()
-            .map(|(vs, j)| (vs, j * rng.gen_range(0.5, 2.0)))
+            .map(|(vs, j)| (vs, j * rng.gen_range(0.5..2.0)))
             .collect();
         let nvars = 8;
         let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(

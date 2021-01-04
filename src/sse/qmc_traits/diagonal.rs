@@ -149,7 +149,7 @@ fn metropolis_single_diagonal_update<'b, O: Op, H: Hamiltonian<'b>, R: Rng>(
     rng: &mut R,
 ) -> Option<Option<O>> {
     let b = match op {
-        None => rng.gen_range(0, hamiltonian.num_bonds()),
+        None => rng.gen_range(0..hamiltonian.num_bonds()),
         Some(op) if op.is_diagonal() => op.get_bond(),
         Some(op) => {
             op.get_vars()

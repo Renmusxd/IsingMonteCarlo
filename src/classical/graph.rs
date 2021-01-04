@@ -66,7 +66,7 @@ impl GraphState {
         biases: &[f64],
         state: &mut [bool],
     ) {
-        let random_index = rng.gen_range(0, state.len());
+        let random_index = rng.gen_range(0..state.len());
         let curr_value = state[random_index];
         // new - old
         let binding_slice = &binding_mat[random_index];
@@ -100,7 +100,7 @@ impl GraphState {
         cumulative_edge_weights: Option<(&[f64], f64)>,
     ) {
         let indx_edge = if let Some((cumulative_edge_weights, totalw)) = cumulative_edge_weights {
-            let p = rng.gen_range(0., totalw);
+            let p = rng.gen_range(0. ..totalw);
             let indx = cumulative_edge_weights
                 .binary_search_by(|v| v.partial_cmp(&p).expect("Couldn't compare values"));
             match indx {
@@ -108,7 +108,7 @@ impl GraphState {
                 Err(indx) => indx,
             }
         } else {
-            rng.gen_range(0, edges.len())
+            rng.gen_range(0..edges.len())
         };
         let ((va, vb), _) = edges[indx_edge];
 
@@ -179,7 +179,7 @@ impl GraphState {
             let choice = if only_basic_moves {
                 0
             } else {
-                rng.gen_range(0, 2)
+                rng.gen_range(0..2)
             };
             match choice {
                 0 => Self::do_spin_flip(

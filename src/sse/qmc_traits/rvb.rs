@@ -112,7 +112,7 @@ pub trait RVBUpdater:
         let mut num_succ = 0;
         for _ in 0..updates {
             // Pick starting flip.
-            let choice = rng.gen_range(0, constant_ps.len() + vars_with_zero_ops.len());
+            let choice = rng.gen_range(0..(constant_ps.len() + vars_with_zero_ops.len()));
             let (v, flip) = if choice < constant_ps.len() {
                 let res = var_starts.binary_search(&choice);
                 let v = match res {

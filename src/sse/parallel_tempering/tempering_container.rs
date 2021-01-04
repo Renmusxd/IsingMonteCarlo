@@ -247,7 +247,7 @@ where
             .chunks(2)
             .into_iter()
             .map(unwrap_chunk)
-            .map(|x| (x, rng.gen_range(0.0, 1.0)))
+            .map(|x| (x, rng.gen_range(0. ..1.0)))
             .zip(hameqs.iter())
             .map(|(((ga, gb), p), eq)| if swap_on_chunks(ga, gb, p, !eq) { 1 } else { 0 })
             .sum()
@@ -459,7 +459,7 @@ pub mod rayon_tempering {
         } else {
             // Generate probs for bools ahead of time, this way we can parallelize.
             let probs = (0..graphs.len() / 2)
-                .map(|_| rng.gen_range(0.0, 1.0))
+                .map(|_| rng.gen_range(0. ..1.0))
                 .collect::<Vec<_>>();
             graphs
                 .par_iter_mut()
