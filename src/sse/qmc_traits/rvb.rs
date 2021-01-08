@@ -855,9 +855,9 @@ pub struct VarPos {
     p: Option<usize>,
 }
 
-impl Into<usize> for VarPos {
-    fn into(self) -> usize {
-        self.p.unwrap_or(self.v)
+impl From<VarPos> for usize {
+    fn from(vp: VarPos) -> usize {
+        vp.p.unwrap_or(vp.v)
     }
 }
 

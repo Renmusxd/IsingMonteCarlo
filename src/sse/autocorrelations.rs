@@ -1,5 +1,4 @@
 use crate::sse::QMCStepper;
-use rayon::prelude::*;
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::ops::DivAssign;
 
@@ -11,7 +10,6 @@ pub trait QMCAutoCorrelations: QMCStepper {
         timesteps: usize,
         beta: f64,
         sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
         sample_mapper: F,
     ) -> Vec<f64>
     where
@@ -33,11 +31,7 @@ pub trait QMCAutoCorrelations: QMCStepper {
             .map(|s| sample_mapper(self, s))
             .collect::<Vec<Vec<f64>>>();
 
-        if use_fft.unwrap_or(true) {
-            fft_autocorrelation(&samples)
-        } else {
-            naive_autocorrelation(&samples)
-        }
+        fft_autocorrelation(&samples)
     }
 
     /// Calculate the autocorrelation of variables.
@@ -46,9 +40,8 @@ pub trait QMCAutoCorrelations: QMCStepper {
         timesteps: usize,
         beta: f64,
         sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
     ) -> Vec<f64> {
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |_, sample| {
+        self.calculate_autocorrelation(timesteps, beta, sampling_freq, |_, sample| {
             sample
                 .into_iter()
                 .map(|b| if b { 1.0 } else { -1.0 })
@@ -63,9 +56,8 @@ pub trait QMCAutoCorrelations: QMCStepper {
         beta: f64,
         var_products: &[&[usize]],
         sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
     ) -> Vec<f64> {
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |_, sample| {
+        self.calculate_autocorrelation(timesteps, beta, sampling_freq, |_, sample| {
             var_products
                 .iter()
                 .map(|vs| {
@@ -94,10 +86,9 @@ pub trait QMCBondAutoCorrelations: QMCAutoCorrelations {
         timesteps: usize,
         beta: f64,
         sampling_freq: Option<usize>,
-        use_fft: Option<bool>,
     ) -> Vec<f64> {
         let nbonds = self.n_bonds();
-        self.calculate_autocorrelation(timesteps, beta, sampling_freq, use_fft, |s, sample| {
+        self.calculate_autocorrelation(timesteps, beta, sampling_freq, |s, sample| {
             (0..nbonds)
                 .map(|bond| s.value_for_bond(bond, &sample))
                 .collect()
@@ -141,43 +132,53 @@ pub(crate) fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
         .collect()
 }
 
-pub(crate) fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
-    let tmax = samples.len();
-    let n: usize = samples[0].len();
-    let mu = (0..n)
-        .map(|i| -> f64 {
-            let total = samples.iter().map(|sample| sample[i]).sum::<f64>();
-            total / samples.len() as f64
-        })
-        .collect::<Vec<_>>();
+#[cfg(test)]
+mod autocorr_test {
+    use super::*;
 
-    (0..tmax)
-        .into_par_iter()
-        .map(|tau| {
-            (0..tmax)
-                .map(|t| (t, (t + tau) % tmax))
-                .map(|(ta, tb)| {
-                    let sample_a = &samples[ta];
-                    let sample_b = &samples[tb];
-                    let (d, ma, mb) = sample_a
-                        .iter()
-                        .enumerate()
-                        .zip(sample_b.iter().enumerate())
-                        .fold(
-                            (0.0, 0.0, 0.0),
-                            |(mut dot_acc, mut a_acc, mut b_acc), ((i, a), (j, b))| {
-                                let da = a - mu[i];
-                                let db = b - mu[j];
-                                dot_acc += da * db;
-                                a_acc += da.powi(2);
-                                b_acc += db.powi(2);
-                                (dot_acc, a_acc, b_acc)
-                            },
-                        );
-                    d / (ma * mb).sqrt()
-                })
-                .sum::<f64>()
-                / (tmax as f64)
-        })
-        .collect::<Vec<_>>()
+    fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
+        let tmax = samples.len();
+        let n: usize = samples[0].len();
+        let mu = (0..n)
+            .map(|i| -> f64 {
+                let total = samples.iter().map(|sample| sample[i]).sum::<f64>();
+                total / samples.len() as f64
+            })
+            .collect::<Vec<_>>();
+
+        (0..tmax)
+            .into_iter()
+            .map(|tau| {
+                (0..tmax)
+                    .map(|t| (t, (t + tau) % tmax))
+                    .map(|(ta, tb)| {
+                        let sample_a = &samples[ta];
+                        let sample_b = &samples[tb];
+                        let (d, ma, mb) = sample_a
+                            .iter()
+                            .enumerate()
+                            .zip(sample_b.iter().enumerate())
+                            .fold(
+                                (0.0, 0.0, 0.0),
+                                |(mut dot_acc, mut a_acc, mut b_acc), ((i, a), (j, b))| {
+                                    let da = a - mu[i];
+                                    let db = b - mu[j];
+                                    dot_acc += da * db;
+                                    a_acc += da.powi(2);
+                                    b_acc += db.powi(2);
+                                    (dot_acc, a_acc, b_acc)
+                                },
+                            );
+                        d / (ma * mb).sqrt()
+                    })
+                    .sum::<f64>()
+                    / (tmax as f64)
+            })
+            .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn simple_test() {
+        unimplemented!()
+    }
 }

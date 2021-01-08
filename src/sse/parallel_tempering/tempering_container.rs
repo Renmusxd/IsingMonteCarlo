@@ -476,7 +476,7 @@ pub mod rayon_tempering {
     #[cfg(feature = "autocorrelations")]
     pub mod autocorrelations {
         use super::*;
-        use crate::sse::autocorrelations::{fft_autocorrelation, naive_autocorrelation};
+        use crate::sse::autocorrelations::fft_autocorrelation;
         use crate::sse::QMCBondAutoCorrelations;
 
         /// A collection of functions to calculate autocorrelations.
@@ -487,7 +487,6 @@ pub mod rayon_tempering {
                 timesteps: usize,
                 replica_swap_freq: Option<usize>,
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
             ) -> Vec<Vec<f64>>;
 
             /// Calculate autocorrelations on the output of f applied to states.
@@ -496,7 +495,6 @@ pub mod rayon_tempering {
                 timesteps: usize,
                 replica_swap_freq: Option<usize>,
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
                 sample_mapper: F,
             ) -> Vec<Vec<f64>>
             where
@@ -509,7 +507,6 @@ pub mod rayon_tempering {
                 replica_swap_freq: Option<usize>,
                 var_products: &[&[usize]],
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
             ) -> Vec<Vec<f64>>;
         }
 
@@ -523,7 +520,6 @@ pub mod rayon_tempering {
                 timesteps: usize,
                 replica_swap_freq: Option<usize>,
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
             ) -> Vec<Vec<f64>>;
         }
 
@@ -537,13 +533,11 @@ pub mod rayon_tempering {
                 timesteps: usize,
                 replica_swap_freq: Option<usize>,
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
             ) -> Vec<Vec<f64>> {
                 self.calculate_autocorrelation(
                     timesteps,
                     replica_swap_freq,
                     sampling_freq,
-                    use_fft,
                     |sample, _| {
                         sample
                             .iter()
@@ -560,13 +554,11 @@ pub mod rayon_tempering {
                 replica_swap_freq: Option<usize>,
                 var_products: &[&[usize]],
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
             ) -> Vec<Vec<f64>> {
                 self.calculate_autocorrelation(
                     timesteps,
                     replica_swap_freq,
                     sampling_freq,
-                    use_fft,
                     |sample, _| {
                         var_products
                             .iter()
@@ -585,7 +577,6 @@ pub mod rayon_tempering {
                 timesteps: usize,
                 replica_swap_freq: Option<usize>,
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
                 sample_mapper: F,
             ) -> Vec<Vec<f64>>
             where
@@ -604,12 +595,7 @@ pub mod rayon_tempering {
                             .iter()
                             .map(|s| sample_mapper(s, q))
                             .collect::<Vec<_>>();
-
-                        if use_fft.unwrap_or(true) {
-                            fft_autocorrelation(&samples)
-                        } else {
-                            naive_autocorrelation(&samples)
-                        }
+                        fft_autocorrelation(&samples)
                     })
                     .collect::<Vec<_>>()
             }
@@ -625,13 +611,11 @@ pub mod rayon_tempering {
                 timesteps: usize,
                 replica_swap_freq: Option<usize>,
                 sampling_freq: Option<usize>,
-                use_fft: Option<bool>,
             ) -> Vec<Vec<f64>> {
                 self.calculate_autocorrelation(
                     timesteps,
                     replica_swap_freq,
                     sampling_freq,
-                    use_fft,
                     |sample, q| {
                         let nbonds = q.n_bonds();
                         (0..nbonds)
@@ -696,21 +680,23 @@ pub mod serialization {
         total_swaps: u64,
     }
 
-    impl<R1, R2, M> Into<SerializeTemperingContainer<M>>
-        for TemperingContainer<R1, QMCIsingGraph<R2, M>>
+    impl<R1, R2, M> From<TemperingContainer<R1, QMCIsingGraph<R2, M>>>
+        for SerializeTemperingContainer<M>
     where
         R1: Rng,
         R2: Rng,
         M: IsingManager,
     {
-        fn into(self) -> SerializeTemperingContainer<M> {
+        fn from(
+            tc: TemperingContainer<R1, QMCIsingGraph<R2, M>>,
+        ) -> SerializeTemperingContainer<M> {
             SerializeTemperingContainer {
-                graphs: self
+                graphs: tc
                     .graphs
                     .into_iter()
                     .map(|(g, beta)| (g.into(), beta))
                     .collect(),
-                total_swaps: self.total_swaps,
+                total_swaps: tc.total_swaps,
             }
         }
     }

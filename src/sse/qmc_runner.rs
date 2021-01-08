@@ -4,6 +4,7 @@ use crate::sse::ham::Ham;
 use crate::sse::qmc_traits::*;
 #[cfg(feature = "autocorrelations")]
 use crate::sse::QMCBondAutoCorrelations;
+use crate::sse::{IntoQMC, IsingManager, QMCIsingGraph};
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
@@ -671,6 +672,18 @@ fn get_power_of_two(n: usize) -> Result<usize, ()> {
         Ok(i)
     } else {
         Err(())
+    }
+}
+
+// Allow for conversion to generic QMC type. Clears the internal state, converts edges and field
+// into interactions.
+impl<R, M> From<QMCIsingGraph<R, M>> for QMC<R, M>
+where
+    R: Rng,
+    M: IsingManager + QMCManager,
+{
+    fn from(g: QMCIsingGraph<R, M>) -> Self {
+        g.into_qmc()
     }
 }
 

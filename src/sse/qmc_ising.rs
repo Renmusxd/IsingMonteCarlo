@@ -941,18 +941,6 @@ where
     }
 }
 
-// Allow for conversion to generic QMC type. Clears the internal state, converts edges and field
-// into interactions.
-impl<R, M> Into<QMC<R, M>> for QMCIsingGraph<R, M>
-where
-    R: Rng,
-    M: IsingManager + QMCManager,
-{
-    fn into(self) -> QMC<R, M> {
-        self.into_qmc()
-    }
-}
-
 #[cfg(feature = "autocorrelations")]
 impl<R, M> QMCBondAutoCorrelations for QMCIsingGraph<R, M>
 where
@@ -1028,26 +1016,26 @@ pub mod serialization {
         }
     }
 
-    impl<R, M> Into<SerializeQMCGraph<M>> for QMCIsingGraph<R, M>
+    impl<R, M> From<QMCIsingGraph<R, M>> for SerializeQMCGraph<M>
     where
         R: Rng,
         M: IsingManager,
     {
-        fn into(self) -> SerializeQMCGraph<M> {
+        fn from(g: QMCIsingGraph<R, M>) -> SerializeQMCGraph<M> {
             SerializeQMCGraph {
-                edges: self.edges,
-                transverse: self.transverse,
-                longitudinal: self.longitudinal,
-                state: self.state,
-                cutoff: self.cutoff,
-                op_manager: self.op_manager,
-                total_energy_offset: self.total_energy_offset,
-                nvars: self.vars.len(),
-                run_rvb_steps: self.run_rvb_steps,
-                classical_bonds: self.classical_bonds,
-                total_rvb_successes: self.total_rvb_successes,
-                rvb_clusters_counted: self.rvb_clusters_counted,
-                bond_weights: self.bond_weights,
+                edges: g.edges,
+                transverse: g.transverse,
+                longitudinal: g.longitudinal,
+                state: g.state,
+                cutoff: g.cutoff,
+                op_manager: g.op_manager,
+                total_energy_offset: g.total_energy_offset,
+                nvars: g.vars.len(),
+                run_rvb_steps: g.run_rvb_steps,
+                classical_bonds: g.classical_bonds,
+                total_rvb_successes: g.total_rvb_successes,
+                rvb_clusters_counted: g.rvb_clusters_counted,
+                bond_weights: g.bond_weights,
             }
         }
     }
