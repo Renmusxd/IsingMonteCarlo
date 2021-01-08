@@ -109,7 +109,7 @@ pub(crate) fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
             let mut v = (0..tmax)
                 .map(|t| Complex::<f64>::new(samples[t][i] - means[i], 0.0))
                 .collect::<Vec<Complex<f64>>>();
-            let norm = v.iter().map(|v| v.powi(2).re).sum::<f64>().sqrt();
+            let norm = v.iter().map(|v| (v.conj() * v).re).sum::<f64>().sqrt();
             v.iter_mut().for_each(|c| c.div_assign(norm));
             v
         })
@@ -130,55 +130,4 @@ pub(crate) fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
     (0..tmax)
         .map(|t| (0..n).map(|i| input[i][t].re).sum::<f64>() / ((n * tmax) as f64))
         .collect()
-}
-
-#[cfg(test)]
-mod autocorr_test {
-    use super::*;
-
-    fn naive_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
-        let tmax = samples.len();
-        let n: usize = samples[0].len();
-        let mu = (0..n)
-            .map(|i| -> f64 {
-                let total = samples.iter().map(|sample| sample[i]).sum::<f64>();
-                total / samples.len() as f64
-            })
-            .collect::<Vec<_>>();
-
-        (0..tmax)
-            .into_iter()
-            .map(|tau| {
-                (0..tmax)
-                    .map(|t| (t, (t + tau) % tmax))
-                    .map(|(ta, tb)| {
-                        let sample_a = &samples[ta];
-                        let sample_b = &samples[tb];
-                        let (d, ma, mb) = sample_a
-                            .iter()
-                            .enumerate()
-                            .zip(sample_b.iter().enumerate())
-                            .fold(
-                                (0.0, 0.0, 0.0),
-                                |(mut dot_acc, mut a_acc, mut b_acc), ((i, a), (j, b))| {
-                                    let da = a - mu[i];
-                                    let db = b - mu[j];
-                                    dot_acc += da * db;
-                                    a_acc += da.powi(2);
-                                    b_acc += db.powi(2);
-                                    (dot_acc, a_acc, b_acc)
-                                },
-                            );
-                        d / (ma * mb).sqrt()
-                    })
-                    .sum::<f64>()
-                    / (tmax as f64)
-            })
-            .collect::<Vec<_>>()
-    }
-
-    #[test]
-    fn simple_test() {
-        unimplemented!()
-    }
 }

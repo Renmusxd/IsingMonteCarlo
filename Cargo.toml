@@ -11,7 +11,7 @@ license = "MIT"
 [features]
 default = []
 # Calculate autocorrelation lengths for various functions of the sampled states.
-autocorrelations = ["rayon", "rustfft"]
+autocorrelations = ["rustfft"]
 # Enable nightly features in dependencies
 nightly = ["smallvec/specialization", "smallvec/union"]
 # Compile and export parallel-tempering code
