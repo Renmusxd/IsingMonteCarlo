@@ -1,8 +1,6 @@
 use crate::sse::QMCStepper;
 use rayon::prelude::*;
-use rustfft::num_complex::Complex;
-use rustfft::num_traits::Zero;
-use rustfft::FFTplanner;
+use rustfft::{num_complex::Complex, FftPlanner};
 use std::ops::DivAssign;
 
 /// Calculate autocorrelations for a QMCStepper
@@ -125,18 +123,17 @@ pub(crate) fn fft_autocorrelation(samples: &[Vec<f64>]) -> Vec<f64> {
             v
         })
         .collect::<Vec<_>>();
-    let mut planner = FFTplanner::new(false);
-    let fft = planner.plan_fft(tmax);
-    let mut iplanner = FFTplanner::new(true);
-    let ifft = iplanner.plan_fft(tmax);
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(tmax);
+    let mut iplanner = FftPlanner::new();
+    let ifft = iplanner.plan_fft_inverse(tmax);
 
-    let mut output = vec![Complex::zero(); tmax];
     input.iter_mut().for_each(|input| {
-        fft.process(input, &mut output);
-        output
+        fft.process(input);
+        input
             .iter_mut()
             .for_each(|c| *c = Complex::new(c.norm_sqr(), 0.0));
-        ifft.process(&mut output, input);
+        ifft.process(input);
     });
 
     (0..tmax)
