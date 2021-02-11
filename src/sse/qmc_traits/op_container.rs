@@ -161,9 +161,9 @@ where
     SubState: Clone + Debug + FromIterator<bool> + AsRef<[bool]> + AsMut<[bool]>,
 {
     /// A diagonal op.
-    DIAGONAL(SubState),
+    Diagonal(SubState),
     /// An offdiagonal op.
-    OFFDIAGONAL(SubState, SubState),
+    Offdiagonal(SubState, SubState),
 }
 
 impl<SubState> OpType<SubState>
@@ -175,13 +175,13 @@ where
         F: Fn(&mut [bool], &mut [bool]),
     {
         let (inputs, outputs) = match self {
-            OpType::DIAGONAL(state) => {
+            OpType::Diagonal(state) => {
                 let mut inputs = state.clone();
                 let mut outputs = state.clone();
                 f(inputs.as_mut(), outputs.as_mut());
                 (inputs, outputs)
             }
-            OpType::OFFDIAGONAL(inputs, outputs) => {
+            OpType::Offdiagonal(inputs, outputs) => {
                 let mut inputs = inputs.clone();
                 let mut outputs = outputs.clone();
                 f(inputs.as_mut(), outputs.as_mut());
@@ -190,9 +190,9 @@ where
         };
 
         *self = if inputs.as_ref() == outputs.as_ref() {
-            Self::DIAGONAL(inputs)
+            Self::Diagonal(inputs)
         } else {
-            Self::OFFDIAGONAL(inputs, outputs)
+            Self::Offdiagonal(inputs, outputs)
         };
     }
 
@@ -201,10 +201,10 @@ where
         F: Fn(&mut [bool]),
     {
         match self {
-            OpType::DIAGONAL(state) => {
+            OpType::Diagonal(state) => {
                 f(state.as_mut());
             }
-            OpType::OFFDIAGONAL(inputs, outputs) => {
+            OpType::Offdiagonal(inputs, outputs) => {
                 f(inputs.as_mut());
                 f(outputs.as_mut());
             }
@@ -246,7 +246,7 @@ where
         Self {
             vars: vars.into(),
             bond,
-            in_out: OpType::DIAGONAL(state.into()),
+            in_out: OpType::Diagonal(state.into()),
             constant,
         }
     }
@@ -260,13 +260,13 @@ where
         Self {
             vars: vars.into(),
             bond,
-            in_out: OpType::OFFDIAGONAL(inputs.into(), outputs.into()),
+            in_out: OpType::Offdiagonal(inputs.into(), outputs.into()),
             constant,
         }
     }
 
     fn is_diagonal(&self) -> bool {
-        matches!(&self.in_out, OpType::DIAGONAL(_))
+        matches!(&self.in_out, OpType::Diagonal(_))
     }
 
     fn index_of_var(&self, var: usize) -> Option<usize> {
@@ -292,15 +292,15 @@ where
 
     fn get_inputs(&self) -> &[bool] {
         match &self.in_out {
-            OpType::DIAGONAL(state) => state.as_ref(),
-            OpType::OFFDIAGONAL(state, _) => state.as_ref(),
+            OpType::Diagonal(state) => state.as_ref(),
+            OpType::Offdiagonal(state, _) => state.as_ref(),
         }
     }
 
     fn get_outputs(&self) -> &[bool] {
         match &self.in_out {
-            OpType::DIAGONAL(state) => state.as_ref(),
-            OpType::OFFDIAGONAL(_, state) => state.as_ref(),
+            OpType::Diagonal(state) => state.as_ref(),
+            OpType::Offdiagonal(_, state) => state.as_ref(),
         }
     }
 
@@ -309,12 +309,12 @@ where
         F: Fn(&mut [bool], &mut [bool]),
     {
         let (mut inputs, mut outputs) = match &self.in_out {
-            OpType::DIAGONAL(state) => {
+            OpType::Diagonal(state) => {
                 let inputs = state.clone();
                 let outputs = state.clone();
                 (inputs, outputs)
             }
-            OpType::OFFDIAGONAL(inputs, outputs) => {
+            OpType::Offdiagonal(inputs, outputs) => {
                 let inputs = inputs.clone();
                 let outputs = outputs.clone();
                 (inputs, outputs)
@@ -323,9 +323,9 @@ where
         f(inputs.as_mut(), outputs.as_mut());
         let all_eq = inputs.as_ref() == outputs.as_ref();
         let in_out = if all_eq {
-            OpType::DIAGONAL(inputs)
+            OpType::Diagonal(inputs)
         } else {
-            OpType::OFFDIAGONAL(inputs, outputs)
+            OpType::Offdiagonal(inputs, outputs)
         };
         Self {
             vars: self.vars.clone(),
@@ -340,17 +340,17 @@ where
         F: Fn(&mut [bool]),
     {
         let in_out = match &self.in_out {
-            OpType::DIAGONAL(state) => {
+            OpType::Diagonal(state) => {
                 let mut inputs = state.clone();
                 f(inputs.as_mut());
-                OpType::DIAGONAL(inputs)
+                OpType::Diagonal(inputs)
             }
-            OpType::OFFDIAGONAL(inputs, outputs) => {
+            OpType::Offdiagonal(inputs, outputs) => {
                 let mut inputs = inputs.clone();
                 let mut outputs = outputs.clone();
                 f(inputs.as_mut());
                 f(outputs.as_mut());
-                OpType::OFFDIAGONAL(inputs, outputs)
+                OpType::Offdiagonal(inputs, outputs)
             }
         };
         Self {
@@ -363,15 +363,15 @@ where
 
     fn clone_inputs(&self) -> Self::SubState {
         match &self.in_out {
-            OpType::DIAGONAL(state) => state.clone(),
-            OpType::OFFDIAGONAL(state, _) => state.clone(),
+            OpType::Diagonal(state) => state.clone(),
+            OpType::Offdiagonal(state, _) => state.clone(),
         }
     }
 
     fn clone_outputs(&self) -> Self::SubState {
         match &self.in_out {
-            OpType::DIAGONAL(state) => state.clone(),
-            OpType::OFFDIAGONAL(_, state) => state.clone(),
+            OpType::Diagonal(state) => state.clone(),
+            OpType::Offdiagonal(_, state) => state.clone(),
         }
     }
 

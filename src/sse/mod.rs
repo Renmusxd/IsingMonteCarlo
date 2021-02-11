@@ -24,7 +24,7 @@
 //! let rng = rand::thread_rng();
 //! let initial_state = Some(vec![false, false, false, false]);
 //! let initial_cutoff = 4;
-//! let mut g = DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, longitudinal, initial_cutoff, rng, initial_state);
+//! let mut g = DefaultQmcIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, longitudinal, initial_cutoff, rng, initial_state);
 //!
 //! // Take timesteps
 //! g.timesteps(1000, beta);
@@ -40,7 +40,7 @@
 //!
 //! let rng = rand::thread_rng();
 //! let nvars = 3;
-//! let mut g = DefaultQMC::new(nvars, rng, false);
+//! let mut g = DefaultQmc::new(nvars, rng, false);
 //! // sz + sx + 1
 //! let mat = vec![2.0, 1.0,
 //!                1.0, 0.0];

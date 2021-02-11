@@ -29,7 +29,7 @@ pub trait EdgeNavigator {
 }
 
 /// Resonating bond update.
-pub trait RVBUpdater:
+pub trait RvbUpdater:
     DiagonalSubsection
     + Factory<Vec<usize>>
     + Factory<Vec<bool>>
@@ -285,7 +285,7 @@ pub trait RVBUpdater:
 }
 
 /// Returns true if substate is changed.
-fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng, H>(
+fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng, H>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
     (cluster_state, cluster_flips): (&mut [bool], &[usize]),
@@ -392,7 +392,7 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                     .zip(cluster_state.iter().cloned())
                     .for_each(|(b, c)| *b = *b != c);
 
-                let mut args = rvb.get_empty_args(SubvarAccess::VARLIST(&vars));
+                let mut args = rvb.get_empty_args(SubvarAccess::Varlist(&vars));
                 rvb.fill_args_at_p_with_hint(from, &mut args, vars, boundary_tops.iter().cloned());
 
                 let acc = (next_cluster_index, &mut bonds, substate, cluster_state, rng);
@@ -605,7 +605,7 @@ fn mutate_graph<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
     rvb.return_instance(continue_until);
 }
 
-fn calculate_flip_prob<RVB: RVBUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
+fn calculate_flip_prob<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
     (cluster_state, cluster_flips): (&mut [bool], &[usize]),
@@ -1061,7 +1061,7 @@ fn find_constants<RVB>(
     constant_ps: &mut Vec<usize>,
     vars_with_zero_ops: &mut Vec<usize>,
 ) where
-    RVB: RVBUpdater + ?Sized,
+    RVB: RvbUpdater + ?Sized,
 {
     // TODO: can parallelize this!
     // O(beta * n)

@@ -1,5 +1,5 @@
 use crate::sse::fast_ops::FastOpsTemplate;
-use crate::sse::qmc_ising::{IsingManager, QMCIsingGraph};
+use crate::sse::qmc_ising::{IsingManager, QmcIsingGraph};
 use crate::sse::*;
 use rand::Rng;
 
@@ -41,7 +41,7 @@ pub trait DebugOps: OpContainer {
 }
 
 /// Allows for debugging QMC instances given they have a debuggable OpContainer.
-pub trait QMCDebug {
+pub trait QmcDebug {
     /// The type of the debuggable manager.
     type M: DebugOps;
     /// The manager which can be debugged.
@@ -59,7 +59,7 @@ pub trait QMCDebug {
 
 impl<O: Op> DebugOps for FastOpsTemplate<O> {}
 
-impl<R, M> QMCDebug for QMCIsingGraph<R, M>
+impl<R, M> QmcDebug for QmcIsingGraph<R, M>
 where
     R: Rng,
     M: IsingManager + DebugOps,

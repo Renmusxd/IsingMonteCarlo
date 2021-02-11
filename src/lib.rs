@@ -39,7 +39,7 @@
 //!
 //! // Make an ising model using default system prng.
 //! let rng = rand::thread_rng();
-//! let mut g = DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, longitudinal, 3, rng, None);
+//! let mut g = DefaultQmcIsingGraph::<ThreadRng>::new_with_rng(edges, transverse, longitudinal, 3, rng, None);
 //!
 //! // Take timesteps
 //! g.timesteps(1000, beta);

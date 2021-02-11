@@ -9,7 +9,7 @@ fn one_d_periodic(l: usize) -> Vec<(Edge, f64)> {
 #[test]
 fn convert_and_run() -> Result<(), ()> {
     let edges = one_d_periodic(3);
-    let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+    let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
         edges,
         1.0,
         0.,

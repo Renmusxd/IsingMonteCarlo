@@ -1,5 +1,5 @@
 use crate::sse::qmc_ising::IsingManager;
-use crate::sse::qmc_runner::QMCManager;
+use crate::sse::qmc_runner::QmcManager;
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
 use crate::util::allocator::{Allocator, Factory};
@@ -603,7 +603,7 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         let args = match args {
             Some(args) => args,
             None => {
-                let args = self.get_empty_args(SubvarAccess::ALL);
+                let args = self.get_empty_args(SubvarAccess::All);
                 self.fill_args_at_p(pstart, args)
             }
         };
@@ -632,7 +632,7 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         let mut args = match args {
             Some(args) => args,
             None => {
-                let args = self.get_empty_args(SubvarAccess::ALL);
+                let args = self.get_empty_args(SubvarAccess::All);
                 self.fill_args_at_p(pstart, args)
             }
         };
@@ -671,19 +671,19 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
 
     fn get_empty_args(&mut self, vars: SubvarAccess<FastOpMutateArgs>) -> FastOpMutateArgs {
         match vars {
-            SubvarAccess::ALL => {
+            SubvarAccess::All => {
                 let mut args = FastOpMutateArgs::new(self.get_nvars(), None, self);
                 // Can subtract off vars with no ops. nvars - noops = nvars_with_ops
                 args.unfilled = self.var_ends.iter().filter(|end| end.is_some()).count();
                 args
             }
-            SubvarAccess::VARLIST(vars) => {
+            SubvarAccess::Varlist(vars) => {
                 let mut args = FastOpMutateArgs::new(self.get_nvars(), Some(vars), self);
                 // Can subtract off vars with no ops. nvars - noops = nvars_with_ops
                 args.unfilled = vars.iter().filter(|v| self.var_ends[**v].is_some()).count();
                 args
             }
-            SubvarAccess::ARGS(mut args) => {
+            SubvarAccess::Args(mut args) => {
                 // Count how many need to be set (are None).
                 args.unfilled = (0..args.n_subvars())
                     .filter(|subvar| {
@@ -1258,7 +1258,7 @@ impl<O: Op + Clone> Factory<BondContainer<VarPos>> for FastOpsTemplate<O> {
 
 impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {}
 
-impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
+impl<O: Op + Clone> RvbUpdater for FastOpsTemplate<O> {
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {
         let mut p_and_rel = self.get_first_p_for_var(var);
         while let Some(PRel {
@@ -1294,4 +1294,4 @@ impl<O: Op + Clone> RVBUpdater for FastOpsTemplate<O> {
 }
 
 impl<O: Op> IsingManager for FastOpsTemplate<O> {}
-impl<O: Op> QMCManager for FastOpsTemplate<O> {}
+impl<O: Op> QmcManager for FastOpsTemplate<O> {}

@@ -1,6 +1,6 @@
 use crate::sse::fast_ops::FastOps;
 use crate::sse::parallel_tempering::tempering_traits::*;
-use crate::sse::qmc_ising::QMCIsingGraph;
+use crate::sse::qmc_ising::QmcIsingGraph;
 use crate::sse::qmc_traits::*;
 use itertools::Itertools;
 use rand::prelude::ThreadRng;
@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use std::cmp::min;
 
 /// A tempering container using FastOps and FastOpNodes.
-pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, QMCIsingGraph<R2, FastOps>>;
+pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, QmcIsingGraph<R2, FastOps>>;
 
 /// A container to perform parallel tempering.
 #[derive(Debug, Clone)]
@@ -19,7 +19,7 @@ pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, QMCIsingGrap
 pub struct TemperingContainer<R, Q>
 where
     R: Rng,
-    Q: QMCStepper + GraphWeights + SwapManagers,
+    Q: QmcStepper + GraphWeights + SwapManagers,
 {
     // Graph and beta
     graphs: Vec<(Q, f64)>,
@@ -46,7 +46,7 @@ pub fn new_thread_rng() -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
 impl<R, Q> TemperingContainer<R, Q>
 where
     R: Rng,
-    Q: QMCStepper + GraphWeights + SwapManagers,
+    Q: QmcStepper + GraphWeights + SwapManagers,
 {
     /// Make a new tempering container. All graphs will share this set of edges
     /// and start with this cutoff.
@@ -236,7 +236,7 @@ where
 fn perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64
 where
     R: Rng,
-    Q: QMCStepper + GraphWeights + SwapManagers,
+    Q: QmcStepper + GraphWeights + SwapManagers,
 {
     assert_eq!(graphs.len() % 2, 0);
     if graphs.is_empty() {
@@ -273,7 +273,7 @@ fn swap_on_chunks<'a, Q>(
     evaluate_hamiltonians: bool,
 ) -> bool
 where
-    Q: QMCStepper + GraphWeights + SwapManagers,
+    Q: QmcStepper + GraphWeights + SwapManagers,
 {
     let (ga, ba) = graph_beta_a;
     let (gb, bb) = graph_beta_b;
@@ -299,7 +299,7 @@ where
 impl<R, Q> Verify for TemperingContainer<R, Q>
 where
     R: Rng,
-    Q: QMCStepper + GraphWeights + SwapManagers + Verify,
+    Q: QmcStepper + GraphWeights + SwapManagers + Verify,
 {
     fn verify(&self) -> bool {
         self.graphs.iter().all(|(q, _)| q.verify())
@@ -313,7 +313,7 @@ pub mod rayon_tempering {
     use rayon::prelude::*;
 
     /// Parallel tempering steps.
-    pub trait ParallelQMCTimeSteps {
+    pub trait ParallelQmcTimeSteps {
         /// Perform qmc steps.
         fn parallel_timesteps(&mut self, t: usize);
 
@@ -336,7 +336,7 @@ pub mod rayon_tempering {
 
     fn parallel_tempering_a<R: Rng, Q, R1: Rng>(tc: &mut TemperingContainer<R, Q>, rng: R1)
     where
-        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
+        Q: QmcStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         let hameqs = tc.graph_ham_eq_a.take().unwrap();
         let graphs = tc.make_first_subgraphs();
@@ -346,7 +346,7 @@ pub mod rayon_tempering {
 
     fn parallel_tempering_b<R: Rng, Q, R1: Rng>(tc: &mut TemperingContainer<R, Q>, rng: R1)
     where
-        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
+        Q: QmcStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         let hameqs = tc.graph_ham_eq_b.take().unwrap();
         let graphs = tc.make_second_subgraphs();
@@ -354,10 +354,10 @@ pub mod rayon_tempering {
         tc.graph_ham_eq_b = Some(hameqs);
     }
 
-    impl<R, Q> ParallelQMCTimeSteps for TemperingContainer<R, Q>
+    impl<R, Q> ParallelQmcTimeSteps for TemperingContainer<R, Q>
     where
         R: Rng,
-        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
+        Q: QmcStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         fn parallel_timesteps(&mut self, t: usize) {
             self.graphs.par_iter_mut().for_each(|(g, beta)| {
@@ -451,7 +451,7 @@ pub mod rayon_tempering {
     fn parallel_perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64
     where
         R: Rng,
-        Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
+        Q: QmcStepper + GraphWeights + SwapManagers + Send + Sync,
     {
         assert_eq!(graphs.len() % 2, 0);
         if graphs.is_empty() {
@@ -477,7 +477,7 @@ pub mod rayon_tempering {
     pub mod autocorrelations {
         use super::*;
         use crate::sse::autocorrelations::fft_autocorrelation;
-        use crate::sse::QMCBondAutoCorrelations;
+        use crate::sse::QmcBondAutoCorrelations;
 
         /// A collection of functions to calculate autocorrelations.
         pub trait ParallelTemperingAutocorrelations<Q> {
@@ -526,7 +526,7 @@ pub mod rayon_tempering {
         impl<R, Q> ParallelTemperingAutocorrelations<Q> for TemperingContainer<R, Q>
         where
             R: Rng,
-            Q: QMCStepper + GraphWeights + SwapManagers + Send + Sync,
+            Q: QmcStepper + GraphWeights + SwapManagers + Send + Sync,
         {
             fn calculate_variable_autocorrelation(
                 &mut self,
@@ -604,7 +604,7 @@ pub mod rayon_tempering {
         impl<R, Q> ParallelTemperingBondAutoCorrelations<Q> for TemperingContainer<R, Q>
         where
             R: Rng,
-            Q: QMCStepper + GraphWeights + QMCBondAutoCorrelations + SwapManagers + Send + Sync,
+            Q: QmcStepper + GraphWeights + QmcBondAutoCorrelations + SwapManagers + Send + Sync,
         {
             fn calculate_bond_autocorrelation(
                 &mut self,
@@ -642,7 +642,7 @@ pub mod rayon_tempering {
             let mut temper = new_with_rng::<SmallRng, _>(rng1);
             for _ in 0..2 {
                 let rng = SmallRng::seed_from_u64(0u64);
-                let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+                let qmc = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
                     edges.clone(),
                     0.1,
                     0.,
@@ -671,7 +671,7 @@ pub mod serialization {
 
     /// Default serializable tempering container.
     pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps>;
-    type SerializeGraphBeta<M> = (SerializeQMCGraph<M>, f64);
+    type SerializeGraphBeta<M> = (SerializeQmcGraph<M>, f64);
 
     /// A tempering container with no rng. Just for serialization.
     #[derive(Debug, Serialize, Deserialize)]
@@ -680,7 +680,7 @@ pub mod serialization {
         total_swaps: u64,
     }
 
-    impl<R1, R2, M> From<TemperingContainer<R1, QMCIsingGraph<R2, M>>>
+    impl<R1, R2, M> From<TemperingContainer<R1, QmcIsingGraph<R2, M>>>
         for SerializeTemperingContainer<M>
     where
         R1: Rng,
@@ -688,7 +688,7 @@ pub mod serialization {
         M: IsingManager,
     {
         fn from(
-            tc: TemperingContainer<R1, QMCIsingGraph<R2, M>>,
+            tc: TemperingContainer<R1, QmcIsingGraph<R2, M>>,
         ) -> SerializeTemperingContainer<M> {
             SerializeTemperingContainer {
                 graphs: tc
@@ -710,7 +710,7 @@ pub mod serialization {
             self,
             container_rng: R1,
             graph_rngs: Vec<R2>,
-        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M>> {
+        ) -> TemperingContainer<R1, QmcIsingGraph<R2, M>> {
             assert_eq!(self.graphs.len(), graph_rngs.len());
             self.into_tempering_container(container_rng, graph_rngs.into_iter())
         }
@@ -720,7 +720,7 @@ pub mod serialization {
             self,
             container_rng: R1,
             graph_rngs: It,
-        ) -> TemperingContainer<R1, QMCIsingGraph<R2, M>>
+        ) -> TemperingContainer<R1, QmcIsingGraph<R2, M>>
         where
             It: IntoIterator<Item = R2>,
         {
@@ -756,7 +756,7 @@ mod swap_test {
         let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
         for _ in 0..2 {
             let rng = SmallRng::seed_from_u64(0u64);
-            let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            let qmc = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
                 edges.clone(),
                 0.1,
                 0.,
@@ -783,7 +783,7 @@ mod swap_test {
         let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
         for i in 1..10 {
             let rng = SmallRng::seed_from_u64(0u64);
-            let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            let qmc = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
                 edges
                     .iter()
                     .cloned()
@@ -814,7 +814,7 @@ mod swap_test {
         let mut temper = new_with_rng::<SmallRng, SmallRng>(rng1);
         for _ in 0..2 {
             let rng = SmallRng::seed_from_u64(0u64);
-            let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            let qmc = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
                 edges.clone(),
                 0.1,
                 0.,

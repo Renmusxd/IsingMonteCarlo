@@ -3,30 +3,30 @@ use crate::sse::fast_ops::*;
 use crate::sse::ham::Ham;
 use crate::sse::qmc_traits::*;
 #[cfg(feature = "autocorrelations")]
-use crate::sse::QMCBondAutoCorrelations;
-use crate::sse::{IntoQMC, IsingManager, QMCIsingGraph};
+use crate::sse::QmcBondAutoCorrelations;
+use crate::sse::{IntoQmc, IsingManager, QmcIsingGraph};
 use rand::Rng;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 /// Default QMC implementation.
-pub type DefaultQMC<R> = QMC<R, FastOps>;
+pub type DefaultQmc<R> = Qmc<R, FastOps>;
 
 /// QMC with adjustable variables..
 #[cfg(feature = "const_generics")]
-pub type DefaultQMCN<R, const N: usize> = QMC<R, FastOpsN<N>>;
+pub type DefaultQMCN<R, const N: usize> = Qmc<R, FastOpsN<N>>;
 
 /// Trait encompassing requirements for QMC.
-pub trait QMCManager: OpContainerConstructor + HeatBathDiagonalUpdater + ClusterUpdater {}
+pub trait QmcManager: OpContainerConstructor + HeatBathDiagonalUpdater + ClusterUpdater {}
 
 /// A manager for QMC and interactions.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct QMC<R, M>
+pub struct Qmc<R, M>
 where
     R: Rng,
-    M: QMCManager,
+    M: QmcManager,
 {
     bonds: Vec<Interaction>,
     manager: Option<M>,
@@ -43,7 +43,7 @@ where
     bond_weights: Option<BondWeights>,
 }
 
-impl<R: Rng, M: QMCManager> QMC<R, M> {
+impl<R: Rng, M: QmcManager> Qmc<R, M> {
     /// Make a new QMC instance with nvars.
     pub fn new(nvars: usize, rng: R, do_loop_updates: bool) -> Self {
         Self::new_with_state(
@@ -335,15 +335,15 @@ impl<R: Rng, M: QMCManager> QMC<R, M> {
 #[derive(Debug)]
 pub enum ManagerRef<'a, 'b, M, L> {
     /// Diagonal ref
-    DIAGONAL(&'a M),
+    Diagonal(&'a M),
     /// Offdiagonal ref
-    LOOPER(&'b L),
+    Looper(&'b L),
 }
 
-impl<R, M> QMCStepper for QMC<R, M>
+impl<R, M> QmcStepper for Qmc<R, M>
 where
     R: Rng,
-    M: QMCManager,
+    M: QmcManager,
 {
     fn timestep(&mut self, beta: f64) -> &[bool] {
         self.diagonal_update(beta);
@@ -382,8 +382,8 @@ where
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 enum InteractionType {
-    FULL(bool),
-    DIAGONAL,
+    Full(bool),
+    Diagonal,
 }
 
 /// Interactions in QMC.
@@ -452,7 +452,7 @@ impl Interaction {
             .is_ok();
         if n == vars.len() {
             Ok(Interaction {
-                interaction_type: InteractionType::DIAGONAL,
+                interaction_type: InteractionType::Diagonal,
                 mat,
                 n,
                 vars,
@@ -525,7 +525,7 @@ impl Interaction {
                     })
                     .is_ok();
                 Ok(Self {
-                    interaction_type: InteractionType::FULL(constant),
+                    interaction_type: InteractionType::Full(constant),
                     mat,
                     n,
                     vars,
@@ -537,7 +537,7 @@ impl Interaction {
 
     /// Check if interaction is constant.
     pub fn is_constant(&self) -> bool {
-        self.interaction_type == InteractionType::FULL(true)
+        self.interaction_type == InteractionType::Full(true)
     }
 
     /// Check if constant along diagonal.
@@ -557,8 +557,8 @@ impl Interaction {
             ))
         } else {
             match &self.interaction_type {
-                InteractionType::FULL(true) => Ok(self.mat[0]),
-                InteractionType::FULL(false) => {
+                InteractionType::Full(true) => Ok(self.mat[0]),
+                InteractionType::Full(false) => {
                     let index = Self::index_from_state(inputs, outputs);
                     if index < self.mat.len() {
                         Ok(self.mat[index])
@@ -569,7 +569,7 @@ impl Interaction {
                         ))
                     }
                 }
-                InteractionType::DIAGONAL => {
+                InteractionType::Diagonal => {
                     if inputs == outputs {
                         let index = Self::index_from_state(inputs, &[]);
                         if index < self.mat.len() {
@@ -597,9 +597,9 @@ impl Interaction {
             0 // Any index works.
         } else {
             match &self.interaction_type {
-                InteractionType::FULL(true) => 0, // Any index works.
-                InteractionType::DIAGONAL => Self::index_from_iter(it),
-                InteractionType::FULL(false) => {
+                InteractionType::Full(true) => 0, // Any index works.
+                InteractionType::Diagonal => Self::index_from_iter(it),
+                InteractionType::Full(false) => {
                     let index = Self::index_from_iter(it);
                     (index << self.n) + index
                 }
@@ -619,9 +619,9 @@ impl Interaction {
     /// Check if all entries are symmetric under global flip.
     pub fn sym_under_ising(&self) -> bool {
         match &self.interaction_type {
-            InteractionType::FULL(true) => true,
-            InteractionType::DIAGONAL if self.constant_along_diagonal => true,
-            InteractionType::FULL(false) => {
+            InteractionType::Full(true) => true,
+            InteractionType::Diagonal if self.constant_along_diagonal => true,
+            InteractionType::Full(false) => {
                 // Mask is 1s along the lower n+1 bits.
                 let mask = !(std::usize::MAX << (self.n << 1));
                 // Check that each index up to n is equal to its bit-flip counterpart (up to 2n).
@@ -629,7 +629,7 @@ impl Interaction {
                     (self.mat[indx] - self.mat[(!indx) & mask]).abs() < std::f64::EPSILON
                 })
             }
-            InteractionType::DIAGONAL => {
+            InteractionType::Diagonal => {
                 // Mask is 1s along the lower n bits.
                 let mask = !(std::usize::MAX << self.n);
                 // Check that each index up to n is equal to its bit-flip counterpart (up to 2n).
@@ -677,21 +677,21 @@ fn get_power_of_two(n: usize) -> Result<usize, ()> {
 
 // Allow for conversion to generic QMC type. Clears the internal state, converts edges and field
 // into interactions.
-impl<R, M> From<QMCIsingGraph<R, M>> for QMC<R, M>
+impl<R, M> From<QmcIsingGraph<R, M>> for Qmc<R, M>
 where
     R: Rng,
-    M: IsingManager + QMCManager,
+    M: IsingManager + QmcManager,
 {
-    fn from(g: QMCIsingGraph<R, M>) -> Self {
+    fn from(g: QmcIsingGraph<R, M>) -> Self {
         g.into_qmc()
     }
 }
 
 #[cfg(feature = "autocorrelations")]
-impl<R, M> QMCBondAutoCorrelations for QMC<R, M>
+impl<R, M> QmcBondAutoCorrelations for Qmc<R, M>
 where
     R: Rng,
-    M: QMCManager,
+    M: QmcManager,
 {
     fn n_bonds(&self) -> usize {
         self.non_const_diags.len()
@@ -735,7 +735,7 @@ mod qmc_tests {
     #[test]
     fn interaction_indexing_single() -> Result<(), String> {
         let interaction = Interaction {
-            interaction_type: InteractionType::FULL(false),
+            interaction_type: InteractionType::Full(false),
             mat: vec![1.0, 2.0, 3.0, 4.0],
             n: 1,
             vars: vec![0],
@@ -752,7 +752,7 @@ mod qmc_tests {
     #[test]
     fn interaction_indexing_double() -> Result<(), String> {
         let interaction = Interaction {
-            interaction_type: InteractionType::FULL(false),
+            interaction_type: InteractionType::Full(false),
             mat: vec![
                 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10., 11., 12., 13., 14., 15., 16.,
             ],
@@ -786,7 +786,7 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_false() {
         let interaction = Interaction {
-            interaction_type: InteractionType::FULL(false),
+            interaction_type: InteractionType::Full(false),
             mat: vec![1.0, 2.0, 3.0, 4.0],
             n: 1,
             vars: vec![0],
@@ -799,7 +799,7 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_false_harder() {
         let interaction = Interaction {
-            interaction_type: InteractionType::FULL(false),
+            interaction_type: InteractionType::Full(false),
             mat: vec![1.0, 2.0, 2.0, 2.0],
             n: 1,
             vars: vec![0],
@@ -812,7 +812,7 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_true() {
         let interaction = Interaction {
-            interaction_type: InteractionType::FULL(false),
+            interaction_type: InteractionType::Full(false),
             mat: vec![1.0, 2.0, 2.0, 1.0],
             n: 1,
             vars: vec![0],
@@ -825,7 +825,7 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_true_larger() {
         let interaction = Interaction {
-            interaction_type: InteractionType::FULL(false),
+            interaction_type: InteractionType::Full(false),
             mat: vec![
                 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0,
             ],
@@ -839,7 +839,7 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_true_larger_diagonal() {
         let interaction = Interaction {
-            interaction_type: InteractionType::DIAGONAL,
+            interaction_type: InteractionType::Diagonal,
             mat: vec![1.0, 6.0, 6.0, 1.0],
             n: 2,
             vars: vec![0, 1],
@@ -851,7 +851,7 @@ mod qmc_tests {
     #[test]
     fn ising_flip_check_false_larger_diagonal() {
         let interaction = Interaction {
-            interaction_type: InteractionType::DIAGONAL,
+            interaction_type: InteractionType::Diagonal,
             mat: vec![1.0, 1.0, 6.0, 6.0],
             n: 2,
             vars: vec![0, 1],

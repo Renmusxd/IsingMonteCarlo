@@ -41,7 +41,7 @@ fn run_simple() {
     for i in 0..16 {
         let edges = vec![((0, 1), 1.0)];
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
             1.0,
@@ -59,7 +59,7 @@ fn run_simple_rvb() {
     for i in 0..16 {
         let edges = vec![((0, 1), 1.0)];
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
             1.0,
@@ -78,7 +78,7 @@ fn run_simple_heatbath() {
     for i in 0..16 {
         let edges = vec![((0, 1), 1.0)];
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
             1.0,
@@ -98,7 +98,7 @@ fn run_three() {
         let l = 3;
         let edges = two_d_periodic(l);
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             0.1,
             0.1,
@@ -118,7 +118,7 @@ fn run_four() {
         let l = 4;
         let edges = two_d_periodic(l);
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             0.1,
             0.1,
@@ -138,7 +138,7 @@ fn run_two_unit_cell() {
         let edges = two_unit_cell();
         let nvars = 8;
         let rng = SmallRng::seed_from_u64(i);
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
             0.1,
@@ -162,7 +162,7 @@ fn run_two_unit_cell_random_bonds() {
             .map(|(vs, j)| (vs, j * rng.gen_range(0.5..2.0)))
             .collect();
         let nvars = 8;
-        let mut ising = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+        let mut ising = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
             edges,
             1.0,
             0.1,

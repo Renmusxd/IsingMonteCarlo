@@ -1,7 +1,7 @@
 use crate::sse::fast_ops::FastOps;
-use crate::sse::qmc_ising::{IsingManager, QMCIsingGraph};
-use crate::sse::qmc_runner::QMCManager;
-use crate::sse::qmc_runner::QMC;
+use crate::sse::qmc_ising::{IsingManager, QmcIsingGraph};
+use crate::sse::qmc_runner::Qmc;
+use crate::sse::qmc_runner::QmcManager;
 use crate::sse::qmc_traits::*;
 use rand::Rng;
 
@@ -45,10 +45,10 @@ pub trait OpWeights {
         H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64;
 }
 
-impl<'a, R, M> GraphWeights for QMC<R, M>
+impl<'a, R, M> GraphWeights for Qmc<R, M>
 where
     R: Rng,
-    M: QMCManager + OpWeights,
+    M: QmcManager + OpWeights,
 {
     fn ham_eq(&self, other: &Self) -> bool {
         self.get_bonds() == other.get_bonds()
@@ -70,10 +70,10 @@ where
     }
 }
 
-impl<R, M> SwapManagers for QMC<R, M>
+impl<R, M> SwapManagers for Qmc<R, M>
 where
     R: Rng,
-    M: QMCManager,
+    M: QmcManager,
 {
     fn can_swap_graphs(&self, other: &Self) -> Result<(), String> {
         self.can_swap_managers(other)
@@ -92,7 +92,7 @@ where
     }
 }
 
-impl<R, M> SwapManagers for QMCIsingGraph<R, M>
+impl<R, M> SwapManagers for QmcIsingGraph<R, M>
 where
     R: Rng,
     M: IsingManager,
@@ -114,7 +114,7 @@ where
     }
 }
 
-impl<R, M> GraphWeights for QMCIsingGraph<R, M>
+impl<R, M> GraphWeights for QmcIsingGraph<R, M>
 where
     R: Rng,
     M: IsingManager,
@@ -154,7 +154,7 @@ where
     }
 }
 
-impl<R: Rng, M: IsingManager> StateGetter for QMCIsingGraph<R, M> {
+impl<R: Rng, M: IsingManager> StateGetter for QmcIsingGraph<R, M> {
     fn get_state_ref(&self) -> &[bool] {
         self.state_ref()
     }

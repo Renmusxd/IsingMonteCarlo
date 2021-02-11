@@ -1,5 +1,5 @@
 /// Provides helpers to structs which take QMC timesteps.
-pub trait QMCStepper {
+pub trait QmcStepper {
     /// Take a single QMC step and return a reference to the state
     fn timestep(&mut self, beta: f64) -> &[bool];
     /// Get the current number of operators in the graph

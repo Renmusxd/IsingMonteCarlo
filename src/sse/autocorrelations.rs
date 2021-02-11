@@ -1,9 +1,9 @@
-use crate::sse::QMCStepper;
+use crate::sse::QmcStepper;
 use rustfft::{num_complex::Complex, FftPlanner};
 use std::ops::DivAssign;
 
 /// Calculate autocorrelations for a QMCStepper
-pub trait QMCAutoCorrelations: QMCStepper {
+pub trait QmcAutoCorrelations: QmcStepper {
     /// Calculate the autcorrelation calculations for the results of f(state).
     fn calculate_autocorrelation<F>(
         &mut self,
@@ -70,10 +70,10 @@ pub trait QMCAutoCorrelations: QMCStepper {
     }
 }
 
-impl<Q: QMCStepper> QMCAutoCorrelations for Q {}
+impl<Q: QmcStepper> QmcAutoCorrelations for Q {}
 
 /// Calculate bond autocorrelations for a QMCAutoCorrelations
-pub trait QMCBondAutoCorrelations: QMCAutoCorrelations {
+pub trait QmcBondAutoCorrelations: QmcAutoCorrelations {
     /// Number of bonds
     fn n_bonds(&self) -> usize;
 

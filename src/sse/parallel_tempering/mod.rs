@@ -11,7 +11,7 @@
 //! for _ in 0..2 {
 //!     let rng = SmallRng::seed_from_u64(0u64);
 //!     let beta = 1.0;
-//!     let qmc = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+//!     let qmc = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
 //!         edges.clone(),
 //!         0.1,
 //!         0.,

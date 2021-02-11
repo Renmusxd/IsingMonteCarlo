@@ -16,11 +16,11 @@ pub trait MutateArgs {
 #[derive(Debug)]
 pub enum SubvarAccess<'a, Args: MutateArgs> {
     /// Include all vars.
-    ALL,
+    All,
     /// Use list of vars.
-    VARLIST(&'a [usize]),
+    Varlist(&'a [usize]),
     /// Get vars from existing args.
-    ARGS(Args),
+    Args(Args),
 }
 
 /// Allows for mutations on subsections of the data.

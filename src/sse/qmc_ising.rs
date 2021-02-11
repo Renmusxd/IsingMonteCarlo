@@ -3,7 +3,7 @@ use crate::classical::graph::{Edge, GraphState};
 pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
 use crate::sse::ham::Ham;
-use crate::sse::qmc_runner::{QMCManager, QMC};
+use crate::sse::qmc_runner::{Qmc, QmcManager};
 pub use crate::sse::qmc_traits::*;
 use rand::rngs::ThreadRng;
 use rand::Rng;
@@ -12,20 +12,20 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 /// Default QMC graph implementation.
-pub type DefaultQMCIsingGraph<R> = QMCIsingGraph<R, FastOps>;
+pub type DefaultQmcIsingGraph<R> = QmcIsingGraph<R, FastOps>;
 
 type VecEdge = Vec<usize>;
 
 /// Trait encompassing all requirements for op managers in QMCIsingGraph.
 pub trait IsingManager:
-    OpContainerConstructor + HeatBathDiagonalUpdater + RVBUpdater + ClusterUpdater
+    OpContainerConstructor + HeatBathDiagonalUpdater + RvbUpdater + ClusterUpdater
 {
 }
 
 /// A container to run QMC simulations.
 #[derive(Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct QMCIsingGraph<R: Rng, M: IsingManager> {
+pub struct QmcIsingGraph<R: Rng, M: IsingManager> {
     edges: Vec<(VecEdge, f64)>,
     transverse: f64,
     longitudinal: f64,
@@ -52,9 +52,9 @@ pub fn new_qmc(
     longitudinal: f64,
     cutoff: usize,
     state: Option<Vec<bool>>,
-) -> DefaultQMCIsingGraph<ThreadRng> {
+) -> DefaultQmcIsingGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCIsingGraph::<ThreadRng>::new_with_rng(
+    DefaultQmcIsingGraph::<ThreadRng>::new_with_rng(
         edges,
         transverse,
         longitudinal,
@@ -70,12 +70,12 @@ pub fn new_qmc_from_graph(
     transverse: f64,
     longitudinal: f64,
     cutoff: usize,
-) -> DefaultQMCIsingGraph<ThreadRng> {
+) -> DefaultQmcIsingGraph<ThreadRng> {
     let rng = rand::thread_rng();
-    DefaultQMCIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, longitudinal, cutoff, rng)
+    DefaultQmcIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, longitudinal, cutoff, rng)
 }
 
-impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
+impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
     /// Make a new QMC graph with an rng instance.
     pub fn new_with_rng<Rg: Rng>(
         edges: Vec<(Edge, f64)>,
@@ -84,7 +84,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         cutoff: usize,
         rng: Rg,
         state: Option<Vec<bool>>,
-    ) -> QMCIsingGraph<Rg, M> {
+    ) -> QmcIsingGraph<Rg, M> {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         let edges = edges
             .into_iter()
@@ -105,7 +105,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         };
         let state = Some(state);
 
-        QMCIsingGraph::<Rg, M> {
+        QmcIsingGraph::<Rg, M> {
             edges,
             transverse,
             longitudinal,
@@ -130,7 +130,7 @@ impl<R: Rng, M: IsingManager> QMCIsingGraph<R, M> {
         longitudinal: f64,
         cutoff: usize,
         rng: Rg,
-    ) -> QMCIsingGraph<Rg, M> {
+    ) -> QmcIsingGraph<Rg, M> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(
             graph.edges,
@@ -609,7 +609,7 @@ impl<'a, 'b> EdgeNavigator for EdgeNav<'a, 'b> {
     }
 }
 
-impl<R, M> QMCStepper for QMCIsingGraph<R, M>
+impl<R, M> QmcStepper for QmcIsingGraph<R, M>
 where
     R: Rng,
     M: IsingManager,
@@ -787,7 +787,7 @@ where
     }
 }
 
-impl<R, M> Verify for QMCIsingGraph<R, M>
+impl<R, M> Verify for QmcIsingGraph<R, M>
 where
     R: Rng,
     M: IsingManager,
@@ -871,7 +871,7 @@ impl<'a> PartialEq for HamInfo<'a> {
 impl<'a> Eq for HamInfo<'a> {}
 
 // Implement clone where available.
-impl<R, M> Clone for QMCIsingGraph<R, M>
+impl<R, M> Clone for QmcIsingGraph<R, M>
 where
     R: Rng + Clone,
     M: IsingManager + Clone,
@@ -897,25 +897,25 @@ where
 }
 
 /// Convertable into QMC, helps since calling .into() runs into type inference problems.
-pub trait IntoQMC<R, M>
+pub trait IntoQmc<R, M>
 where
     R: Rng,
-    M: QMCManager,
+    M: QmcManager,
 {
     /// Convert into QMC.
-    fn into_qmc(self) -> QMC<R, M>;
+    fn into_qmc(self) -> Qmc<R, M>;
 }
 
-impl<R, M> IntoQMC<R, M> for QMCIsingGraph<R, M>
+impl<R, M> IntoQmc<R, M> for QmcIsingGraph<R, M>
 where
     R: Rng,
-    M: IsingManager + QMCManager,
+    M: IsingManager + QmcManager,
 {
-    fn into_qmc(self) -> QMC<R, M> {
+    fn into_qmc(self) -> Qmc<R, M> {
         let nvars = self.get_nvars();
         let rng = self.rng.unwrap();
         let state = self.state.as_ref().unwrap().to_vec();
-        let mut qmc = QMC::<R, M>::new_with_state(nvars, rng, state, false);
+        let mut qmc = Qmc::<R, M>::new_with_state(nvars, rng, state, false);
         let transverse = self.transverse;
         let longitudinal = self.longitudinal;
         self.edges.into_iter().for_each(|(vars, j)| {
@@ -942,7 +942,7 @@ where
 }
 
 #[cfg(feature = "autocorrelations")]
-impl<R, M> QMCBondAutoCorrelations for QMCIsingGraph<R, M>
+impl<R, M> QmcBondAutoCorrelations for QmcIsingGraph<R, M>
 where
     R: Rng,
     M: IsingManager,
@@ -969,11 +969,11 @@ pub mod serialization {
     use super::*;
 
     /// The serializable version of the default QMC graph.
-    pub type DefaultSerializeQMCGraph = SerializeQMCGraph<FastOps>;
+    pub type DefaultSerializeQmcGraph = SerializeQmcGraph<FastOps>;
 
     /// A QMC graph without rng for easy serialization.
     #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct SerializeQMCGraph<M: IsingManager> {
+    pub struct SerializeQmcGraph<M: IsingManager> {
         edges: Vec<(VecEdge, f64)>,
         transverse: f64,
         longitudinal: f64,
@@ -991,13 +991,13 @@ pub mod serialization {
         bond_weights: Option<BondWeights>,
     }
 
-    impl<M> SerializeQMCGraph<M>
+    impl<M> SerializeQmcGraph<M>
     where
         M: IsingManager,
     {
         /// Convert into a proper QMC graph using a new rng instance.
-        pub fn into_qmc<R: Rng>(self, rng: R) -> QMCIsingGraph<R, M> {
-            QMCIsingGraph {
+        pub fn into_qmc<R: Rng>(self, rng: R) -> QmcIsingGraph<R, M> {
+            QmcIsingGraph {
                 edges: self.edges,
                 transverse: self.transverse,
                 longitudinal: self.longitudinal,
@@ -1016,13 +1016,13 @@ pub mod serialization {
         }
     }
 
-    impl<R, M> From<QMCIsingGraph<R, M>> for SerializeQMCGraph<M>
+    impl<R, M> From<QmcIsingGraph<R, M>> for SerializeQmcGraph<M>
     where
         R: Rng,
         M: IsingManager,
     {
-        fn from(g: QMCIsingGraph<R, M>) -> SerializeQMCGraph<M> {
-            SerializeQMCGraph {
+        fn from(g: QmcIsingGraph<R, M>) -> SerializeQmcGraph<M> {
+            SerializeQmcGraph {
                 edges: g.edges,
                 transverse: g.transverse,
                 longitudinal: g.longitudinal,
@@ -1050,7 +1050,7 @@ pub mod serialization {
         #[test]
         fn test_serialize() {
             let rng = IsaacRng::seed_from_u64(1234);
-            let mut g = DefaultQMCIsingGraph::<IsaacRng>::new_with_rng(
+            let mut g = DefaultQmcIsingGraph::<IsaacRng>::new_with_rng(
                 vec![((0, 1), 1.0)],
                 1.0,
                 0.,
@@ -1061,13 +1061,13 @@ pub mod serialization {
             g.timesteps(100, 1.0);
             let mut v: Vec<u8> = Vec::default();
             serde_json::to_writer_pretty(&mut v, &g).unwrap();
-            let _: DefaultQMCIsingGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
+            let _: DefaultQmcIsingGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
         }
 
         #[test]
         fn test_serialize_no_rng() {
             let rng = SmallRng::seed_from_u64(1234);
-            let mut g = DefaultQMCIsingGraph::<SmallRng>::new_with_rng(
+            let mut g = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
                 vec![((0, 1), 1.0)],
                 1.0,
                 0.,
@@ -1077,13 +1077,13 @@ pub mod serialization {
             );
             g.timesteps(100, 1.0);
             let mut v: Vec<u8> = Vec::default();
-            let sg: DefaultSerializeQMCGraph = g.into();
+            let sg: DefaultSerializeQmcGraph = g.into();
             serde_json::to_writer_pretty(&mut v, &sg).unwrap();
             println!("{}", String::from_utf8(v.clone()).unwrap());
 
             let rng = SmallRng::seed_from_u64(1234);
-            let sg: DefaultSerializeQMCGraph = serde_json::from_slice(&v).unwrap();
-            let _g: DefaultQMCIsingGraph<SmallRng> = sg.into_qmc(rng);
+            let sg: DefaultSerializeQmcGraph = serde_json::from_slice(&v).unwrap();
+            let _g: DefaultQmcIsingGraph<SmallRng> = sg.into_qmc(rng);
         }
     }
 }
