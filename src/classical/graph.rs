@@ -59,8 +59,8 @@ impl GraphState {
     }
 
     /// Perform a random single spin flip.
-    pub fn do_spin_flip(
-        rng: &mut ThreadRng,
+    pub fn do_spin_flip<R: Rng>(
+        rng: &mut R,
         beta: f64,
         binding_mat: &[Vec<(usize, f64)>],
         biases: &[f64],
@@ -90,8 +90,8 @@ impl GraphState {
     }
 
     /// Randomly flip two spins attached by an edge.
-    fn do_edge_flip(
-        rng: &mut ThreadRng,
+    fn do_edge_flip<R: Rng>(
+        rng: &mut R,
         beta: f64,
         edges: &[(Edge, f64)],
         binding_mat: &[Vec<(usize, f64)>],
@@ -161,7 +161,7 @@ impl GraphState {
     }
 
     /// Randomly choose if a step should be made based on temperature and energy change.
-    pub fn should_flip(rng: &mut ThreadRng, beta: f64, delta_e: f64) -> bool {
+    pub fn should_flip<R: Rng>(rng: &mut R, beta: f64, delta_e: f64) -> bool {
         // If dE <= 0 then it will always flip, don't bother calculating odds.
         if delta_e > 0.0 {
             let chance = (-beta * delta_e).exp();

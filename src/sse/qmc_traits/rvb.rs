@@ -108,7 +108,6 @@ pub trait RvbUpdater:
             &mut constant_ps,
             &mut vars_with_zero_ops,
         );
-
         let mut num_succ = 0;
         for _ in 0..updates {
             // Pick starting flip.
@@ -117,7 +116,13 @@ pub trait RvbUpdater:
                 let res = var_starts.binary_search(&choice);
                 let v = match res {
                     Err(i) => i - 1,
-                    Ok(i) => i,
+                    Ok(mut i) => {
+                        // Get the last i with this value.
+                        while i + 1 < var_starts.len() && var_starts[i + 1] == var_starts[i] {
+                            i = i + 1
+                        }
+                        i
+                    }
                 };
                 (v, Some(choice))
             } else {
