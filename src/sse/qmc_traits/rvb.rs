@@ -234,13 +234,11 @@ pub trait RvbUpdater:
                 (&subvars, |v| var_to_subvar[v]),
                 (&diagonal_edge_hamiltonian, &ising_ratio, edges),
             );
+
+            debug_assert!(p_to_flip >= 0.);
             let should_mutate = if p_to_flip >= 1.0 {
                 true
             } else {
-                if p_to_flip < 0. {
-                    println!("P = {}", p_to_flip);
-                    debug_print_diagonal(self, state);
-                }
                 rng.gen_bool(p_to_flip)
             };
 
