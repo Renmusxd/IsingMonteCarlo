@@ -119,7 +119,7 @@ pub trait RvbUpdater:
                     Ok(mut i) => {
                         // Get the last i with this value.
                         while i + 1 < var_starts.len() && var_starts[i + 1] == var_starts[i] {
-                            i = i + 1
+                            i += 1
                         }
                         i
                     }

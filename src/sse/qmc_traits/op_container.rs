@@ -125,8 +125,14 @@ pub trait OpContainer {
     fn get_nvars(&self) -> usize;
     /// Get the pth op, None is identity.
     fn get_pth(&self, p: usize) -> Option<&Self::Op>;
-    /// Gets the count of `bonds` ops in the graph.
+    /// Gets the count of `bond` ops in the graph.
     fn get_count(&self, bond: usize) -> usize;
+
+    /// Iterate through the imaginary time states of the opcontainer.
+    fn itime_fold<F, T>(&self, state: &mut [bool], fold_fn: F, init: T) -> T
+    where
+        F: Fn(T, &[bool]) -> T;
+
     /// Verify the integrity of the OpContainer.
     fn verify(&self, state: &[bool]) -> bool {
         let mut rolling_state = state.to_vec();

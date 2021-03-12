@@ -1127,6 +1127,27 @@ impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
                 })
             })
     }
+
+    fn itime_fold<F, T>(&self, state: &mut [bool], fold_fn: F, init: T) -> T
+    where
+        F: Fn(T, &[bool]) -> T,
+    {
+        let (t, _) = (0..self.get_cutoff()).fold((init, state), |(acc, state), p| {
+            let t = fold_fn(acc, state);
+            if let Some(op) = self.get_pth(p) {
+                op.get_vars()
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .for_each(|(relv, v)| {
+                        debug_assert_eq!(op.get_inputs()[relv], state[v]);
+                        state[v] = op.get_outputs()[relv];
+                    });
+            }
+            (t, state)
+        });
+        t
+    }
 }
 
 impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {

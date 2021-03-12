@@ -329,6 +329,11 @@ impl<R: Rng, M: QmcManager> Qmc<R, M> {
         other.manager = m;
         other.state = s;
     }
+
+    /// Clone the state at p=0.
+    pub fn clone_state(&self) -> Vec<bool> {
+        self.state.as_ref().unwrap().clone()
+    }
 }
 
 /// Reference to one of either manager refs
@@ -376,6 +381,14 @@ where
 
     fn get_bond_count(&self, bond: usize) -> usize {
         self.get_manager_ref().get_count(bond)
+    }
+
+    fn imaginary_time_fold<F, T>(&self, fold_fn: F, init: T) -> T
+    where
+        F: Fn(T, &[bool]) -> T,
+    {
+        let mut state = self.clone_state();
+        self.get_manager_ref().itime_fold(&mut state, fold_fn, init)
     }
 }
 

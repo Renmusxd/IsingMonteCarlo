@@ -160,4 +160,9 @@ pub trait QmcStepper {
         let average_n = total_n as f64 / steps_measured as f64;
         (acc, self.get_energy_for_average_n(average_n, beta))
     }
+
+    /// Fold through imaginary time states.
+    fn imaginary_time_fold<F, T>(&self, fold_fn: F, init: T) -> T
+    where
+        F: Fn(T, &[bool]) -> T;
 }
