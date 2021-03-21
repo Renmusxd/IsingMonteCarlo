@@ -1,6 +1,6 @@
 [package]
 name = "qmc"
-version = "2.16.0"
+version = "2.16.1"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"
@@ -33,6 +33,7 @@ rustfft = {version = "^5.0", optional = true}
 rand = {version = "^0.8", features = ["small_rng"]}
 serde_json = "^1.0"
 rand_isaac = {version = "^0.3", features = ["serde1"]}
+rand_chacha = {version = "^0.3"}
 
 [profile.release]
 lto = "fat"

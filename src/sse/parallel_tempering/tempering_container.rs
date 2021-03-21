@@ -673,6 +673,7 @@ pub mod serialization {
     use super::*;
     use crate::sse::qmc_ising::serialization::*;
     use crate::sse::qmc_ising::*;
+    use rand::SeedableRng;
 
     /// Default serializable tempering container.
     pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps>;
@@ -710,6 +711,25 @@ pub mod serialization {
     where
         M: IsingManager,
     {
+        /// Get the number of graphs.
+        pub fn num_graphs(&self) -> usize {
+            self.graphs.len()
+        }
+
+        /// Generate rngs from container rng.
+        pub fn into_tempering_container_gen_rngs<R1, R2>(
+            self,
+            mut container_rng: R1,
+        ) -> TemperingContainer<R1, QmcIsingGraph<R2, M>>
+        where
+            R1: Rng,
+            R2: Rng + SeedableRng,
+        {
+            let seeds = (0..self.num_graphs()).map(|_| container_rng.gen());
+            let graph_rngs = seeds.map(R2::seed_from_u64).collect();
+            self.into_tempering_container_from_vec(container_rng, graph_rngs)
+        }
+
         /// Convert into a tempering container using the set of rngs.
         pub fn into_tempering_container_from_vec<R1: Rng, R2: Rng>(
             self,
