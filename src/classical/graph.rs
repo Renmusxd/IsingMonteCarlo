@@ -2,15 +2,16 @@ use rand::prelude::*;
 use std::fmt::{Debug, Error, Formatter};
 
 /// A graph definition for use in classical monte carlo.
-pub struct GraphState {
+pub struct GraphState<R: Rng> {
     pub(crate) edges: Vec<(Edge, f64)>,
     pub(crate) binding_mat: Vec<Vec<(usize, f64)>>,
     pub(crate) biases: Vec<f64>,
     pub(crate) state: Option<Vec<bool>>,
     cumulative_weight: Option<(Vec<f64>, f64)>,
+    pub(crate) rng: R,
 }
 
-impl Debug for GraphState {
+impl<R: Rng> Debug for GraphState<R> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         if let Some(state) = &self.state {
             let s = state
@@ -28,15 +29,20 @@ impl Debug for GraphState {
 
 /// An edge between two variables.
 pub type Edge = (usize, usize);
-impl GraphState {
+impl<R: Rng> GraphState<R> {
     /// Make a new Graph from a list of edges `[((vara, varb), j), ...]` and longitudinal fields.
-    pub fn new(edges: &[(Edge, f64)], biases: &[f64]) -> Self {
-        let state = Self::make_random_spin_state(biases.len());
-        Self::new_with_state(state, edges, biases)
+    pub fn new(edges: &[(Edge, f64)], biases: &[f64], mut rng: R) -> Self {
+        let state = make_random_spin_state(biases.len(), &mut rng);
+        Self::new_with_state_and_rng(state, edges, biases, rng)
     }
 
     /// Make a new graph with an initial state, edges, and longitudinal fields.
-    pub fn new_with_state(state: Vec<bool>, edges: &[(Edge, f64)], biases: &[f64]) -> Self {
+    pub fn new_with_state_and_rng(
+        state: Vec<bool>,
+        edges: &[(Edge, f64)],
+        biases: &[f64],
+        rng: R,
+    ) -> Self {
         // Matrix of all bonds.
         let mut binding_mat: Vec<Vec<(usize, f64)>> = vec![vec![]; biases.len() * biases.len()];
 
@@ -55,11 +61,12 @@ impl GraphState {
             biases: biases.to_vec(),
             state: Some(state),
             cumulative_weight: None,
+            rng,
         }
     }
 
     /// Perform a random single spin flip.
-    pub fn do_spin_flip<R: Rng>(
+    pub fn do_spin_flip(
         rng: &mut R,
         beta: f64,
         binding_mat: &[Vec<(usize, f64)>],
@@ -90,7 +97,7 @@ impl GraphState {
     }
 
     /// Randomly flip two spins attached by an edge.
-    fn do_edge_flip<R: Rng>(
+    fn do_edge_flip(
         rng: &mut R,
         beta: f64,
         edges: &[(Edge, f64)],
@@ -161,7 +168,7 @@ impl GraphState {
     }
 
     /// Randomly choose if a step should be made based on temperature and energy change.
-    pub fn should_flip<R: Rng>(rng: &mut R, beta: f64, delta_e: f64) -> bool {
+    pub fn should_flip(rng: &mut R, beta: f64, delta_e: f64) -> bool {
         // If dE <= 0 then it will always flip, don't bother calculating odds.
         if delta_e > 0.0 {
             let chance = (-beta * delta_e).exp();
@@ -173,24 +180,23 @@ impl GraphState {
 
     /// Perform a monte carlo time step.
     pub fn do_time_step(&mut self, beta: f64, only_basic_moves: bool) -> Result<(), String> {
-        let mut rng = thread_rng();
         // Energy cost of this flip
         if let Some(mut spin_state) = self.state.take() {
             let choice = if only_basic_moves {
                 0
             } else {
-                rng.gen_range(0..2)
+                self.rng.gen_range(0..2)
             };
             match choice {
                 0 => Self::do_spin_flip(
-                    &mut rng,
+                    &mut self.rng,
                     beta,
                     &self.binding_mat,
                     &self.biases,
                     &mut spin_state,
                 ),
                 1 => Self::do_edge_flip(
-                    &mut rng,
+                    &mut self.rng,
                     beta,
                     &self.edges,
                     &self.binding_mat,
@@ -249,10 +255,9 @@ impl GraphState {
             std::f64::NAN
         }
     }
+}
 
-    /// Randomly build a spin state.
-    pub fn make_random_spin_state(n: usize) -> Vec<bool> {
-        let mut rng = thread_rng();
-        (0..n).map(|_| -> bool { rng.gen() }).collect()
-    }
+/// Randomly build a spin state.
+pub fn make_random_spin_state<R: Rng>(n: usize, rng: &mut R) -> Vec<bool> {
+    (0..n).map(|_| -> bool { rng.gen() }).collect()
 }

@@ -1,4 +1,4 @@
-use crate::classical::graph::GraphState;
+use crate::classical::graph::make_random_spin_state;
 use crate::sse::fast_ops::*;
 use crate::sse::ham::Ham;
 use crate::sse::qmc_traits::*;
@@ -45,13 +45,9 @@ where
 
 impl<R: Rng, M: QmcManager> Qmc<R, M> {
     /// Make a new QMC instance with nvars.
-    pub fn new(nvars: usize, rng: R, do_loop_updates: bool) -> Self {
-        Self::new_with_state(
-            nvars,
-            rng,
-            GraphState::make_random_spin_state(nvars),
-            do_loop_updates,
-        )
+    pub fn new(nvars: usize, mut rng: R, do_loop_updates: bool) -> Self {
+        let state = make_random_spin_state(nvars, &mut rng);
+        Self::new_with_state(nvars, rng, state, do_loop_updates)
     }
 
     /// Make a new QMC instance with nvars.

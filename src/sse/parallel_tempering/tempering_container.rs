@@ -231,6 +231,11 @@ where
     pub fn get_total_swaps(&self) -> u64 {
         self.total_swaps
     }
+
+    /// Get mutable access to internal rng for doing associated tasks.
+    pub fn rng_mut(&mut self) -> &mut R {
+        self.rng.as_mut().unwrap()
+    }
 }
 
 fn perform_swaps<R, Q>(mut rng: R, graphs: &mut [(Q, f64)], hameqs: &[bool]) -> u64

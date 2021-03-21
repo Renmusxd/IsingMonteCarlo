@@ -1,4 +1,4 @@
-use crate::classical::graph::{Edge, GraphState};
+use crate::classical::graph::{make_random_spin_state, Edge, GraphState};
 #[cfg(feature = "autocorrelations")]
 pub use crate::sse::autocorrelations::*;
 use crate::sse::fast_ops::FastOps;
@@ -65,14 +65,13 @@ pub fn new_qmc(
 }
 
 /// Build a new qmc graph with thread rng from a classical graph.
-pub fn new_qmc_from_graph(
-    graph: GraphState,
+pub fn new_qmc_from_graph<R: Rng>(
+    graph: GraphState<R>,
     transverse: f64,
     longitudinal: f64,
     cutoff: usize,
-) -> DefaultQmcIsingGraph<ThreadRng> {
-    let rng = rand::thread_rng();
-    DefaultQmcIsingGraph::<ThreadRng>::new_from_graph(graph, transverse, longitudinal, cutoff, rng)
+) -> DefaultQmcIsingGraph<R> {
+    DefaultQmcIsingGraph::<R>::new_from_graph(graph, transverse, longitudinal, cutoff)
 }
 
 impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
@@ -82,7 +81,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
         transverse: f64,
         longitudinal: f64,
         cutoff: usize,
-        rng: Rg,
+        mut rng: Rg,
         state: Option<Vec<bool>>,
     ) -> QmcIsingGraph<Rg, M> {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
@@ -101,7 +100,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
         let state = match state {
             Some(state) => state,
-            None => GraphState::make_random_spin_state(nvars),
+            None => make_random_spin_state(nvars, &mut rng),
         };
         let state = Some(state);
 
@@ -125,11 +124,10 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
     /// Make a new QMC graph with an rng instance.
     pub fn new_from_graph<Rg: Rng>(
-        graph: GraphState,
+        graph: GraphState<Rg>,
         transverse: f64,
         longitudinal: f64,
         cutoff: usize,
-        rng: Rg,
     ) -> QmcIsingGraph<Rg, M> {
         assert!(graph.biases.into_iter().all(|v| v == 0.0));
         Self::new_with_rng(
@@ -137,7 +135,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
             transverse,
             longitudinal,
             cutoff,
-            rng,
+            graph.rng,
             graph.state,
         )
     }
