@@ -40,11 +40,29 @@ mod tests {
     use test::Bencher;
     use rand_chacha::ChaChaRng;
     use rand_isaac::Isaac64Rng;
+    use rand::prelude::*;
 
     #[bench]
     fn one_d(b: &mut Bencher) {
         let l = 16;
         let rng = SmallRng::seed_from_u64(1234);
+        let mut g = QmcIsingGraph::<SmallRng, FastOps>::new_with_rng(
+            one_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+        );
+        let beta = 1.0;
+        g.timesteps(1000, beta);
+        b.iter(|| g.timesteps(1, beta));
+    }
+
+    #[bench]
+    fn one_d_stdrng(b: &mut Bencher) {
+        let l = 16;
+        let rng = StdRng::seed_from_u64(1234);
         let mut g = QmcIsingGraph::<SmallRng, FastOps>::new_with_rng(
             one_d_periodic(l),
             1.,
