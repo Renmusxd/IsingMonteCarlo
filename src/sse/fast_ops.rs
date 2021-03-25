@@ -7,7 +7,8 @@ use crate::util::bondcontainer::BondContainer;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
-use std::cmp::min;
+use std::cmp::{min, Reverse};
+use std::collections::BinaryHeap;
 
 /// Underlying op for storing graph data, good for 2-variable ops.
 pub type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
@@ -47,6 +48,7 @@ pub struct FastOpsTemplate<O: Op> {
     f64_alloc: Allocator<Vec<f64>>,
     bond_container_alloc: Allocator<BondContainer<usize>>,
     bond_container_varpos_alloc: Allocator<BondContainer<VarPos>>,
+    binary_heap_alloc: Allocator<BinaryHeap<Reverse<usize>>>,
 }
 
 impl<O: Op + Clone> FastOpsTemplate<O> {
@@ -66,6 +68,7 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
             f64_alloc: Allocator::new_with_max_in_flight(1),
             bond_container_alloc: Allocator::new_with_max_in_flight(2),
             bond_container_varpos_alloc: Allocator::new_with_max_in_flight(2),
+            binary_heap_alloc: Allocator::new_with_max_in_flight(1),
         }
     }
 
@@ -934,18 +937,45 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
         hint.into_iter()
             .zip(vars.iter().cloned())
             .enumerate()
-            .for_each(|(subvar, (phint, var))| {
+            .for_each(|(subvar, it)| {
+                // Help the type system.
+                let (phint, var): (Option<usize>, usize) = it;
                 debug_assert!(
                     phint
                         .map(|phint| self.get_node_ref(phint).is_some())
                         .unwrap_or(true),
                     "Hints must be to ops."
                 );
+                debug_assert!(
+                    phint
+                        .map(|phint| self
+                            .get_node_ref(phint)
+                            .unwrap()
+                            .get_op_ref()
+                            .index_of_var(var)
+                            .is_some())
+                        .unwrap_or(true),
+                    "Hints must point to ops with relevant variable."
+                );
                 substate[subvar] = state[var];
                 let var_start: Option<PRel> = self.var_ends[var].map(|(prel, _)| prel);
+                let phint = phint.and_then(|mut phint: usize| {
+                    let mut node = self.get_node_ref(phint).expect("Hints must be to ops");
+                    let mut relv = node
+                        .get_op_ref()
+                        .index_of_var(var)
+                        .expect("Hints must point to ops with relevant variables");
+                    while phint >= p {
+                        let prev = self.get_previous_p_for_rel_var(relv, node)?;
+                        phint = prev.p;
+                        relv = prev.relv;
+                        node = self.get_node_ref(phint).expect("Hints must be to ops");
+                    }
+                    Some(phint)
+                });
                 let can_use_hint_iter = phint.map(|phint| phint < p).unwrap_or(false);
                 let can_use_start_iter = var_start.map(|prel| prel.p < p).unwrap_or(false);
-                let use_exact: Option<PRel> = match (phint, var_start) {
+                let use_exact = match (phint, var_start) {
                     (Some(phint), _) if phint == p => {
                         let node = self.get_node_ref(p).expect("Gave a hint without an op");
                         let relv = node
@@ -1274,6 +1304,16 @@ impl<O: Op + Clone> Factory<BondContainer<VarPos>> for FastOpsTemplate<O> {
 
     fn return_instance(&mut self, t: BondContainer<VarPos>) {
         self.bond_container_varpos_alloc.return_instance(t)
+    }
+}
+
+impl<O: Op + Clone> Factory<BinaryHeap<Reverse<usize>>> for FastOpsTemplate<O> {
+    fn get_instance(&mut self) -> BinaryHeap<Reverse<usize>> {
+        self.binary_heap_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: BinaryHeap<Reverse<usize>>) {
+        self.binary_heap_alloc.return_instance(t)
     }
 }
 

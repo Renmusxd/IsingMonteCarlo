@@ -38,6 +38,7 @@ pub trait RvbUpdater:
     + Factory<BondContainer<usize>>
     + Factory<BondContainer<VarPos>>
     + Factory<Vec<Option<usize>>>
+    + Factory<BinaryHeap<Reverse<usize>>>
 {
     /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
@@ -230,9 +231,8 @@ pub trait RvbUpdater:
 
             let p_to_flip = calculate_flip_prob(
                 self,
-                (state, &mut substate),
+                &mut substate,
                 (&mut cluster_starting_state, &cluster_toggle_ps),
-                &subvar_boundary_tops,
                 (&subvars, |v| var_to_subvar[v]),
                 (&diagonal_edge_hamiltonian, &ising_ratio, edges),
             );
@@ -469,30 +469,33 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                             } else {
                                 // Flip appropriate inputs/outputs.
                                 // If any are out, then all are out - otherwise would be in sat or unsat
-                                debug_assert!({
-                                    let all_in = op.get_vars().iter().cloned().all(|v| {
-                                        var_to_subvar(v)
-                                            .map(|subvar| cluster_state[subvar])
-                                            .unwrap_or(false)
-                                    });
-                                    let all_out = op.get_vars().iter().cloned().all(|v| {
-                                        var_to_subvar(v)
-                                            .map(|subvar| !cluster_state[subvar])
-                                            .unwrap_or(true)
-                                    });
-                                    let succ = (all_in != all_out) && (all_in || all_out);
-                                    if !succ {
-                                        println!("subvars: {:?}", vars);
-                                        println!(
-                                            "op: {:?}\t{:?} -> {:?}",
-                                            op.get_vars(),
-                                            op.get_inputs(),
-                                            op.get_outputs()
-                                        );
-                                        println!("all_in: {}\tall_out: {}", all_in, all_out);
-                                    }
-                                    succ
-                                });
+                                debug_assert!(
+                                    {
+                                        let all_in = op.get_vars().iter().cloned().all(|v| {
+                                            var_to_subvar(v)
+                                                .map(|subvar| cluster_state[subvar])
+                                                .unwrap_or(false)
+                                        });
+                                        let all_out = op.get_vars().iter().cloned().all(|v| {
+                                            var_to_subvar(v)
+                                                .map(|subvar| !cluster_state[subvar])
+                                                .unwrap_or(true)
+                                        });
+                                        let succ = (all_in != all_out) && (all_in || all_out);
+                                        if !succ {
+                                            println!("subvars: {:?}", vars);
+                                            println!(
+                                                "op: {:?}\t{:?} -> {:?}",
+                                                op.get_vars(),
+                                                op.get_inputs(),
+                                                op.get_outputs()
+                                            );
+                                            println!("all_in: {}\tall_out: {}", all_in, all_out);
+                                        }
+                                        succ
+                                    },
+                                    "Op straddles cluster region."
+                                );
 
                                 let any_subvars = op
                                     .get_vars()
@@ -644,9 +647,8 @@ fn set_initial_bonds<F, VS, EN>(
 // to handle the var_to_subvar thing. Plus they occupy way too much of the flamegraph.
 fn calculate_flip_prob<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
     rvb: &mut RVB,
-    (state, substate): (&[bool], &mut [bool]),
+    substate: &mut [bool],
     (cluster_state, cluster_flips): (&mut [bool], &[usize]),
-    boundary_tops: &[Option<usize>], // top for each of vars.
     (vars, var_to_subvar): (&[usize], VS),
     (diagonal_hamiltonian, ising_ratio, edges): (H, F, &EN),
 ) -> f64
@@ -694,10 +696,11 @@ where
         );
     }
 
-    let mut p_heap = BinaryHeap::with_capacity(vars.len() * 2);
-    vars.iter().for_each(|v| match rvb.get_first_p_for_var(*v) {
-        Some(PRel { p, .. }) => p_heap.push(Reverse(p)),
-        None => (),
+    let mut p_heap: BinaryHeap<Reverse<usize>> = rvb.get_instance();
+    vars.iter().for_each(|v| {
+        if let Some(PRel { p, .. }) = rvb.get_first_p_for_var(*v) {
+            p_heap.push(Reverse(p))
+        }
     });
 
     let is_op_nearby_cluster = |op: &RVB::Op| {
@@ -722,14 +725,6 @@ where
             // Jump to next nonzero spot.
             if next_cluster_index < cluster_flips.len() {
                 p = cluster_flips[next_cluster_index];
-
-                rvb.get_propagated_substate_with_hint(
-                    p,
-                    substate,
-                    state,
-                    vars,
-                    boundary_tops.iter().cloned(),
-                );
             } else {
                 // Done with clusters, jump to the end.
                 break;
@@ -745,20 +740,26 @@ where
         {
             let popped = p_heap.pop().unwrap().0;
             debug_assert!(popped <= p);
-
             if popped >= last_pushed_from {
                 match rvb.get_node_ref(popped) {
                     Some(node) => {
                         // Add next ps
-                        node.get_op_ref()
-                            .get_vars()
+                        let op = node.get_op_ref();
+                        op.get_vars()
                             .iter()
                             .cloned()
+                            .zip(op.get_outputs().iter().cloned())
                             .enumerate()
-                            .filter(|(_, v)| var_to_subvar(*v).is_some())
-                            .filter_map(|(relv, _)| rvb.get_next_p_for_rel_var(relv, node))
-                            .for_each(|prel| {
-                                p_heap.push(Reverse(prel.p));
+                            .filter_map(|(relv, (v, b))| {
+                                var_to_subvar(v).map(|subvar| (relv, subvar, b))
+                            })
+                            .for_each(|(relv, subvar, b)| {
+                                if popped < p {
+                                    substate[subvar] = b;
+                                }
+                                if let Some(prel) = rvb.get_next_p_for_rel_var(relv, node) {
+                                    p_heap.push(Reverse(prel.p));
+                                }
                             });
                     }
                     None => {
@@ -780,6 +781,18 @@ where
             "Heap should only contain ps for ops near cluster"
         );
 
+        // Check that substate is up to date.
+        debug_assert!(
+            {
+                op.get_vars()
+                    .iter()
+                    .zip(op.get_inputs().iter().cloned())
+                    .filter_map(|(v, b)| var_to_subvar(*v).map(|subvar| (subvar, b)))
+                    .all(|(subvar, b)| substate[subvar] == b)
+            },
+            "Substate must match input to op"
+        );
+
         // Check that all entries in heap are near cluster.
         debug_assert!(
             p_heap.iter().map(|revp| revp.0).all(is_nearby_cluster),
@@ -798,11 +811,7 @@ where
         debug_assert!(
             {
                 if let Some(p) = rvb.get_next_p(node) {
-                    let in_heap = p_heap
-                        .iter()
-                        .map(|revp| revp.0)
-                        .find(|hp| *hp == p)
-                        .is_some();
+                    let in_heap = p_heap.iter().map(|revp| revp.0).any(|hp| hp == p);
                     let nearby = is_nearby_cluster(p);
                     if nearby {
                         in_heap
@@ -931,6 +940,7 @@ where
     // Commit remaining stuff.
     mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
 
+    rvb.return_instance(p_heap);
     rvb.return_instance(bonds_before);
     rvb.return_instance(bonds_after);
 
@@ -1435,9 +1445,8 @@ mod sc_tests {
 
         let p = calculate_flip_prob(
             &mut manager,
-            (&[false, false], &mut [false, false]),
+            &mut [false, false],
             (&mut [false, false], &[3, 6]),
-            &[Some(2), Some(1)],
             (&[0, 1], |v| Some(v)),
             (
                 |b, sa, sb| {

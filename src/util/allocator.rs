@@ -1,5 +1,6 @@
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
+use std::collections::BinaryHeap;
 
 /// A factory which produces Ts.
 pub trait Factory<T> {
@@ -16,6 +17,12 @@ pub trait Reset {
 }
 
 impl<T> Reset for Vec<T> {
+    fn reset(&mut self) {
+        self.clear()
+    }
+}
+
+impl<T> Reset for BinaryHeap<T> {
     fn reset(&mut self) {
         self.clear()
     }
