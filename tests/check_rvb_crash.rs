@@ -307,8 +307,10 @@ fn run_three() {
             Some(vec![false; l * l]),
         );
         ising.set_run_rvb(true);
-        ising.timesteps(1000, 1.0);
-        assert!(ising.verify());
+        (0..1000).for_each(|_| {
+            ising.timesteps(1, 1.0);
+            assert!(ising.verify());
+        });
     }
 }
 
@@ -327,8 +329,10 @@ fn run_four() {
             Some(vec![false; l * l]),
         );
         ising.set_run_rvb(true);
-        ising.timesteps(1000, 1.0);
-        assert!(ising.verify());
+        (0..1000).for_each(|_| {
+            ising.timesteps(1, 1.0);
+            assert!(ising.verify());
+        });
     }
 }
 
@@ -346,10 +350,11 @@ fn run_two_unit_cell() {
             rng,
             Some(vec![false; nvars]),
         );
-        ising.timesteps(1000, 1.0);
         ising.set_run_rvb(true);
-        ising.timesteps(1000, 1.0);
-        assert!(ising.verify());
+        (0..1000).for_each(|_| {
+            ising.timesteps(1, 1.0);
+            assert!(ising.verify());
+        });
     }
 }
 
@@ -370,9 +375,9 @@ fn run_two_unit_cell_random_bonds() {
             rng,
             Some(vec![false; nvars]),
         );
-        ising.timesteps(1000, 1.0);
-        ising.set_run_rvb(true);
-        ising.timesteps(1000, 1.0);
-        assert!(ising.verify());
+        (0..1000).for_each(|_| {
+            ising.timesteps(1, 1.0);
+            assert!(ising.verify());
+        });
     }
 }

@@ -2,6 +2,8 @@ use crate::sse::*;
 use crate::util::allocator::Factory;
 use crate::util::bondcontainer::BondContainer;
 use rand::Rng;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 /// A struct which allows navigation around the variables in a model.
 pub trait EdgeNavigator {
@@ -608,6 +610,38 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
     rvb.return_instance(continue_until);
 }
 
+fn set_initial_bonds<F, VS, EN>(
+    (vars, substate): (&[usize], &[bool]),
+    cluster_state: &[bool],
+    var_to_subvar: VS,
+    ws_for_flip: F,
+    edges: &EN,
+    bonds_before: &mut BondContainer<usize>,
+    bonds_after: &mut BondContainer<usize>,
+) where
+    VS: Fn(usize) -> Option<usize>,
+    F: Fn(usize, usize, &[bool]) -> (f64, f64),
+    EN: EdgeNavigator + ?Sized,
+{
+    vars.iter()
+        .cloned()
+        .map(|v| (v, var_to_subvar(v).unwrap()))
+        .filter(|(_, subvar)| cluster_state[*subvar])
+        .for_each(|(v, subvar)| {
+            edges.bonds_for_var(v).iter().cloned().for_each(|b| {
+                let ov = edges.other_var_for_bond(v, b).unwrap();
+                let o_subvar = var_to_subvar(ov).unwrap();
+                if !cluster_state[o_subvar] {
+                    let (wbef, waft) = ws_for_flip(b, subvar, substate);
+                    bonds_before.insert(b, wbef);
+                    bonds_after.insert(b, waft);
+                }
+            })
+        });
+}
+
+// TODO remove .unwrap() from this function, there are too many and it suggests a better way
+// to handle the var_to_subvar thing. Plus they occupy way too much of the flamegraph.
 fn calculate_flip_prob<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
@@ -622,7 +656,6 @@ where
     F: Fn(&RVB::Op) -> f64,
 {
     let mut cluster_size = cluster_state.iter().cloned().filter(|x| *x).count();
-    let mut psel = rvb.get_first_p();
     let mut next_cluster_index = 0;
     let mut mult = 1.0;
 
@@ -650,26 +683,37 @@ where
     let mut bonds_after: BondContainer<usize> = rvb.get_instance();
     let mut n_bonds = 0;
     if cluster_size != 0 {
-        vars.iter()
-            .cloned()
-            .map(|v| (v, var_to_subvar(v).unwrap()))
-            .filter(|(_, subvar)| cluster_state[*subvar])
-            .for_each(|(v, subvar)| {
-                edges.bonds_for_var(v).iter().cloned().for_each(|b| {
-                    let ov = edges.other_var_for_bond(v, b).unwrap();
-                    let o_subvar = var_to_subvar(ov).unwrap();
-                    if !cluster_state[o_subvar] {
-                        let (wbef, waft) = ws_for_flip(b, subvar, substate);
-                        bonds_before.insert(b, wbef);
-                        bonds_after.insert(b, waft);
-                    }
-                })
-            });
+        set_initial_bonds(
+            (vars, substate),
+            cluster_state,
+            &var_to_subvar,
+            &ws_for_flip,
+            edges,
+            &mut bonds_before,
+            &mut bonds_after,
+        );
     }
 
-    // Jump to cluster start, requires propagating state. Since not inside a cluster it's
-    // safe to use just the boundary.
-    while let Some(mut p) = psel {
+    let mut p_heap = BinaryHeap::with_capacity(vars.len() * 2);
+    vars.iter().for_each(|v| match rvb.get_first_p_for_var(*v) {
+        Some(PRel { p, .. }) => p_heap.push(Reverse(p)),
+        None => (),
+    });
+
+    let is_op_nearby_cluster = |op: &RVB::Op| {
+        op.get_vars()
+            .iter()
+            .cloned()
+            .any(|v| var_to_subvar(v).is_some())
+    };
+    let is_nearby_cluster = |p: usize| {
+        let node = rvb
+            .get_node_ref(p)
+            .expect("We were promised an op at this location.");
+        let op = node.get_op_ref();
+        is_op_nearby_cluster(op)
+    };
+    while let Some(mut p) = p_heap.peek().map(|rp| rp.0) {
         // Skip ahead.
         if cluster_size == 0 {
             debug_assert_eq!(bonds_before.len(), 0);
@@ -677,8 +721,6 @@ where
             debug_assert_eq!(n_bonds, 0);
             // Jump to next nonzero spot.
             if next_cluster_index < cluster_flips.len() {
-                // psel can be set but won't be read.
-                // psel = Some(p);
                 p = cluster_flips[next_cluster_index];
 
                 rvb.get_propagated_substate_with_hint(
@@ -694,124 +736,197 @@ where
             }
         }
 
-        let node = rvb.get_node_ref(p).unwrap();
-        let op = node.get_op_ref();
+        let mut last_pushed_from = 0;
+        while p_heap
+            .peek()
+            .map(|rp| rp.0)
+            .map(|rp| rp <= p)
+            .unwrap_or(false)
+        {
+            let popped = p_heap.pop().unwrap().0;
+            debug_assert!(popped <= p);
 
-        // Check if op is anywhere near the cluster.
-        let near_cluster = op
-            .get_vars()
-            .iter()
-            .cloned()
-            .any(|v| var_to_subvar(v).is_some());
-        if near_cluster {
-            let is_cluster_bound =
-                next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
-            let will_flip_spins = !op.is_diagonal();
-            let will_change_bonds = will_flip_spins || is_cluster_bound;
-            let completely_in_cluster = op.get_vars().iter().cloned().all(|v| {
-                var_to_subvar(v)
-                    .map(|subvar| cluster_state[subvar])
-                    .unwrap_or(false)
-            });
-
-            // Count which bond it belongs to.
-            let b = op.get_bond();
-            if bonds_before.contains(&b) {
-                debug_assert!(!is_cluster_bound);
-                debug_assert!(!will_flip_spins);
-                debug_assert!(bonds_after.contains(&b));
-                // TODO for offdiagonal edges just look at weight difference, no rotation.
-                n_bonds += 1;
-            } else {
-                // We are at a cluster boundary, flips cluster state and bonds.
-                if is_cluster_bound {
-                    debug_assert!(op.is_constant());
-                    debug_assert_eq!(op.get_vars().len(), 1);
-
-                    let v = op.get_vars()[0];
-                    let subvar = var_to_subvar(v).unwrap();
-
-                    cluster_state[subvar] = !cluster_state[subvar];
-                    if cluster_state[subvar] {
-                        cluster_size += 1
-                    } else {
-                        cluster_size -= 1
-                    };
-                    next_cluster_index += 1;
-                }
-
-                if will_flip_spins {
-                    op.get_vars()
-                        .iter()
-                        .cloned()
-                        .zip(op.get_outputs().iter().cloned())
-                        .filter_map(|(v, bout)| {
-                            var_to_subvar(v)
-                                .zip(Some(bout))
-                                .map(|(subvar, bout)| (subvar, bout))
-                        })
-                        .for_each(|(subvar, bout)| {
-                            substate[subvar] = bout;
-                        });
-                }
-
-                if completely_in_cluster {
-                    let ising_flip_weight = ising_ratio(op);
-                    mult *= ising_flip_weight;
-                    if mult < std::f64::EPSILON {
-                        break;
+            if popped >= last_pushed_from {
+                match rvb.get_node_ref(popped) {
+                    Some(node) => {
+                        // Add next ps
+                        node.get_op_ref()
+                            .get_vars()
+                            .iter()
+                            .cloned()
+                            .enumerate()
+                            .filter(|(_, v)| var_to_subvar(*v).is_some())
+                            .filter_map(|(relv, _)| rvb.get_next_p_for_rel_var(relv, node))
+                            .for_each(|prel| {
+                                p_heap.push(Reverse(prel.p));
+                            });
+                    }
+                    None => {
+                        unreachable!()
                     }
                 }
-
-                if will_change_bonds {
-                    // Commit the counts so far.
-                    mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
-                    n_bonds = 0;
-                    // Break early if we reach 0 probability.
-                    if mult < std::f64::EPSILON {
-                        break;
-                    }
-
-                    // Now update bonds
-                    op.get_vars()
-                        .iter()
-                        .cloned()
-                        .filter_map(|v| var_to_subvar(v).map(|subvar| (v, subvar)))
-                        .for_each(|(v, subvar)| {
-                            edges
-                                .bonds_for_var(v)
-                                .iter()
-                                .cloned()
-                                .filter_map(|b| {
-                                    let ov = edges.other_var_for_bond(v, b).unwrap();
-                                    var_to_subvar(ov).map(|o_subvar| (b, subvar, o_subvar))
-                                })
-                                .for_each(|(b, subvar, o_subvar)| {
-                                    if cluster_state[subvar] == cluster_state[o_subvar] {
-                                        // Remove bond from borders.
-                                        if bonds_before.contains(&b) {
-                                            bonds_before.remove(&b);
-                                            bonds_after.remove(&b);
-                                        }
-                                    } else {
-                                        let subvar = if cluster_state[subvar] {
-                                            subvar
-                                        } else {
-                                            o_subvar
-                                        };
-                                        let (wbef, waft) = ws_for_flip(b, subvar, substate);
-                                        // Insert or update weight.
-                                        bonds_before.insert(b, wbef);
-                                        bonds_after.insert(b, waft);
-                                    }
-                                })
-                        });
-                }
+                last_pushed_from = popped + 1;
             }
         }
 
-        // Move on
-        psel = rvb.get_next_p(node);
+        let node = rvb
+            .get_node_ref(p)
+            .expect("Heap should only contain ps which point to ops.");
+        let op = node.get_op_ref();
+
+        // Check if op is anywhere near the cluster.
+        debug_assert!(
+            is_op_nearby_cluster(op),
+            "Heap should only contain ps for ops near cluster"
+        );
+
+        // Check that all entries in heap are near cluster.
+        debug_assert!(
+            p_heap.iter().map(|revp| revp.0).all(is_nearby_cluster),
+            "All entries in heap must by nearby to the cluster"
+        );
+        debug_assert!(
+            {
+                if rvb.get_next_p(node).is_none() {
+                    p_heap.is_empty()
+                } else {
+                    true
+                }
+            },
+            "If there are no more nodes, the heap should be empty."
+        );
+        debug_assert!(
+            {
+                if let Some(p) = rvb.get_next_p(node) {
+                    let in_heap = p_heap
+                        .iter()
+                        .map(|revp| revp.0)
+                        .find(|hp| *hp == p)
+                        .is_some();
+                    let nearby = is_nearby_cluster(p);
+                    if nearby {
+                        in_heap
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            },
+            "Heap has missed a nearby bond: {}:{:?}, {:?}",
+            rvb.get_next_p(node).unwrap(),
+            {
+                let p = rvb.get_next_p(node).unwrap();
+                rvb.get_node_ref(p).unwrap().get_op_ref().get_vars()
+            },
+            p_heap.iter().collect::<Vec<_>>()
+        );
+
+        let is_cluster_bound =
+            next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
+        let will_flip_spins = !op.is_diagonal();
+        let will_change_bonds = will_flip_spins || is_cluster_bound;
+        let completely_in_cluster = op.get_vars().iter().cloned().all(|v| {
+            var_to_subvar(v)
+                .map(|subvar| cluster_state[subvar])
+                .unwrap_or(false)
+        });
+
+        // Count which bond it belongs to.
+        let b = op.get_bond();
+        if bonds_before.contains(&b) {
+            debug_assert!(!is_cluster_bound);
+            debug_assert!(!will_flip_spins);
+            debug_assert!(bonds_after.contains(&b));
+            debug_assert!(op.is_diagonal());
+            // TODO for offdiagonal edges just look at weight difference, no rotation.
+            n_bonds += 1;
+        } else {
+            // We are at a cluster boundary, flips cluster state and bonds.
+            if is_cluster_bound {
+                debug_assert!(op.is_constant());
+                debug_assert_eq!(op.get_vars().len(), 1);
+
+                let v = op.get_vars()[0];
+                let subvar = var_to_subvar(v).unwrap();
+
+                cluster_state[subvar] = !cluster_state[subvar];
+                if cluster_state[subvar] {
+                    cluster_size += 1
+                } else {
+                    cluster_size -= 1
+                };
+                next_cluster_index += 1;
+            }
+
+            if will_flip_spins {
+                op.get_vars()
+                    .iter()
+                    .cloned()
+                    .zip(op.get_outputs().iter().cloned())
+                    .filter_map(|(v, bout)| {
+                        var_to_subvar(v)
+                            .zip(Some(bout))
+                            .map(|(subvar, bout)| (subvar, bout))
+                    })
+                    .for_each(|(subvar, bout)| {
+                        substate[subvar] = bout;
+                    });
+            }
+
+            if completely_in_cluster {
+                let ising_flip_weight = ising_ratio(op);
+                mult *= ising_flip_weight;
+                if mult < std::f64::EPSILON {
+                    break;
+                }
+            }
+
+            if will_change_bonds {
+                // Commit the counts so far.
+                mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
+                n_bonds = 0;
+                // Break early if we reach 0 probability.
+                if mult < std::f64::EPSILON {
+                    break;
+                }
+
+                // Now update bonds
+                op.get_vars()
+                    .iter()
+                    .cloned()
+                    .filter_map(|v| var_to_subvar(v).map(|subvar| (v, subvar)))
+                    .for_each(|(v, subvar)| {
+                        edges
+                            .bonds_for_var(v)
+                            .iter()
+                            .cloned()
+                            .filter_map(|b| {
+                                let ov = edges.other_var_for_bond(v, b).unwrap();
+                                var_to_subvar(ov).map(|o_subvar| (b, subvar, o_subvar))
+                            })
+                            .for_each(|(b, subvar, o_subvar)| {
+                                if cluster_state[subvar] == cluster_state[o_subvar] {
+                                    // Remove bond from borders.
+                                    if bonds_before.contains(&b) {
+                                        bonds_before.remove(&b);
+                                        bonds_after.remove(&b);
+                                    }
+                                } else {
+                                    let subvar = if cluster_state[subvar] {
+                                        subvar
+                                    } else {
+                                        o_subvar
+                                    };
+                                    let (wbef, waft) = ws_for_flip(b, subvar, substate);
+                                    // Insert or update weight.
+                                    bonds_before.insert(b, wbef);
+                                    bonds_after.insert(b, waft);
+                                }
+                            })
+                    });
+            }
+        }
     }
     // Commit remaining stuff.
     mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
