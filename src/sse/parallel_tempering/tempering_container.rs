@@ -11,7 +11,8 @@ use smallvec::SmallVec;
 use std::cmp::min;
 
 /// A tempering container using FastOps and FastOpNodes.
-pub type DefaultTemperingContainer<R1, R2> = TemperingContainer<R1, QmcIsingGraph<R2, FastOps>>;
+pub type DefaultTemperingContainer<R1, R2, const N: usize> =
+    TemperingContainer<R1, QmcIsingGraph<R2, FastOps<N>>>;
 
 /// A container to perform parallel tempering.
 #[derive(Debug, Clone)]
@@ -34,12 +35,12 @@ where
 }
 
 /// Make a new parallel tempering container.
-pub fn new_with_rng<R2: Rng, R: Rng>(rng: R) -> DefaultTemperingContainer<R, R2> {
+pub fn new_with_rng<R2: Rng, R: Rng>(rng: R) -> DefaultTemperingContainer<R, R2, 2> {
     TemperingContainer::new(rng)
 }
 
 /// Make a new parallel tempering container.
-pub fn new_thread_rng() -> DefaultTemperingContainer<ThreadRng, ThreadRng> {
+pub fn new_thread_rng() -> DefaultTemperingContainer<ThreadRng, ThreadRng, 2> {
     new_with_rng(rand::thread_rng())
 }
 
@@ -676,7 +677,7 @@ pub mod serialization {
     use rand::SeedableRng;
 
     /// Default serializable tempering container.
-    pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps>;
+    pub type DefaultSerializeTemperingContainer = SerializeTemperingContainer<FastOps<2>>;
     type SerializeGraphBeta<M> = (SerializeQmcGraph<M>, f64);
 
     /// A tempering container with no rng. Just for serialization.

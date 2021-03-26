@@ -160,7 +160,7 @@ impl<R: Rng, M: IsingManager> StateGetter for QmcIsingGraph<R, M> {
     }
 }
 
-impl OpWeights for FastOps {
+impl<const N: usize> OpWeights for FastOps<N> {
     fn relative_weight_for_hamiltonians<H1, H2>(&self, h1: H1, h2: H2) -> f64
     where
         H1: Fn(&[usize], usize, &[bool], &[bool]) -> f64,

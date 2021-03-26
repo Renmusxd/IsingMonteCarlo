@@ -1339,7 +1339,7 @@ mod sc_tests {
         }
     }
 
-    fn large_joined_manager() -> (FastOps, EN) {
+    fn large_joined_manager() -> (FastOps<2>, EN) {
         (
             FastOps::new_from_ops(
                 2,

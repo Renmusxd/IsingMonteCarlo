@@ -9,7 +9,7 @@ fn single_cluster_test() {
         1,
         vec![(
             0,
-            FastOp::offdiagonal(smallvec![0], 0, smallvec![false], smallvec![false], true),
+            FastOp::<2>::offdiagonal(smallvec![0], 0, smallvec![false], smallvec![false], true),
         )]
         .into_iter(),
     );
@@ -27,11 +27,11 @@ fn simple_cluster_test() {
         vec![
             (
                 0,
-                FastOp::offdiagonal(smallvec![0], 0, smallvec![false], smallvec![false], true),
+                FastOp::<2>::offdiagonal(smallvec![0], 0, smallvec![false], smallvec![false], true),
             ),
             (
                 1,
-                FastOp::offdiagonal(smallvec![0], 1, smallvec![false], smallvec![false], true),
+                FastOp::<2>::offdiagonal(smallvec![0], 1, smallvec![false], smallvec![false], true),
             ),
         ]
         .into_iter(),
@@ -50,19 +50,19 @@ fn multi_cluster_test() {
         vec![
             (
                 0,
-                FastOp::offdiagonal(smallvec![0], 0, smallvec![false], smallvec![false], true),
+                FastOp::<2>::offdiagonal(smallvec![0], 0, smallvec![false], smallvec![false], true),
             ),
             (
                 1,
-                FastOp::offdiagonal(smallvec![0], 1, smallvec![false], smallvec![false], true),
+                FastOp::<2>::offdiagonal(smallvec![0], 1, smallvec![false], smallvec![false], true),
             ),
             (
                 2,
-                FastOp::offdiagonal(smallvec![1], 2, smallvec![false], smallvec![false], true),
+                FastOp::<2>::offdiagonal(smallvec![1], 2, smallvec![false], smallvec![false], true),
             ),
             (
                 3,
-                FastOp::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
+                FastOp::<2>::offdiagonal(smallvec![1], 3, smallvec![false], smallvec![false], true),
             ),
         ]
         .into_iter(),

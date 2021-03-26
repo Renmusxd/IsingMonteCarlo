@@ -1,6 +1,6 @@
 [package]
 name = "qmc"
-version = "2.16.2"
+version = "3.0.0"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"
@@ -9,7 +9,7 @@ repository = "https://github.com/Renmusxd/IsingMonteCarlo"
 license = "MIT"
 
 [features]
-default = []
+default = ["smallvec/const_generics"]
 # Calculate autocorrelation lengths for various functions of the sampled states.
 autocorrelations = ["rustfft"]
 # Enable nightly features in dependencies

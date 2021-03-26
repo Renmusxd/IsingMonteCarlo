@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 /// Default QMC implementation.
-pub type DefaultQmc<R> = Qmc<R, FastOps>;
+pub type DefaultQmc<R> = Qmc<R, FastOps<2>>;
 
 /// QMC with adjustable variables..
 #[cfg(feature = "const_generics")]

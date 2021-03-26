@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 
 /// Default QMC graph implementation.
-pub type DefaultQmcIsingGraph<R> = QmcIsingGraph<R, FastOps>;
+pub type DefaultQmcIsingGraph<R> = QmcIsingGraph<R, FastOps<2>>;
 
 type VecEdge = Vec<usize>;
 
@@ -53,13 +53,12 @@ pub fn new_qmc(
     cutoff: usize,
     state: Option<Vec<bool>>,
 ) -> DefaultQmcIsingGraph<ThreadRng> {
-    let rng = rand::thread_rng();
     DefaultQmcIsingGraph::<ThreadRng>::new_with_rng(
         edges,
         transverse,
         longitudinal,
         cutoff,
-        rng,
+        rand::thread_rng(),
         state,
     )
 }
@@ -975,7 +974,7 @@ pub mod serialization {
     use super::*;
 
     /// The serializable version of the default QMC graph.
-    pub type DefaultSerializeQmcGraph = SerializeQmcGraph<FastOps>;
+    pub type DefaultSerializeQmcGraph = SerializeQmcGraph<FastOps<2>>;
 
     /// A QMC graph without rng for easy serialization.
     #[derive(Debug, Clone, Serialize, Deserialize)]

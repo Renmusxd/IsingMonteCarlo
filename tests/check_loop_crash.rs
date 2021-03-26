@@ -9,7 +9,7 @@ fn run_single_bond() {
         2,
         vec![(
             0,
-            FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
+            FastOp::<2>::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
         )]
         .into_iter(),
     );
@@ -43,11 +43,11 @@ fn run_double_bond() {
         vec![
             (
                 0,
-                FastOp::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
+                FastOp::<2>::diagonal(smallvec![0, 1], 0, smallvec![false, false], false),
             ),
             (
                 1,
-                FastOp::diagonal(smallvec![1, 2], 1, smallvec![false, false], false),
+                FastOp::<2>::diagonal(smallvec![1, 2], 1, smallvec![false, false], false),
             ),
         ]
         .into_iter(),

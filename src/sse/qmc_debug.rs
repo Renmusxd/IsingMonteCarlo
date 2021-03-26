@@ -57,7 +57,7 @@ pub trait QmcDebug {
     }
 }
 
-impl<O: Op> DebugOps for FastOpsTemplate<O> {}
+impl<O: Op, const N: usize> DebugOps for FastOpsTemplate<O, N> {}
 
 impl<R, M> QmcDebug for QmcIsingGraph<R, M>
 where
