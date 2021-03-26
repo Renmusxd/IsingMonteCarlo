@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
 use std::cmp::{min, Reverse};
 use std::collections::BinaryHeap;
+use std::ops::{Index, IndexMut};
 
 /// Underlying op for storing graph data, good for 2-variable ops.
 pub type FastOp = BasicOp<SmallVec<[usize; 2]>, SmallVec<[bool; 2]>>;
@@ -25,12 +26,16 @@ pub type FastOpN<const N: usize> = BasicOp<SmallVec<[usize; N]>, SmallVec<[bool;
 pub type FastOpsN<const N: usize> = FastOpsTemplate<FastOpN<N>>;
 /// A default implementation of the FastOpNode container, good for 2-variable ops.
 #[cfg(feature = "const_generics")]
-pub type FastOpNodeN<const N: usize> = FastOpNodeTemplate<FastOpN<N>>;
+pub type FastOpNodeN<const N: usize> =
+    FastOpNodeTemplate<FastOpN<N>, LV = SmallVec<[Option<PRel>; N]>>;
 
 /// A fast op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct FastOpsTemplate<O: Op> {
+    // TODO add way to swap out the FastOpNodeTemplate to allow const generics for LV.
+    // right now all FastOpsTemplates pick N=2 for the LinkVars
+    // once const generics have been out for a while can maybe just make it all N dependent.
     pub(crate) ops: Vec<Option<FastOpNodeTemplate<O>>>,
     pub(crate) n: usize,
     pub(crate) p_ends: Option<(usize, usize)>,
@@ -173,26 +178,29 @@ impl<O: Op + Clone> FastOpsTemplate<O> {
     }
 }
 
-// TODO make this const generic somehow? Possible to reuse op::vars type stuff?
-// For each var, (p, relvar)
 type LinkVars = SmallVec<[Option<PRel>; 2]>;
 
 /// A node which contains ops for FastOps.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct FastOpNodeTemplate<O: Op> {
+pub struct FastOpNodeTemplate<O: Op, LV = LinkVars>
+where
+    LV: Index<usize, Output = Option<PRel>> + IndexMut<usize, Output = Option<PRel>>,
+{
     pub(crate) op: O,
     pub(crate) previous_p: Option<usize>,
     pub(crate) next_p: Option<usize>,
-    pub(crate) previous_for_vars: LinkVars,
-    pub(crate) next_for_vars: LinkVars,
+    pub(crate) previous_for_vars: LV,
+    pub(crate) next_for_vars: LV,
 }
 
-impl<O: Op> FastOpNodeTemplate<O> {
-    fn new(op: O, previous_for_vars: LinkVars, next_for_vars: LinkVars) -> Self {
-        let nvars = op.get_vars().len();
-        assert_eq!(previous_for_vars.len(), nvars);
-        assert_eq!(next_for_vars.len(), nvars);
+impl<O: Op, LV> FastOpNodeTemplate<O, LV>
+where
+    LV: Index<usize, Output = Option<PRel>> + IndexMut<usize, Output = Option<PRel>>,
+{
+    fn new(op: O, previous_for_vars: LV, next_for_vars: LV) -> Self {
+        // TODO find way to check that the sizes all line up
+        // --> need a collections len trait but those are blocked by HKT apparently.
         Self {
             op,
             previous_p: None,
@@ -203,7 +211,10 @@ impl<O: Op> FastOpNodeTemplate<O> {
     }
 }
 
-impl<O: Op + Clone> OpNode<O> for FastOpNodeTemplate<O> {
+impl<O: Op + Clone, LV> OpNode<O> for FastOpNodeTemplate<O, LV>
+where
+    LV: Index<usize, Output = Option<PRel>> + IndexMut<usize, Output = Option<PRel>>,
+{
     fn get_op(&self) -> O {
         self.op.clone()
     }
