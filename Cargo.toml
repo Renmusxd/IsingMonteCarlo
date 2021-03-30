@@ -1,6 +1,6 @@
 [package]
 name = "qmc"
-version = "2.16.3"
+version = "2.16.4"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"
@@ -20,6 +20,8 @@ tempering = ["itertools"]
 parallel-tempering = ["rayon", "tempering"]
 # Add graph serialization.
 serialize = ["serde", "rand/serde1", "smallvec/serde"]
+# Add const generics to change sizes of vectors
+const_generics = ["smallvec/const_generics"]
 
 [dependencies]
 rand = "^0.8"
