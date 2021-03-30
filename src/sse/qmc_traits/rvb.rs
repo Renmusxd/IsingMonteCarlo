@@ -741,31 +741,28 @@ where
             let popped = p_heap.pop().unwrap().0;
             debug_assert!(popped <= p);
             if popped >= last_pushed_from {
-                match rvb.get_node_ref(popped) {
-                    Some(node) => {
-                        // Add next ps
-                        let op = node.get_op_ref();
-                        op.get_vars()
-                            .iter()
-                            .cloned()
-                            .zip(op.get_outputs().iter().cloned())
-                            .enumerate()
-                            .filter_map(|(relv, (v, b))| {
-                                var_to_subvar(v).map(|subvar| (relv, subvar, b))
-                            })
-                            .for_each(|(relv, subvar, b)| {
-                                if popped < p {
-                                    substate[subvar] = b;
-                                }
-                                if let Some(prel) = rvb.get_next_p_for_rel_var(relv, node) {
-                                    p_heap.push(Reverse(prel.p));
-                                }
-                            });
-                    }
-                    None => {
-                        unreachable!()
-                    }
-                }
+                if let Some(node) = rvb.get_node_ref(popped) {
+                    // Add next ps
+                    let op = node.get_op_ref();
+                    op.get_vars()
+                        .iter()
+                        .cloned()
+                        .zip(op.get_outputs().iter().cloned())
+                        .enumerate()
+                        .filter_map(|(relv, (v, b))| {
+                            var_to_subvar(v).map(|subvar| (relv, subvar, b))
+                        })
+                        .for_each(|(relv, subvar, b)| {
+                            if popped < p {
+                                substate[subvar] = b;
+                            }
+                            if let Some(prel) = rvb.get_next_p_for_rel_var(relv, node) {
+                                p_heap.push(Reverse(prel.p));
+                            }
+                        });
+                } else {
+                    unreachable!()
+                };
                 last_pushed_from = popped + 1;
             }
         }

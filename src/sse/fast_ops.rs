@@ -371,6 +371,8 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
                 self.ops[p] = Some(node_ref);
             } else {
                 if let Some(node_ref) = old_op_node {
+                    debug_assert_eq!(args.last_p, node_ref.previous_p);
+
                     // Uninstall the old op.
                     // If there's a previous p, point it towards the next one
                     if let Some(last_p) = args.last_p {
@@ -411,6 +413,17 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
                     vars.iter().cloned().enumerate().for_each(|(relv, v)| {
                         // Check the previous node using this variable.
                         let subvar = args.var_to_subvar(v).unwrap();
+                        debug_assert_eq!(
+                            args.last_vars[subvar],
+                            node_ref.previous_for_vars[relv].map(|prel| prel.p),
+                            "P position in args must match op being removed"
+                        );
+                        debug_assert_eq!(
+                            args.last_rels[subvar],
+                            node_ref.previous_for_vars[relv].map(|prel| prel.relv),
+                            "Relative var in args must match op being removed"
+                        );
+
                         if let Some((prev_p_for_v, prev_rel_indx)) =
                             args.last_vars[subvar].zip(args.last_rels[subvar])
                         {
@@ -651,31 +664,147 @@ impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
             }
         };
 
-        // Find starting position.
-        let mut p = self.p_ends.and_then(|(start, pend)| {
-            if pstart <= start {
-                Some(start)
-            } else if start > pend {
-                None
-            } else {
-                // Find the first p with an op.
-                self.ops[pstart..]
+        let last_vars = &mut args.last_vars;
+        let last_rels = &mut args.last_rels;
+        let subvars = args
+            .subvar_mapping
+            .as_ref()
+            .map(|(_, subvars)| subvars.as_slice());
+
+        if let Some(vars) = subvars {
+            let mut p_heap: BinaryHeap<Reverse<usize>> = self.get_instance();
+
+            let prel_gen = last_vars
+                .iter()
+                .cloned()
+                .zip(last_rels.iter().cloned())
+                .map(|(a, b)| a.zip(b));
+            vars.iter().cloned().zip(prel_gen).for_each(|(var, prel)| {
+                if let Some((last_p, last_relv)) = prel {
+                    let node = self.get_node_ref(last_p).unwrap();
+                    let next_p = self.get_next_p_for_rel_var(last_relv, node);
+                    // last_p is final before pstart.
+                    debug_assert!(last_p < pstart);
+                    debug_assert!(next_p.map(|next| next.p >= pstart).unwrap_or(true));
+
+                    // Push the p just inside the pstart-pend range.
+                    if let Some(PRel { p: next_p, .. }) = next_p {
+                        p_heap.push(Reverse(next_p));
+                    }
+                } else if let Some((start, _)) = self.var_ends[var] {
+                    debug_assert!(start.p >= pstart);
+                    p_heap.push(Reverse(start.p));
+                }
+            });
+
+            // pheap includes ops which leave the set of subvars, it's up to f(...) to not make
+            // changes to those. TODO add this to description.
+
+            // Pop from heap, move, repeat.
+            while let Some(p) = p_heap.pop().map(|rp| rp.0) {
+                if p > pend {
+                    break;
+                }
+                // Pop duplicates.
+                while p_heap
+                    .peek()
+                    .map(|rp| rp.0)
+                    .map(|rp| rp <= p)
+                    .unwrap_or(false)
+                {
+                    let popped = p_heap.pop();
+                    debug_assert_eq!(Some(Reverse(p)), popped);
+                }
+                debug_assert!(p_heap.iter().all(|rp| rp.0 > p));
+
+                let node = self.get_node_ref(p).unwrap();
+                // Add next ps
+                let op = node.get_op_ref();
+                // Current op must have at least 1 var which appears in subvars.
+                debug_assert!(op
+                    .get_vars()
                     .iter()
+                    .cloned()
+                    .any(|v| args.var_to_subvar(v).is_some()));
+
+                op.get_vars()
+                    .iter()
+                    .cloned()
                     .enumerate()
-                    .find(|(_, op)| op.is_some())
-                    .map(|(x, _)| x + pstart)
-            }
-        });
-        while let Some(node_p) = p {
-            if node_p > pend {
-                break;
-            } else {
-                let ret = self.mutate_p(|s, op, t| f(s, op.unwrap(), node_p, t), node_p, t, args);
+                    .filter_map(|(relv, v)| args.var_to_subvar(v).map(|_| relv))
+                    .for_each(|relv| {
+                        if let Some(prel) = self.get_next_p_for_rel_var(relv, node) {
+                            p_heap.push(Reverse(prel.p));
+                        }
+                    });
+                // While the last_vars and last_rels should be correct (since all within subvars)
+                // it's possible that the last_p is incorrect since it was out of the subvars. To
+                // work around this we restrict f to not be able to remove ops.
+                let last_p = self.get_previous_p(node);
+                // If there's a disagreement is must be because the previous op had none of the
+                // focused subvars.
+                debug_assert!(
+                    {
+                        if last_p.is_none() {
+                            args.last_p.is_none()
+                        } else {
+                            true
+                        }
+                    },
+                    "The graph claims there are no prior ops but the args claim otherwise."
+                );
+                debug_assert!(
+                    {
+                        if last_p != args.last_p {
+                            let last_node = self.get_node_ref(last_p.unwrap()).unwrap();
+                            last_node
+                                .get_op_ref()
+                                .get_vars()
+                                .iter()
+                                .cloned()
+                                .all(|v| args.var_to_subvar(v).is_none())
+                        } else {
+                            true
+                        }
+                    },
+                    "Args and graph disagree on last_p even though last op overlaps with subvars."
+                );
+
+                args.last_p = last_p;
+
+                let ret = self.mutate_p(|s, op, t| f(s, op.unwrap(), p, t), p, t, args);
                 t = ret.0;
                 args = ret.1;
+            }
+            self.return_instance(p_heap);
+        } else {
+            // Find starting position.
+            let mut p = self.p_ends.and_then(|(start, pend)| {
+                if pstart <= start {
+                    Some(start)
+                } else if start > pend {
+                    None
+                } else {
+                    // Find the first p with an op.
+                    self.ops[pstart..]
+                        .iter()
+                        .enumerate()
+                        .find(|(_, op)| op.is_some())
+                        .map(|(x, _)| x + pstart)
+                }
+            });
+            while let Some(node_p) = p {
+                if node_p > pend {
+                    break;
+                } else {
+                    let ret =
+                        self.mutate_p(|s, op, t| f(s, op.unwrap(), node_p, t), node_p, t, args);
+                    t = ret.0;
+                    args = ret.1;
 
-                let node = self.ops[node_p].as_ref().unwrap();
-                p = node.next_p;
+                    let node = self.ops[node_p].as_ref().unwrap();
+                    p = node.next_p;
+                }
             }
         }
         self.return_args(args);
