@@ -86,6 +86,9 @@ pub mod parallel_tempering;
 /// A default hamiltonian class for carrying around functions.
 pub(crate) mod ham;
 
+/// Allocators for FastOps
+pub mod fast_op_alloc;
+
 /// Debugging stuff.
 pub mod qmc_debug;
 

@@ -1,8 +1,9 @@
+use crate::sse::fast_op_alloc::{DefaultFastOpAllocator, FastOpAllocator};
 use crate::sse::qmc_ising::IsingManager;
 use crate::sse::qmc_runner::QmcManager;
 use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
-use crate::util::allocator::{Allocator, Factory};
+use crate::util::allocator::Factory;
 use crate::util::bondcontainer::BondContainer;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,7 @@ pub type FastOpNodeN<const N: usize> = FastOpNodeTemplate<FastOpN<N>, SmallVec<[
 /// A fast op container.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct FastOpsTemplate<O: Op> {
+pub struct FastOpsTemplate<O: Op, ALLOC: FastOpAllocator = DefaultFastOpAllocator> {
     // TODO add way to swap out the FastOpNodeTemplate to allow const generics for LV.
     // right now all FastOpsTemplates pick N=2 for the LinkVars
     // once const generics have been out for a while can maybe just make it all N dependent.
@@ -43,40 +44,35 @@ pub struct FastOpsTemplate<O: Op> {
     // Optional bond counting.
     bond_counters: Option<Vec<usize>>,
 
-    // Allocators to save malloc calls.
-    usize_alloc: Allocator<Vec<usize>>,
-    bool_alloc: Allocator<Vec<bool>>,
-    opside_alloc: Allocator<Vec<OpSide>>,
-    leg_alloc: Allocator<Vec<Leg>>,
-    option_usize_alloc: Allocator<Vec<Option<usize>>>,
-    f64_alloc: Allocator<Vec<f64>>,
-    bond_container_alloc: Allocator<BondContainer<usize>>,
-    bond_container_varpos_alloc: Allocator<BondContainer<VarPos>>,
-    binary_heap_alloc: Allocator<BinaryHeap<Reverse<usize>>>,
+    // Allocator
+    alloc: ALLOC,
 }
 
-impl<O: Op + Clone> FastOpsTemplate<O> {
-    fn new_from_nvars_and_nbonds(nvars: usize, nbonds: Option<usize>) -> Self {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> FastOpsTemplate<O, ALLOC> {
+    /// A new manager which can handle nvars and is optimized for nbonds, will allocate memory using
+    /// the given allocator.
+    pub fn new_from_nvars_and_nbonds_and_alloc(
+        nvars: usize,
+        nbonds: Option<usize>,
+        alloc: ALLOC,
+    ) -> Self {
         Self {
             ops: vec![],
             n: 0,
             p_ends: None,
             var_ends: vec![None; nvars],
             bond_counters: nbonds.map(|nbonds| vec![0; nbonds]),
-            // Set bounds to make sure there are not "leaks"
-            usize_alloc: Allocator::new_with_max_in_flight(10),
-            bool_alloc: Allocator::new_with_max_in_flight(2),
-            opside_alloc: Allocator::new_with_max_in_flight(1),
-            leg_alloc: Allocator::new_with_max_in_flight(1),
-            option_usize_alloc: Allocator::new_with_max_in_flight(4),
-            f64_alloc: Allocator::new_with_max_in_flight(1),
-            bond_container_alloc: Allocator::new_with_max_in_flight(2),
-            bond_container_varpos_alloc: Allocator::new_with_max_in_flight(2),
-            binary_heap_alloc: Allocator::new_with_max_in_flight(1),
+            alloc,
         }
     }
 
-    fn new_from_nvars(nvars: usize) -> Self {
+    /// A new manager which can handle nvars and is optimized for nbonds.
+    pub fn new_from_nvars_and_nbonds(nvars: usize, nbonds: Option<usize>) -> Self {
+        Self::new_from_nvars_and_nbonds_and_alloc(nvars, nbonds, Default::default())
+    }
+
+    /// New manager which can handle nvars
+    pub fn new_from_nvars(nvars: usize) -> Self {
         Self::new_from_nvars_and_nbonds(nvars, None)
     }
 
@@ -303,7 +299,7 @@ impl MutateArgs for FastOpMutateArgs {
     }
 }
 
-impl<O: Op + Clone> DiagonalSubsection for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTemplate<O, ALLOC> {
     type Args = FastOpMutateArgs;
 
     fn mutate_p<T, F>(&mut self, f: F, p: usize, t: T, mut args: Self::Args) -> (T, Self::Args)
@@ -1185,7 +1181,7 @@ fn p_crosses(pstart: usize, pend: usize, psel: usize) -> bool {
     }
 }
 
-impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalUpdater for FastOpsTemplate<O, ALLOC> {
     fn mutate_ps<F, T>(&mut self, pstart: usize, pend: usize, t: T, f: F) -> T
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
@@ -1241,9 +1237,9 @@ impl<O: Op + Clone> DiagonalUpdater for FastOpsTemplate<O> {
     }
 }
 
-impl<O: Op + Clone> HeatBathDiagonalUpdater for FastOpsTemplate<O> {}
+impl<O: Op + Clone, ALLOC: FastOpAllocator> HeatBathDiagonalUpdater for FastOpsTemplate<O, ALLOC> {}
 
-impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> OpContainerConstructor for FastOpsTemplate<O, ALLOC> {
     fn new(nvars: usize) -> Self {
         Self::new_from_nvars(nvars)
     }
@@ -1253,7 +1249,7 @@ impl<O: Op + Clone> OpContainerConstructor for FastOpsTemplate<O> {
     }
 }
 
-impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> OpContainer for FastOpsTemplate<O, ALLOC> {
     type Op = O;
 
     fn get_cutoff(&self) -> usize {
@@ -1319,7 +1315,7 @@ impl<O: Op + Clone> OpContainer for FastOpsTemplate<O> {
     }
 }
 
-impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> LoopUpdater for FastOpsTemplate<O, ALLOC> {
     type Node = FastOpNodeTemplate<O>;
 
     fn get_node_ref(&self, p: usize) -> Option<&Self::Node> {
@@ -1369,96 +1365,104 @@ impl<O: Op + Clone> LoopUpdater for FastOpsTemplate<O> {
     }
 }
 
-impl<O: Op + Clone> Factory<Vec<bool>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<bool>> for FastOpsTemplate<O, ALLOC> {
     fn get_instance(&mut self) -> Vec<bool> {
-        self.bool_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: Vec<bool>) {
-        self.bool_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
 
-impl<O: Op + Clone> Factory<Vec<usize>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<usize>> for FastOpsTemplate<O, ALLOC> {
     fn get_instance(&mut self) -> Vec<usize> {
-        self.usize_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: Vec<usize>) {
-        self.usize_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
 
-impl<O: Op + Clone> Factory<Vec<Option<usize>>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<Option<usize>>>
+    for FastOpsTemplate<O, ALLOC>
+{
     fn get_instance(&mut self) -> Vec<Option<usize>> {
-        self.option_usize_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: Vec<Option<usize>>) {
-        self.option_usize_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
 
-impl<O: Op + Clone> Factory<Vec<OpSide>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<OpSide>> for FastOpsTemplate<O, ALLOC> {
     fn get_instance(&mut self) -> Vec<OpSide> {
-        self.opside_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: Vec<OpSide>) {
-        self.opside_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
-impl<O: Op + Clone> Factory<Vec<Leg>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<Leg>> for FastOpsTemplate<O, ALLOC> {
     fn get_instance(&mut self) -> Vec<Leg> {
-        self.leg_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: Vec<Leg>) {
-        self.leg_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
 
-impl<O: Op + Clone> Factory<Vec<f64>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<f64>> for FastOpsTemplate<O, ALLOC> {
     fn get_instance(&mut self) -> Vec<f64> {
-        self.f64_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: Vec<f64>) {
-        self.f64_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
-impl<O: Op + Clone> Factory<BondContainer<usize>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<BondContainer<usize>>
+    for FastOpsTemplate<O, ALLOC>
+{
     fn get_instance(&mut self) -> BondContainer<usize> {
-        self.bond_container_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: BondContainer<usize>) {
-        self.bond_container_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
-impl<O: Op + Clone> Factory<BondContainer<VarPos>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<BondContainer<VarPos>>
+    for FastOpsTemplate<O, ALLOC>
+{
     fn get_instance(&mut self) -> BondContainer<VarPos> {
-        self.bond_container_varpos_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: BondContainer<VarPos>) {
-        self.bond_container_varpos_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
 
-impl<O: Op + Clone> Factory<BinaryHeap<Reverse<usize>>> for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<BinaryHeap<Reverse<usize>>>
+    for FastOpsTemplate<O, ALLOC>
+{
     fn get_instance(&mut self) -> BinaryHeap<Reverse<usize>> {
-        self.binary_heap_alloc.get_instance()
+        self.alloc.get_instance()
     }
 
     fn return_instance(&mut self, t: BinaryHeap<Reverse<usize>>) {
-        self.binary_heap_alloc.return_instance(t)
+        self.alloc.return_instance(t)
     }
 }
 
-impl<O: Op + Clone> ClusterUpdater for FastOpsTemplate<O> {}
+impl<O: Op + Clone, ALLOC: FastOpAllocator> ClusterUpdater for FastOpsTemplate<O, ALLOC> {}
 
-impl<O: Op + Clone> RvbUpdater for FastOpsTemplate<O> {
+impl<O: Op + Clone, ALLOC: FastOpAllocator> RvbUpdater for FastOpsTemplate<O, ALLOC> {
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {
         let mut p_and_rel = self.get_first_p_for_var(var);
         while let Some(PRel {
@@ -1493,5 +1497,5 @@ impl<O: Op + Clone> RvbUpdater for FastOpsTemplate<O> {
     }
 }
 
-impl<O: Op> IsingManager for FastOpsTemplate<O> {}
-impl<O: Op> QmcManager for FastOpsTemplate<O> {}
+impl<O: Op, ALLOC: FastOpAllocator> IsingManager for FastOpsTemplate<O, ALLOC> {}
+impl<O: Op, ALLOC: FastOpAllocator> QmcManager for FastOpsTemplate<O, ALLOC> {}

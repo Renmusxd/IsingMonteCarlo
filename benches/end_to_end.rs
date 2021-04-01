@@ -32,15 +32,16 @@ fn two_d_periodic(l: usize) -> Vec<(Edge, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use qmc::sse::fast_op_alloc::{DefaultFastOpAllocator, SwitchableFastOpAllocator};
     use qmc::sse::fast_ops::*;
     use qmc::sse::qmc_ising::QmcIsingGraph;
     use qmc::sse::*;
+    use rand::prelude::*;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
-    use test::Bencher;
     use rand_chacha::ChaChaRng;
     use rand_isaac::Isaac64Rng;
-    use rand::prelude::*;
+    use test::Bencher;
 
     #[bench]
     fn one_d(b: &mut Bencher) {
@@ -92,7 +93,6 @@ mod tests {
         g.timesteps(1000, beta);
         b.iter(|| g.timesteps(1, beta));
     }
-
 
     #[bench]
     fn one_d_isaac(b: &mut Bencher) {
@@ -439,6 +439,79 @@ mod tests {
             rng,
             None,
         );
+        g.set_run_rvb(true);
+
+        let beta = 100.0;
+        g.timesteps(1000, beta);
+        b.iter(|| g.timesteps(1, beta));
+    }
+
+    type SwitchFastOp = FastOpsTemplate<FastOp, SwitchableFastOpAllocator>;
+    type SwitchableQMC = QmcIsingGraph<SmallRng, SwitchFastOp>;
+
+    #[bench]
+    fn two_d_rvb_32_switch_allocator(b: &mut Bencher) {
+        let l = 32;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g = SwitchableQMC::new_with_rng_with_manager_hook(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+            |nvars, nbonds| {
+                let alloc = SwitchableFastOpAllocator::new(Some(DefaultFastOpAllocator::default()));
+                SwitchFastOp::new_from_nvars_and_nbonds_and_alloc(nvars, Some(nbonds), alloc)
+            },
+        );
+        g.set_run_rvb(true);
+
+        let beta = 10.0;
+        g.timesteps(100, beta);
+        b.iter(|| g.timesteps(1, beta));
+    }
+
+    #[bench]
+    fn two_d_rvb_cold_8_switch_allocator(b: &mut Bencher) {
+        let l = 8;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g = SwitchableQMC::new_with_rng_with_manager_hook(
+            two_d_periodic(l),
+            1.,
+            0.,
+            l,
+            rng,
+            None,
+            |nvars, nbonds| {
+                let alloc = SwitchableFastOpAllocator::new(Some(DefaultFastOpAllocator::default()));
+                SwitchFastOp::new_from_nvars_and_nbonds_and_alloc(nvars, Some(nbonds), alloc)
+            },
+        );
+        g.set_run_rvb(true);
+
+        let beta = 100.0;
+        g.timesteps(1000, beta);
+        b.iter(|| g.timesteps(1, beta));
+    }
+
+    #[bench]
+    fn two_d_rvb_32_no_allocator(b: &mut Bencher) {
+        let l = 32;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g = SwitchableQMC::new_with_rng(two_d_periodic(l), 1., 0., l, rng, None);
+        g.set_run_rvb(true);
+
+        let beta = 10.0;
+        g.timesteps(100, beta);
+        b.iter(|| g.timesteps(1, beta));
+    }
+
+    #[bench]
+    fn two_d_rvb_cold_8_no_allocator(b: &mut Bencher) {
+        let l = 8;
+        let rng = SmallRng::seed_from_u64(1234);
+        let mut g = SwitchableQMC::new_with_rng(two_d_periodic(l), 1., 0., l, rng, None);
         g.set_run_rvb(true);
 
         let beta = 100.0;

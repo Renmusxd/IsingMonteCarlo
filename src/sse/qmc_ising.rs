@@ -75,15 +75,20 @@ pub fn new_qmc_from_graph<R: Rng>(
 }
 
 impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
-    /// Make a new QMC graph with an rng instance.
-    pub fn new_with_rng<Rg: Rng>(
+    /// Make a new QMC graph with an rng instance and a function to construct the op manager from
+    /// the number of variables and number of interactions / bonds.
+    pub fn new_with_rng_with_manager_hook<F, Rg: Rng>(
         edges: Vec<(Edge, f64)>,
         transverse: f64,
         longitudinal: f64,
         cutoff: usize,
         mut rng: Rg,
         state: Option<Vec<bool>>,
-    ) -> QmcIsingGraph<Rg, M> {
+        f: F,
+    ) -> QmcIsingGraph<Rg, M>
+    where
+        F: Fn(usize, usize) -> M,
+    {
         let nvars = edges.iter().map(|((a, b), _)| max(*a, *b)).max().unwrap() + 1;
         let edges = edges
             .into_iter()
@@ -95,7 +100,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
         // Allow for extra bonds in case this is used in tempering.
         let nbonds = edges.len() + nvars + nvars;
-        let mut ops = M::new_with_bonds(nvars, nbonds);
+        let mut ops = f(nvars, nbonds);
         ops.set_cutoff(cutoff);
 
         let state = match state {
@@ -120,6 +125,26 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
             rvb_clusters_counted: 0,
             bond_weights: None,
         }
+    }
+
+    /// Make a new QMC graph with an rng instance.
+    pub fn new_with_rng<Rg: Rng>(
+        edges: Vec<(Edge, f64)>,
+        transverse: f64,
+        longitudinal: f64,
+        cutoff: usize,
+        rng: Rg,
+        state: Option<Vec<bool>>,
+    ) -> QmcIsingGraph<Rg, M> {
+        Self::new_with_rng_with_manager_hook(
+            edges,
+            transverse,
+            longitudinal,
+            cutoff,
+            rng,
+            state,
+            |nvars, nbonds| M::new_with_bonds(nvars, nbonds),
+        )
     }
 
     /// Make a new QMC graph with an rng instance.
