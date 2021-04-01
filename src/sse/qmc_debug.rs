@@ -1,3 +1,4 @@
+use crate::sse::fast_op_alloc::FastOpAllocator;
 use crate::sse::fast_ops::FastOpsTemplate;
 use crate::sse::qmc_ising::{IsingManager, QmcIsingGraph};
 use crate::sse::*;
@@ -57,7 +58,7 @@ pub trait QmcDebug {
     }
 }
 
-impl<O: Op> DebugOps for FastOpsTemplate<O> {}
+impl<O: Op, ALLOC: FastOpAllocator> DebugOps for FastOpsTemplate<O, ALLOC> {}
 
 impl<R, M> QmcDebug for QmcIsingGraph<R, M>
 where

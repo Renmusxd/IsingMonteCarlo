@@ -44,22 +44,36 @@ where
 }
 
 impl<R: Rng, M: QmcManager> Qmc<R, M> {
-    /// Make a new QMC instance with nvars.
+    /// Make a new QMC instance with `nvars`.
     pub fn new(nvars: usize, mut rng: R, do_loop_updates: bool) -> Self {
         let state = make_random_spin_state(nvars, &mut rng);
         Self::new_with_state(nvars, rng, state, do_loop_updates)
     }
 
-    /// Make a new QMC instance with nvars.
+    /// Make a new QMC instance with `nvars`.
     pub fn new_with_state<I: Into<Vec<bool>>>(
         nvars: usize,
         rng: R,
         state: I,
         do_loop_updates: bool,
     ) -> Self {
+        Self::new_with_state_with_manager_hook(nvars, rng, state, do_loop_updates, M::new)
+    }
+
+    /// Make a new QMC instance with `nvars`. Allows hooking into manager construction with `f`.
+    pub fn new_with_state_with_manager_hook<F, I: Into<Vec<bool>>>(
+        nvars: usize,
+        rng: R,
+        state: I,
+        do_loop_updates: bool,
+        f: F,
+    ) -> Self
+    where
+        F: Fn(usize) -> M,
+    {
         Self {
             bonds: Vec::default(),
-            manager: Some(M::new(nvars)),
+            manager: Some(f(nvars)),
             cutoff: nvars,
             state: Some(state.into()),
             rng: Some(rng),
