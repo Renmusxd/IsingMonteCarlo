@@ -143,7 +143,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
             cutoff,
             rng,
             state,
-            |nvars, nbonds| M::new_with_bonds(nvars, nbonds),
+            M::new_with_bonds,
         )
     }
 
@@ -830,10 +830,10 @@ where
                 .try_iterate_ops(0, self.get_cutoff(), (), |_, op, _, _| {
                     let w = Self::hamiltonian(
                         &ham_info,
-                        op.get_vars().as_ref(),
+                        op.get_vars(),
                         op.get_bond(),
-                        op.get_inputs().as_ref(),
-                        op.get_outputs().as_ref(),
+                        op.get_inputs(),
+                        op.get_outputs(),
                     );
                     if w.abs() > std::f64::EPSILON {
                         Ok(())
