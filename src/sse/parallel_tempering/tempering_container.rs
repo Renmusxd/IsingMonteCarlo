@@ -687,6 +687,33 @@ pub mod serialization {
     }
 
     impl<R1, R2, M> From<TemperingContainer<R1, QmcIsingGraph<R2, M>>>
+        for (SerializeTemperingContainer<M>, R1, Vec<R2>)
+    where
+        R1: Rng,
+        R2: Rng,
+        M: IsingManager,
+    {
+        fn from(
+            tc: TemperingContainer<R1, QmcIsingGraph<R2, M>>,
+        ) -> (SerializeTemperingContainer<M>, R1, Vec<R2>) {
+            let (graphs, rngs) = tc
+                .graphs
+                .into_iter()
+                .map(|(g, beta)| {
+                    let (sg, rng) = g.into();
+                    ((sg, beta), rng)
+                })
+                .unzip();
+
+            let sg = SerializeTemperingContainer {
+                graphs,
+                total_swaps: tc.total_swaps,
+            };
+            (sg, tc.rng.unwrap(), rngs)
+        }
+    }
+
+    impl<R1, R2, M> From<TemperingContainer<R1, QmcIsingGraph<R2, M>>>
         for SerializeTemperingContainer<M>
     where
         R1: Rng,

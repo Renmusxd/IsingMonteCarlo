@@ -402,7 +402,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 enum InteractionType {
     Full(bool),
@@ -410,7 +410,7 @@ enum InteractionType {
 }
 
 /// Interactions in QMC.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct Interaction {
     interaction_type: InteractionType,
@@ -707,6 +707,29 @@ where
 {
     fn from(g: QmcIsingGraph<R, M>) -> Self {
         g.into_qmc()
+    }
+}
+
+impl<R, M> Clone for Qmc<R, M>
+where
+    R: Rng + Clone,
+    M: QmcManager + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            bonds: self.bonds.clone(),
+            manager: self.manager.clone(),
+            cutoff: self.cutoff,
+            state: self.state.clone(),
+            rng: self.rng.clone(),
+            has_cluster_edges: self.has_cluster_edges,
+            breaks_ising_symmetry: self.breaks_ising_symmetry,
+            do_loop_updates: self.do_loop_updates,
+            offset: self.offset,
+            non_const_diags: self.non_const_diags.clone(),
+            do_heatbath: self.do_heatbath,
+            bond_weights: self.bond_weights.clone(),
+        }
     }
 }
 

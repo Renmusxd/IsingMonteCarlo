@@ -1,6 +1,6 @@
 [package]
 name = "qmc"
-version = "2.17.1"
+version = "2.17.2"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2018"
 description = "Quantum Monte Carlo simulations in Rust"

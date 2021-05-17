@@ -1047,13 +1047,13 @@ pub mod serialization {
         }
     }
 
-    impl<R, M> From<QmcIsingGraph<R, M>> for SerializeQmcGraph<M>
+    impl<R, M> From<QmcIsingGraph<R, M>> for (SerializeQmcGraph<M>, R)
     where
         R: Rng,
         M: IsingManager,
     {
-        fn from(g: QmcIsingGraph<R, M>) -> SerializeQmcGraph<M> {
-            SerializeQmcGraph {
+        fn from(g: QmcIsingGraph<R, M>) -> (SerializeQmcGraph<M>, R) {
+            let sg = SerializeQmcGraph {
                 edges: g.edges,
                 transverse: g.transverse,
                 longitudinal: g.longitudinal,
@@ -1067,7 +1067,19 @@ pub mod serialization {
                 total_rvb_successes: g.total_rvb_successes,
                 rvb_clusters_counted: g.rvb_clusters_counted,
                 bond_weights: g.bond_weights,
-            }
+            };
+            (sg, g.rng.unwrap())
+        }
+    }
+
+    impl<R, M> From<QmcIsingGraph<R, M>> for SerializeQmcGraph<M>
+    where
+        R: Rng,
+        M: IsingManager,
+    {
+        fn from(g: QmcIsingGraph<R, M>) -> SerializeQmcGraph<M> {
+            let (sg, _) = g.into();
+            sg
         }
     }
 
