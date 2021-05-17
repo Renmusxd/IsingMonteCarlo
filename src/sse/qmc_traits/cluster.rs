@@ -199,7 +199,7 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
 
     let node = c.get_node_ref(p).unwrap();
     let op = node.get_op_ref();
-    if !op.is_constant() {
+    if !is_valid_cluster_edge_op(op) {
         // Add all legs
         debug_assert_eq!(boundaries.at(p), (&None, &None));
         let inputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Inputs));
