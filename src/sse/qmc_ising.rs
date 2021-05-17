@@ -272,7 +272,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
     }
 
     /// Take a single offdiagonal step.
-    pub fn single_offdiagonal_step(&mut self) {
+    pub fn single_cluster_step(&mut self) {
         let mut state = self.state.take().unwrap();
         let nvars = self.get_nvars();
         let mut manager = self.op_manager.take().unwrap();
@@ -319,7 +319,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
     }
 
     /// Perform a single rvb step.
-    pub fn single_rvb_step(&mut self) -> Result<(), String> {
+    pub fn single_rvb_step(&mut self) {
         let mut state = self.state.take().unwrap();
         if self.classical_bonds.is_none() {
             self.make_classical_bonds(state.len());
@@ -370,12 +370,14 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
             edges: &self.edges,
         };
 
+        // Average cluster size is always 2.
+        let steps_to_run = (state.len() + 1) / 2;
         if self.longitudinal.abs() > std::f64::EPSILON {
             let long = self.longitudinal;
             manager.rvb_update_with_ising_weight(
                 &edges,
                 &mut state,
-                1,
+                steps_to_run,
                 |bond, sa, sb| {
                     let (va, vb) = edges.vars_for_bond(bond);
                     ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
@@ -400,7 +402,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
             manager.rvb_update(
                 &edges,
                 &mut state,
-                1,
+                steps_to_run,
                 |bond, sa, sb| {
                     let (va, vb) = edges.vars_for_bond(bond);
                     ham.hamiltonian(&[va, vb], bond, &[sa, sb], &[sa, sb])
@@ -411,7 +413,6 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
         self.op_manager = Some(manager);
         self.state = Some(state);
-        Ok(())
     }
 
     /// Build classical bonds list.
