@@ -6,18 +6,36 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
+/// Location in imaginary time guarenteed to have an operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+pub struct OpIndex {
+    index: usize,
+}
+
+impl Into<usize> for OpIndex {
+    fn into(self) -> usize {
+        self.index
+    }
+}
+impl From<usize> for OpIndex {
+    fn from(i: usize) -> Self {
+        Self { index: i }
+    }
+}
+
 /// The location in imaginary time (p) and the relative index of the variable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct PRel {
-    /// Position in imaginary time.
-    pub p: usize,
+    /// Lookup location of operator
+    pub p: OpIndex,
     /// Reltive index of variable.
     pub relv: usize,
 }
 
-impl From<(usize, usize)> for PRel {
-    fn from((p, relv): (usize, usize)) -> Self {
+impl From<(OpIndex, usize)> for PRel {
+    fn from((p, relv): (OpIndex, usize)) -> Self {
         Self { p, relv }
     }
 }
@@ -27,37 +45,63 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     /// The type used to contain the Op and handle movement around the worldlines.
     type Node: OpNode<Self::Op>;
 
+    /// Get the imaginary time value `p` associated with an opindex.
+    fn get_p_for_opindex(&self, loc: OpIndex) -> usize;
+
     /// Get a ref to a node at position p
     fn get_node_ref(&self, p: usize) -> Option<&Self::Node>;
     /// Get a mutable ref to the node at position p
     fn get_node_mut(&mut self, p: usize) -> Option<&mut Self::Node>;
 
-    /// Get the first occupied p if it exists.
-    fn get_first_p(&self) -> Option<usize>;
-    /// Get the last occupied p if it exists.
-    fn get_last_p(&self) -> Option<usize>;
-    /// Get the first p occupied which covers variable `var`, also returns the relative index.
-    fn get_first_p_for_var(&self, var: usize) -> Option<PRel>;
-    /// Get the last p occupied which covers variable `var`, also returns the relative index.
-    fn get_last_p_for_var(&self, var: usize) -> Option<PRel>;
+    /// Get a ref to a node at position p
+    fn get_node_ref_loc(&self, loc: OpIndex) -> &Self::Node;
+    /// Get a mutable ref to the node at position p
+    fn get_node_mut_loc(&mut self, loc: OpIndex) -> &mut Self::Node;
 
+    /// Get the first occupied p if it exists.
+    fn get_first_loc(&self) -> Option<OpIndex>;
+    /// Get the last occupied p if it exists.
+    fn get_last_loc(&self) -> Option<OpIndex>;
+    /// Get the first occupied p if it exists.
+    fn get_first_p(&self) -> Option<usize> {
+        self.get_first_loc().map(|loc| self.get_p_for_opindex(loc))
+    }
+    /// Get the last occupied p if it exists.
+    fn get_last_p(&self) -> Option<usize> {
+        self.get_last_loc().map(|loc| self.get_p_for_opindex(loc))
+    }
+    /// Get the first p occupied which covers variable `var`, also returns the relative index.
+    fn get_first_prel_for_var(&self, var: usize) -> Option<PRel>;
+    /// Get the last p occupied which covers variable `var`, also returns the relative index.
+    fn get_last_prel_for_var(&self, var: usize) -> Option<PRel>;
+
+    /// Get the previous occupied index compared to `node`.
+    fn get_previous_loc(&self, node: &Self::Node) -> Option<OpIndex>;
+    /// Get the next occupied index compared to `node`.
+    fn get_next_loc(&self, node: &Self::Node) -> Option<OpIndex>;
     /// Get the previous occupied p compared to `node`.
-    fn get_previous_p(&self, node: &Self::Node) -> Option<usize>;
+    fn get_previous_p(&self, node: &Self::Node) -> Option<usize> {
+        self.get_previous_loc(node)
+            .map(|loc| self.get_p_for_opindex(loc))
+    }
     /// Get the next occupied p compared to `node`.
-    fn get_next_p(&self, node: &Self::Node) -> Option<usize>;
+    fn get_next_p(&self, node: &Self::Node) -> Option<usize> {
+        self.get_next_loc(node)
+            .map(|loc| self.get_p_for_opindex(loc))
+    }
 
     /// Get the previous p for a given var, takes the relative var index in node. Also returns the
     /// new relative var index.
-    fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
+    fn get_previous_prel_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
     /// Get the next p for a given var, takes the relative var index in node. Also returns the new
     /// relative var index.
-    fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
+    fn get_next_prel_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
 
     /// Get the previous p for a given var.
     fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, &str> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
-            Ok(self.get_previous_p_for_rel_var(relvar, node))
+            Ok(self.get_previous_prel_for_rel_var(relvar, node))
         } else {
             Err("Variable not present on given node")
         }
@@ -66,29 +110,34 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, &str> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
-            Ok(self.get_next_p_for_rel_var(relvar, node))
+            Ok(self.get_next_prel_for_rel_var(relvar, node))
         } else {
             Err("Variable not present on given node")
         }
     }
 
+    /// Get the nth occupied location.
+    fn get_nth_loc(&self, n: usize) -> Option<OpIndex> {
+        let acc = self.get_first_loc().map(|loc| loc);
+        let res = (0..n).try_fold(acc, |loc, _| match loc {
+            Some(opindex) => Ok((self.get_next_loc(self.get_node_ref_loc(opindex)))),
+            None => Err(()),
+        });
+        match res {
+            Ok(opindex) => opindex,
+            _ => None,
+        }
+    }
+
     /// Get the nth occupied p.
-    fn get_nth_p(&self, n: usize) -> usize {
-        let acc = self
-            .get_first_p()
-            .map(|p| (p, self.get_node_ref(p).unwrap()))
-            .unwrap();
-        (0..n)
-            .fold(acc, |(_, opnode), _| {
-                let p = self.get_next_p(opnode).unwrap();
-                (p, self.get_node_ref(p).unwrap())
-            })
-            .0
+    fn get_nth_p(&self, n: usize) -> Option<usize> {
+        self.get_nth_loc(n)
+            .map(|opindex| self.get_p_for_opindex(opindex))
     }
 
     /// Returns if a given variable is covered by any ops.
     fn does_var_have_ops(&self, var: usize) -> bool {
-        self.get_first_p_for_var(var).is_some()
+        self.get_first_prel_for_var(var).is_some()
     }
 
     /// Make a loop update to the graph with thread rng.
@@ -272,19 +321,19 @@ where
             relv: next_rel,
         } = match exit_leg {
             (var, OpSide::Outputs) => {
-                let next_var_op = l.get_next_p_for_rel_var(var, sel_opnode);
+                let next_var_op = l.get_next_prel_for_rel_var(var, sel_opnode);
                 next_var_op.unwrap_or_else(|| {
                     // Adjust the state to reflect new output.
                     state[sel_op.get_vars()[var]] = sel_op.get_outputs()[var];
-                    l.get_first_p_for_var(sel_op.get_vars()[var]).unwrap()
+                    l.get_first_prel_for_var(sel_op.get_vars()[var]).unwrap()
                 })
             }
             (var, OpSide::Inputs) => {
-                let prev_var_op = l.get_previous_p_for_rel_var(var, sel_opnode);
+                let prev_var_op = l.get_previous_prel_for_rel_var(var, sel_opnode);
                 prev_var_op.unwrap_or_else(|| {
                     // Adjust the state to reflect new input.
                     state[sel_op.get_vars()[var]] = sel_op.get_inputs()[var];
-                    l.get_last_p_for_var(sel_op.get_vars()[var]).unwrap()
+                    l.get_last_prel_for_var(sel_op.get_vars()[var]).unwrap()
                 })
             }
         };

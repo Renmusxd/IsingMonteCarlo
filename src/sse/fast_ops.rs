@@ -5,6 +5,7 @@ use crate::sse::qmc_traits::*;
 use crate::sse::qmc_types::{Leg, OpSide};
 use crate::util::allocator::Factory;
 use crate::util::bondcontainer::BondContainer;
+use crate::util::typed_vec::TypedVec;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
@@ -36,7 +37,9 @@ pub struct FastOpsTemplate<O: Op, ALLOC: FastOpAllocator = DefaultFastOpAllocato
     // TODO add way to swap out the FastOpNodeTemplate to allow const generics for LV.
     // right now all FastOpsTemplates pick N=2 for the LinkVars
     // once const generics have been out for a while can maybe just make it all N dependent.
-    pub(crate) ops: Vec<Option<FastOpNodeTemplate<O>>>,
+    pub(crate) ops: TypedVec<OpIndex, (usize, FastOpNodeTemplate<O>)>,
+    pub(crate) op_indices: Vec<Option<OpIndex>>,
+
     pub(crate) n: usize,
     pub(crate) p_ends: Option<(usize, usize)>,
     pub(crate) var_ends: Vec<Option<(PRel, PRel)>>,
@@ -57,7 +60,8 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> FastOpsTemplate<O, ALLOC> {
         alloc: ALLOC,
     ) -> Self {
         Self {
-            ops: vec![],
+            ops: Default::default(),
+            op_indices: Default::default(),
             n: 0,
             p_ends: None,
             var_ends: vec![None; nvars],
@@ -97,7 +101,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> FastOpsTemplate<O, ALLOC> {
         }
         let opslen = ps_and_ops.iter().map(|(p, _)| p).max().unwrap() + 1;
         self.ops.clear();
-        self.ops.resize_with(opslen, || None);
+        self.op_indices.resize_with(opslen, || None);
         self.var_ends.clear();
         self.var_ends.resize_with(nvars, || None);
         self.p_ends = None;
@@ -110,16 +114,18 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> FastOpsTemplate<O, ALLOC> {
 
         let (last_p, last_vars, last_rels) = ps_and_ops.into_iter().fold(
             (last_p, last_vars, last_rels),
-            |(last_p, mut last_vars, mut last_rels), (p, op)| {
+            |(last_p, mut last_vars, mut last_rels), (p, op): (usize, O)| {
                 assert!(last_p.map(|last_p| p > last_p).unwrap_or(true));
 
                 if let Some(last_p) = last_p {
-                    let last_node = self.ops[last_p].as_mut().unwrap();
+                    let last_loc = self.op_indices[last_p].unwrap();
+                    let last_node = &mut self.ops[last_loc].1;
                     last_node.next_p = Some(p);
                 } else {
                     self.p_ends = Some((p, p))
                 }
 
+                // TODO fix this shit and all the other shit.
                 let previous_for_vars = op
                     .get_vars()
                     .iter()
@@ -128,8 +134,9 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> FastOpsTemplate<O, ALLOC> {
                     .map(|(relv, v)| {
                         let last_tup = last_vars[v].zip(last_rels[v]);
                         if let Some((last_p, last_rel)) = last_tup {
-                            let node = self.ops[last_p].as_mut().unwrap();
-                            node.next_for_vars[last_rel] = Some(PRel { p, relv });
+                            let last_loc = self.op_indices[last_p].unwrap();
+                            let node = &mut self.ops[last_loc].1;
+                            node.next_for_vars[last_rel] = Some(PRel { last_loc, relv });
                         } else {
                             let end = PRel { p, relv };
                             self.var_ends[v] = Some((end, end));
@@ -143,7 +150,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> FastOpsTemplate<O, ALLOC> {
                 let mut node =
                     FastOpNodeTemplate::<O>::new(op, previous_for_vars, smallvec![None; n_opvars]);
                 node.previous_p = last_p;
-                self.ops[p] = Some(node);
+                let loc = self.ops.push((p, node));
                 self.n += 1;
 
                 (Some(p), last_vars, last_rels)
@@ -334,7 +341,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                 "Trying to mutate from or into an op which spans variables not prepared in the args."
             );
 
-            let old_op_node = self.ops[p].take();
+            let old_op_node = self.op_indices[p].take();
 
             // Check if the nodes share all the same variables, in which case we can do a
             // quick install since all linked list components are the same.
@@ -363,7 +370,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     let bond = node_ref.op.get_bond();
                     bond_counters[bond] += 1;
                 }
-                self.ops[p] = Some(node_ref);
+                self.op_indices[p] = Some(node_ref);
             } else {
                 if let Some(node_ref) = old_op_node {
                     debug_assert_eq!(args.last_p, node_ref.previous_p);
@@ -371,7 +378,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     // Uninstall the old op.
                     // If there's a previous p, point it towards the next one
                     if let Some(last_p) = args.last_p {
-                        let node = self.ops[last_p].as_mut().unwrap();
+                        let node = self.op_indices[last_p].as_mut().unwrap();
                         node.next_p = node_ref.next_p;
                     } else {
                         // No previous p, so we are removing the head. Make necessary adjustments.
@@ -386,7 +393,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                         }
                     }
                     // If there's a next p, point it towards the previous one
-                    let next_p_node = node_ref.next_p.and_then(|p| self.ops[p].as_mut());
+                    let next_p_node = node_ref.next_p.and_then(|p| self.op_indices[p].as_mut());
                     if let Some(next_p_node) = next_p_node {
                         next_p_node.previous_p = args.last_p
                     } else {
@@ -422,7 +429,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                         if let Some((prev_p_for_v, prev_rel_indx)) =
                             args.last_vars[subvar].zip(args.last_rels[subvar])
                         {
-                            let prev_p_for_v_ref = self.ops[prev_p_for_v].as_mut().unwrap();
+                            let prev_p_for_v_ref = self.op_indices[prev_p_for_v].as_mut().unwrap();
                             prev_p_for_v_ref.next_for_vars[prev_rel_indx] =
                                 node_ref.next_for_vars[relv];
                         } else {
@@ -445,7 +452,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                             relv: next_rel_index,
                         }) = node_ref.next_for_vars[relv]
                         {
-                            let next_p_for_v_ref = self.ops[next_p_for_v].as_mut().unwrap();
+                            let next_p_for_v_ref = self.op_indices[next_p_for_v].as_mut().unwrap();
                             next_p_for_v_ref.previous_for_vars[next_rel_index] = args.last_vars
                                 [subvar]
                                 .zip(args.last_rels[subvar])
@@ -486,7 +493,8 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                             let next_p_and_rel = if let Some(prev_p_for_v) = args.last_vars[subvar]
                             {
                                 // If there's a previous node for the var, check its next entry.
-                                let prev_node_for_v = self.ops[prev_p_for_v].as_ref().unwrap();
+                                let prev_node_for_v =
+                                    self.op_indices[prev_p_for_v].as_ref().unwrap();
                                 let indx = prev_node_for_v.op.index_of_var(v).unwrap();
                                 prev_node_for_v.next_for_vars[indx]
                             } else if let Some((head, _)) = self.var_ends[v] {
@@ -511,7 +519,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                             if let Some(prel) = prev {
                                 let prev_p = prel.p;
                                 let prev_rel = prel.relv;
-                                let prev_node = self.ops[prev_p].as_mut().unwrap();
+                                let prev_node = self.op_indices[prev_p].as_mut().unwrap();
                                 debug_assert_eq!(prev_node.get_op_ref().get_vars()[prev_rel], *v);
                                 prev_node.next_for_vars[prev_rel] = Some(PRel::from((p, relv)));
                             } else {
@@ -534,7 +542,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                                 relv: next_rel,
                             }) = next
                             {
-                                let next_node = self.ops[*next_p].as_mut().unwrap();
+                                let next_node = self.op_indices[*next_p].as_mut().unwrap();
                                 debug_assert_eq!(next_node.get_op_ref().get_vars()[*next_rel], *v);
                                 next_node.previous_for_vars[*next_rel] = Some(PRel { p, relv });
                             } else {
@@ -550,7 +558,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     let mut node_ref = FastOpNodeTemplate::new(new_op, prevs, nexts);
                     node_ref.previous_p = args.last_p;
                     node_ref.next_p = if let Some(last_p) = args.last_p {
-                        let last_p_node = self.ops[last_p].as_ref().unwrap();
+                        let last_p_node = self.op_indices[last_p].as_ref().unwrap();
                         last_p_node.next_p
                     } else if let Some((head, _)) = self.p_ends {
                         Some(head)
@@ -560,7 +568,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
 
                     // Based on what these were set to, adjust the p_ends and neighboring nodes.
                     if let Some(prev) = node_ref.previous_p {
-                        let prev_node = self.ops[prev].as_mut().unwrap();
+                        let prev_node = self.op_indices[prev].as_mut().unwrap();
                         prev_node.next_p = Some(p);
                     } else {
                         self.p_ends = if let Some((head, tail)) = self.p_ends {
@@ -572,7 +580,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     };
 
                     if let Some(next) = node_ref.next_p {
-                        let next_node = self.ops[next].as_mut().unwrap();
+                        let next_node = self.op_indices[next].as_mut().unwrap();
                         next_node.previous_p = Some(p);
                     } else {
                         self.p_ends = if let Some((head, tail)) = self.p_ends {
@@ -586,13 +594,13 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                         let bond = node_ref.op.get_bond();
                         bond_counters[bond] += 1;
                     }
-                    self.ops[p] = Some(node_ref);
+                    self.op_indices[p] = Some(node_ref);
                     self.n += 1;
                 }
             }
         }
 
-        if let Some(op) = self.ops[p].as_ref().map(|r| &r.op) {
+        if let Some(op) = self.op_indices[p].as_ref().map(|r| &r.op) {
             op.get_vars()
                 .iter()
                 .cloned()
@@ -619,8 +627,8 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
     {
-        if pend > self.ops.len() {
-            self.ops.resize(pend, None)
+        if pend > self.op_indices.len() {
+            self.op_indices.resize(pend, None)
         };
         let args = match args {
             Some(args) => args,
@@ -647,8 +655,8 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
     where
         F: Fn(&Self, &Self::Op, usize, T) -> (Option<Option<Self::Op>>, T),
     {
-        if pend > self.ops.len() {
-            self.ops.resize(pend, None)
+        if pend > self.op_indices.len() {
+            self.op_indices.resize(pend, None)
         };
 
         let mut args = match args {
@@ -677,7 +685,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
             vars.iter().cloned().zip(prel_gen).for_each(|(var, prel)| {
                 if let Some((last_p, last_relv)) = prel {
                     let node = self.get_node_ref(last_p).unwrap();
-                    let next_p = self.get_next_p_for_rel_var(last_relv, node);
+                    let next_p = self.get_next_prel_for_rel_var(last_relv, node);
                     // last_p is final before pstart.
                     debug_assert!(last_p < pstart);
                     debug_assert!(next_p.map(|next| next.p >= pstart).unwrap_or(true));
@@ -728,7 +736,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     .enumerate()
                     .filter_map(|(relv, v)| args.var_to_subvar(v).map(|_| relv))
                     .for_each(|relv| {
-                        if let Some(prel) = self.get_next_p_for_rel_var(relv, node) {
+                        if let Some(prel) = self.get_next_prel_for_rel_var(relv, node) {
                             p_heap.push(Reverse(prel.p));
                         }
                     });
@@ -781,7 +789,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     None
                 } else {
                     // Find the first p with an op.
-                    self.ops[pstart..]
+                    self.op_indices[pstart..]
                         .iter()
                         .enumerate()
                         .find(|(_, op)| op.is_some())
@@ -797,7 +805,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     t = ret.0;
                     args = ret.1;
 
-                    let node = self.ops[node_p].as_ref().unwrap();
+                    let node = self.op_indices[node_p].as_ref().unwrap();
                     p = node.next_p;
                 }
             }
@@ -914,7 +922,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     .get_node_ref(pcheck)
                     .expect("Gave a hint without an op");
                 let next = self
-                    .get_next_p_for_rel_var(relv, node)
+                    .get_next_prel_for_rel_var(relv, node)
                     .unwrap_or_else(|| self.var_ends[var].unwrap().0);
                 // If psel in (pcheck, next.p)
                 if p_crosses(pcheck, next.p, psel) {
@@ -1046,7 +1054,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     .get_node_ref(pcheck)
                     .expect("Gave a hint without an op");
                 let next = self
-                    .get_next_p_for_rel_var(relv, node)
+                    .get_next_prel_for_rel_var(relv, node)
                     .unwrap_or_else(|| self.var_ends[var].unwrap().0);
                 // If psel in (pcheck, next.p)
                 if p_crosses(pcheck, next.p, psel) {
@@ -1101,7 +1109,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                         .index_of_var(var)
                         .expect("Hints must point to ops with relevant variables");
                     while phint >= p {
-                        let prev = self.get_previous_p_for_rel_var(relv, node)?;
+                        let prev = self.get_previous_prel_for_rel_var(relv, node)?;
                         phint = prev.p;
                         relv = prev.relv;
                         node = self.get_node_ref(phint).expect("Hints must be to ops");
@@ -1200,7 +1208,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalUpdater for FastOpsTemplate<
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> Result<T, V>,
     {
-        self.ops[min(pstart, self.ops.len())..min(pend, self.ops.len())]
+        self.op_indices[min(pstart, self.op_indices.len())..min(pend, self.op_indices.len())]
             .iter()
             .try_fold(t, |t, op| f(self, op.as_ref().map(|op| op.get_op_ref()), t))
     }
@@ -1217,7 +1225,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalUpdater for FastOpsTemplate<
                 None
             } else {
                 // Find the first p with an op.
-                self.ops[pstart..]
+                self.op_indices[pstart..]
                     .iter()
                     .enumerate()
                     .find(|(_, op)| op.is_some())
@@ -1228,7 +1236,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalUpdater for FastOpsTemplate<
             if node_p > pend {
                 break;
             } else {
-                let node = self.ops[node_p].as_ref().unwrap();
+                let node = self.op_indices[node_p].as_ref().unwrap();
                 t = f(self, node.get_op_ref(), node_p, t)?;
                 p = node.next_p;
             }
@@ -1253,12 +1261,12 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> OpContainer for FastOpsTemplate<O, A
     type Op = O;
 
     fn get_cutoff(&self) -> usize {
-        self.ops.len()
+        self.op_indices.len()
     }
 
     fn set_cutoff(&mut self, cutoff: usize) {
-        if cutoff > self.ops.len() {
-            self.ops.resize(cutoff, None)
+        if cutoff > self.op_indices.len() {
+            self.op_indices.resize(cutoff, None)
         }
     }
 
@@ -1271,8 +1279,8 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> OpContainer for FastOpsTemplate<O, A
     }
 
     fn get_pth(&self, p: usize) -> Option<&Self::Op> {
-        if p < self.ops.len() {
-            self.ops[p].as_ref().map(|opnode| &opnode.op)
+        if p < self.op_indices.len() {
+            self.op_indices[p].as_ref().map(|opnode| &opnode.op)
         } else {
             None
         }
@@ -1318,12 +1326,32 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> OpContainer for FastOpsTemplate<O, A
 impl<O: Op + Clone, ALLOC: FastOpAllocator> LoopUpdater for FastOpsTemplate<O, ALLOC> {
     type Node = FastOpNodeTemplate<O>;
 
+    fn get_p_for_opindex(&self, loc: OpIndex) -> usize {
+        todo!()
+    }
+
     fn get_node_ref(&self, p: usize) -> Option<&Self::Node> {
-        self.ops[p].as_ref()
+        self.op_indices[p].map(|index| &self.op_indices[index].1)
     }
 
     fn get_node_mut(&mut self, p: usize) -> Option<&mut Self::Node> {
-        self.ops[p].as_mut()
+        self.op_indices[p].map(|index| &mut self.op_indices[index].1)
+    }
+
+    fn get_node_ref_loc(&self, loc: OpIndex) -> &Self::Node {
+        todo!()
+    }
+
+    fn get_node_mut_loc(&mut self, loc: OpIndex) -> &mut Self::Node {
+        todo!()
+    }
+
+    fn get_first_loc(&self) -> Option<OpIndex> {
+        todo!()
+    }
+
+    fn get_last_loc(&self) -> Option<OpIndex> {
+        todo!()
     }
 
     fn get_first_p(&self) -> Option<usize> {
@@ -1334,12 +1362,20 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> LoopUpdater for FastOpsTemplate<O, A
         self.p_ends.map(|(_, p)| p)
     }
 
-    fn get_first_p_for_var(&self, var: usize) -> Option<PRel> {
+    fn get_first_prel_for_var(&self, var: usize) -> Option<PRel> {
         self.var_ends[var].map(|(start, _)| start)
     }
 
-    fn get_last_p_for_var(&self, var: usize) -> Option<PRel> {
+    fn get_last_prel_for_var(&self, var: usize) -> Option<PRel> {
         self.var_ends[var].map(|(_, end)| end)
+    }
+
+    fn get_previous_loc(&self, node: &Self::Node) -> Option<OpIndex> {
+        todo!()
+    }
+
+    fn get_next_loc(&self, node: &Self::Node) -> Option<OpIndex> {
+        todo!()
     }
 
     fn get_previous_p(&self, node: &Self::Node) -> Option<usize> {
@@ -1350,19 +1386,20 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> LoopUpdater for FastOpsTemplate<O, A
         node.next_p
     }
 
-    fn get_previous_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel> {
+    fn get_previous_prel_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel> {
         node.previous_for_vars[relvar]
     }
 
-    fn get_next_p_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel> {
+    fn get_next_prel_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel> {
         node.next_for_vars[relvar]
     }
 
-    fn get_nth_p(&self, n: usize) -> usize {
-        let n = n % self.n;
-        let init = self.p_ends.map(|(head, _)| head).unwrap();
-        (0..n).fold(init, |p, _| self.ops[p].as_ref().unwrap().next_p.unwrap())
-    }
+    // TODO review
+    // fn get_nth_p(&self, n: usize) -> usize {
+    //     let n = n % self.n;
+    //     let init = self.p_ends.map(|(head, _)| head).unwrap();
+    //     (0..n).fold(init, |p, _| self.ops[p].as_ref().unwrap().next_p.unwrap())
+    // }
 }
 
 impl<O: Op + Clone, ALLOC: FastOpAllocator> Factory<Vec<bool>> for FastOpsTemplate<O, ALLOC> {
@@ -1464,7 +1501,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> ClusterUpdater for FastOpsTemplate<O
 
 impl<O: Op + Clone, ALLOC: FastOpAllocator> RvbUpdater for FastOpsTemplate<O, ALLOC> {
     fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>) {
-        let mut p_and_rel = self.get_first_p_for_var(var);
+        let mut p_and_rel = self.get_first_prel_for_var(var);
         while let Some(PRel {
             p: node_p,
             relv: node_relv,
@@ -1475,12 +1512,12 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> RvbUpdater for FastOpsTemplate<O, AL
             if node.get_op_ref().is_constant() {
                 ps.push(node_p);
             }
-            p_and_rel = self.get_next_p_for_rel_var(node_relv, node);
+            p_and_rel = self.get_next_prel_for_rel_var(node_relv, node);
         }
     }
 
     fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>) {
-        let mut p_and_rel = self.get_first_p_for_var(var);
+        let mut p_and_rel = self.get_first_prel_for_var(var);
         while let Some(PRel {
             p: node_p,
             relv: node_relv,
@@ -1492,7 +1529,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> RvbUpdater for FastOpsTemplate<O, AL
             if op.get_inputs()[node_relv] != op.get_outputs()[node_relv] {
                 ps.push(node_p)
             };
-            p_and_rel = self.get_next_p_for_rel_var(node_relv, node);
+            p_and_rel = self.get_next_prel_for_rel_var(node_relv, node);
         }
     }
 }

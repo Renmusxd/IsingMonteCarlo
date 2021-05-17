@@ -698,7 +698,7 @@ where
 
     let mut p_heap: BinaryHeap<Reverse<usize>> = rvb.get_instance();
     vars.iter().for_each(|v| {
-        if let Some(PRel { p, .. }) = rvb.get_first_p_for_var(*v) {
+        if let Some(PRel { p, .. }) = rvb.get_first_prel_for_var(*v) {
             p_heap.push(Reverse(p))
         }
     });
@@ -756,7 +756,7 @@ where
                             if popped < p {
                                 substate[subvar] = b;
                             }
-                            if let Some(prel) = rvb.get_next_p_for_rel_var(relv, node) {
+                            if let Some(prel) = rvb.get_next_prel_for_rel_var(relv, node) {
                                 p_heap.push(Reverse(prel.p));
                             }
                         });
