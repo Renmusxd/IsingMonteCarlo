@@ -167,7 +167,7 @@ impl OpWeights for FastOps {
         H2: Fn(&[usize], usize, &[bool], &[bool]) -> f64,
     {
         let mut t = 1.0;
-        let mut op_p = self.p_ends.map(|(p, _)| p);
+        let mut op_p = self.loc_ends.map(|(p, _)| p);
         while let Some(p) = op_p {
             let op = self.get_node_ref(p).unwrap();
             let w1 = h1(
@@ -189,7 +189,7 @@ impl OpWeights for FastOps {
                 return std::f64::INFINITY;
             }
             t *= w1 / w2;
-            op_p = op.next_p;
+            op_p = op.next_loc;
         }
         t
     }

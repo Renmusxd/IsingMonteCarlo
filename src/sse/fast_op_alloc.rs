@@ -1,5 +1,5 @@
 use crate::sse::qmc_types::{Leg, OpSide};
-use crate::sse::VarPos;
+use crate::sse::{OpIndex, PRel, VarPos};
 use crate::util::allocator::{Allocator, Factory};
 use crate::util::bondcontainer::BondContainer;
 #[cfg(feature = "serialize")]
@@ -19,6 +19,9 @@ pub trait FastOpAllocator:
     + Factory<BondContainer<usize>>
     + Factory<BondContainer<VarPos>>
     + Factory<BinaryHeap<Reverse<usize>>>
+    + Factory<Vec<OpIndex>>
+    + Factory<Vec<Option<OpIndex>>>
+    + Factory<Vec<Option<PRel>>>
     + Clone
 {
 }
@@ -36,6 +39,9 @@ pub struct DefaultFastOpAllocator {
     bond_container_alloc: Allocator<BondContainer<usize>>,
     bond_container_varpos_alloc: Allocator<BondContainer<VarPos>>,
     binary_heap_alloc: Allocator<BinaryHeap<Reverse<usize>>>,
+    opindex_alloc: Allocator<Vec<OpIndex>>,
+    opindex_option_alloc: Allocator<Vec<Option<OpIndex>>>,
+    prel_option_alloc: Allocator<Vec<Option<PRel>>>,
 }
 
 impl Default for DefaultFastOpAllocator {
@@ -51,6 +57,9 @@ impl Default for DefaultFastOpAllocator {
             bond_container_alloc: Allocator::new_with_max_in_flight(2),
             bond_container_varpos_alloc: Allocator::new_with_max_in_flight(2),
             binary_heap_alloc: Allocator::new_with_max_in_flight(1),
+            opindex_alloc: Allocator::new_with_max_in_flight(1),
+            opindex_option_alloc: Allocator::new_with_max_in_flight(1),
+            prel_option_alloc: Allocator::new_with_max_in_flight(1),
         }
     }
 }
@@ -139,6 +148,34 @@ impl Factory<BinaryHeap<Reverse<usize>>> for DefaultFastOpAllocator {
 
     fn return_instance(&mut self, t: BinaryHeap<Reverse<usize>>) {
         self.binary_heap_alloc.return_instance(t)
+    }
+}
+impl Factory<Vec<OpIndex>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> Vec<OpIndex> {
+        self.opindex_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<OpIndex>) {
+        self.opindex_alloc.return_instance(t)
+    }
+}
+impl Factory<Vec<Option<OpIndex>>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> Vec<Option<OpIndex>> {
+        self.opindex_option_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<Option<OpIndex>>) {
+        self.opindex_option_alloc.return_instance(t)
+    }
+}
+
+impl Factory<Vec<Option<PRel>>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> Vec<Option<PRel>> {
+        self.prel_option_alloc.get_instance()
+    }
+
+    fn return_instance(&mut self, t: Vec<Option<PRel>>) {
+        self.prel_option_alloc.return_instance(t)
     }
 }
 
@@ -286,6 +323,50 @@ impl<ALLOC: FastOpAllocator> Factory<BinaryHeap<Reverse<usize>>>
     }
 
     fn return_instance(&mut self, t: BinaryHeap<Reverse<usize>>) {
+        if let Some(a) = self.alloc.as_mut() {
+            a.return_instance(t)
+        }
+    }
+}
+
+impl<ALLOC: FastOpAllocator> Factory<Vec<OpIndex>> for SwitchableFastOpAllocator<ALLOC> {
+    fn get_instance(&mut self) -> Vec<OpIndex> {
+        self.alloc
+            .as_mut()
+            .map(|a| a.get_instance())
+            .unwrap_or_else(Default::default)
+    }
+
+    fn return_instance(&mut self, t: Vec<OpIndex>) {
+        if let Some(a) = self.alloc.as_mut() {
+            a.return_instance(t)
+        }
+    }
+}
+impl<ALLOC: FastOpAllocator> Factory<Vec<Option<OpIndex>>> for SwitchableFastOpAllocator<ALLOC> {
+    fn get_instance(&mut self) -> Vec<Option<OpIndex>> {
+        self.alloc
+            .as_mut()
+            .map(|a| a.get_instance())
+            .unwrap_or_else(Default::default)
+    }
+
+    fn return_instance(&mut self, t: Vec<Option<OpIndex>>) {
+        if let Some(a) = self.alloc.as_mut() {
+            a.return_instance(t)
+        }
+    }
+}
+
+impl<ALLOC: FastOpAllocator> Factory<Vec<Option<PRel>>> for SwitchableFastOpAllocator<ALLOC> {
+    fn get_instance(&mut self) -> Vec<Option<PRel>> {
+        self.alloc
+            .as_mut()
+            .map(|a| a.get_instance())
+            .unwrap_or_else(Default::default)
+    }
+
+    fn return_instance(&mut self, t: Vec<Option<PRel>>) {
         if let Some(a) = self.alloc.as_mut() {
             a.return_instance(t)
         }

@@ -3,6 +3,24 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::iter::FromIterator;
 
+/// Location in imaginary time guarenteed to have an operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
+pub struct OpIndex {
+    index: usize,
+}
+
+impl Into<usize> for OpIndex {
+    fn into(self) -> usize {
+        self.index
+    }
+}
+impl From<usize> for OpIndex {
+    fn from(i: usize) -> Self {
+        Self { index: i }
+    }
+}
+
 /// Ops for holding SSE graph state.
 pub trait Op: Clone + Debug {
     /// The list of op variables.

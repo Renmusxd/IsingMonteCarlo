@@ -2,8 +2,10 @@ use crate::sse::*;
 use crate::util::allocator::Factory;
 use crate::util::bondcontainer::BondContainer;
 use rand::Rng;
-use std::cmp::Reverse;
+use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+use std::fmt;
+use std::fmt::{Debug, Formatter};
 
 /// A struct which allows navigation around the variables in a model.
 pub trait EdgeNavigator {
@@ -34,6 +36,8 @@ pub trait EdgeNavigator {
 pub trait RvbUpdater:
     DiagonalSubsection
     + Factory<Vec<usize>>
+    + Factory<Vec<OpIndex>>
+    + Factory<Vec<Option<OpIndex>>>
     + Factory<Vec<bool>>
     + Factory<BondContainer<usize>>
     + Factory<BondContainer<VarPos>>
@@ -42,11 +46,11 @@ pub trait RvbUpdater:
 {
     /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
-    fn constant_ops_on_var(&self, var: usize, ps: &mut Vec<usize>);
+    fn constant_ops_on_var(&self, var: usize, indices: &mut Vec<OpIndex>);
 
     /// Fill `ps` with the p values of spin flips for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
-    fn spin_flips_on_var(&self, var: usize, ps: &mut Vec<usize>);
+    fn spin_flips_on_var(&self, var: usize, indices: &mut Vec<OpIndex>);
 
     // TODO add some check for offdiagonal 2-site ops on border.
 
@@ -99,7 +103,7 @@ pub trait RvbUpdater:
     {
         let mut var_starts: Vec<usize> = self.get_instance();
         let mut var_lengths: Vec<usize> = self.get_instance();
-        let mut constant_ps: Vec<usize> = self.get_instance();
+        let mut constant_locs: Vec<OpIndex> = self.get_instance();
         // This helps us sample evenly.
         let mut vars_with_zero_ops: Vec<usize> = self.get_instance();
 
@@ -108,14 +112,17 @@ pub trait RvbUpdater:
             self,
             &mut var_starts,
             &mut var_lengths,
-            &mut constant_ps,
+            &mut constant_locs,
             &mut vars_with_zero_ops,
         );
+        let mut constant_ps: Vec<usize> = self.get_instance();
+        constant_ps.extend(constant_locs.iter().map(|loc| self.get_p_for_opindex(*loc)));
+
         let mut num_succ = 0;
         for _ in 0..updates {
             // Pick starting flip.
-            let choice = rng.gen_range(0..(constant_ps.len() + vars_with_zero_ops.len()));
-            let (v, flip) = if choice < constant_ps.len() {
+            let choice = rng.gen_range(0..(constant_locs.len() + vars_with_zero_ops.len()));
+            let (v, flip) = if choice < constant_locs.len() {
                 let res = var_starts.binary_search(&choice);
                 let v = match res {
                     Err(i) => i - 1,
@@ -129,7 +136,7 @@ pub trait RvbUpdater:
                 };
                 (v, Some(choice))
             } else {
-                let choice = choice - constant_ps.len();
+                let choice = choice - constant_locs.len();
                 (vars_with_zero_ops[choice], None)
             };
 
@@ -156,7 +163,7 @@ pub trait RvbUpdater:
             cbm.dissolve_into(self, &mut boundary_vars, &mut boundary_flips_pos);
 
             let mut cluster_starting_state: Vec<bool> = self.get_instance();
-            let mut cluster_toggle_ps: Vec<usize> = self.get_instance();
+            let mut cluster_toggle_locs: Vec<OpIndex> = self.get_instance();
             let mut subvars: Vec<usize> = self.get_instance();
             let mut var_to_subvar: Vec<Option<usize>> = self.get_instance();
             var_to_subvar.resize(self.get_nvars(), None);
@@ -183,11 +190,11 @@ pub trait RvbUpdater:
 
                         if fi_rel + 1 >= var_lengths[v] {
                             cluster_starting_state[subvar] = true;
-                            cluster_toggle_ps.push(constant_ps[fi]);
-                            cluster_toggle_ps.push(constant_ps[vstart]);
+                            cluster_toggle_locs.push(constant_locs[fi]);
+                            cluster_toggle_locs.push(constant_locs[vstart]);
                         } else {
-                            cluster_toggle_ps.push(constant_ps[fi]);
-                            cluster_toggle_ps.push(constant_ps[fi + 1]);
+                            cluster_toggle_locs.push(constant_locs[fi]);
+                            cluster_toggle_locs.push(constant_locs[fi + 1]);
                         }
                     } else {
                         cluster_starting_state[subvar] = true;
@@ -202,7 +209,7 @@ pub trait RvbUpdater:
             substate.extend(subvars.iter().cloned().map(|v| state[v]));
 
             // Lets find the tops of each boundary.
-            let mut subvar_boundary_tops: Vec<Option<usize>> = self.get_instance();
+            let mut subvar_boundary_tops: Vec<Option<OpIndex>> = self.get_instance();
             subvar_boundary_tops.resize(subvars.len(), None);
             boundary_vars
                 .iter()
@@ -210,14 +217,15 @@ pub trait RvbUpdater:
                 .for_each(|(bv, bfp)| {
                     let subvar =
                         var_to_subvar[*bv].expect("Boundary must be in var_to_subvar array.");
-                    match (bfp, subvar_boundary_tops[subvar]) {
-                        (Some(bfp), Some(bt)) => {
-                            if *bfp < bt {
-                                subvar_boundary_tops[subvar] = Some(constant_ps[*bfp])
+                    let btp = subvar_boundary_tops[subvar].map(|bt| self.get_p_for_opindex(bt));
+                    match (bfp, btp) {
+                        (Some(bfp), Some(btp)) => {
+                            if *bfp < btp {
+                                subvar_boundary_tops[subvar] = Some(constant_locs[*bfp])
                             }
                         }
                         (Some(_), None) | (None, None) => {
-                            subvar_boundary_tops[subvar] = bfp.map(|bfp| constant_ps[bfp])
+                            subvar_boundary_tops[subvar] = bfp.map(|bfp| constant_locs[bfp])
                         }
                         (None, Some(_)) => unreachable!(),
                     };
@@ -226,13 +234,13 @@ pub trait RvbUpdater:
             self.return_instance(boundary_flips_pos);
 
             // Now lets get the cluster boundaries.
-            cluster_toggle_ps.sort_unstable();
-            remove_doubles(&mut cluster_toggle_ps);
+            cluster_toggle_locs.sort_unstable_by_key(|loc| self.get_p_for_opindex(*loc));
+            remove_doubles(&mut cluster_toggle_locs);
 
             let p_to_flip = calculate_flip_prob(
                 self,
                 &mut substate,
-                (&mut cluster_starting_state, &cluster_toggle_ps),
+                (&mut cluster_starting_state, &cluster_toggle_locs),
                 (&subvars, |v| var_to_subvar[v]),
                 (&diagonal_edge_hamiltonian, &ising_ratio, edges),
             );
@@ -249,7 +257,7 @@ pub trait RvbUpdater:
                 mutate_graph(
                     self,
                     (state, &mut substate),
-                    (&mut cluster_starting_state, &cluster_toggle_ps),
+                    (&mut cluster_starting_state, &cluster_toggle_locs),
                     &subvar_boundary_tops,
                     (&subvars, |v| var_to_subvar[v]),
                     (&diagonal_edge_hamiltonian, edges),
@@ -277,11 +285,12 @@ pub trait RvbUpdater:
             self.return_instance(subvar_boundary_tops);
             self.return_instance(substate);
             self.return_instance(subvars);
-            self.return_instance(cluster_toggle_ps);
+            self.return_instance(cluster_toggle_locs);
             self.return_instance(cluster_starting_state);
         }
 
         self.return_instance(vars_with_zero_ops);
+        self.return_instance(constant_locs);
         self.return_instance(constant_ps);
         self.return_instance(var_lengths);
         self.return_instance(var_starts);
@@ -293,8 +302,8 @@ pub trait RvbUpdater:
 fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng, H>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
-    (cluster_state, cluster_flips): (&mut [bool], &[usize]),
-    boundary_tops: &[Option<usize>], // top for each of vars.
+    (cluster_state, cluster_flips): (&mut [bool], &[OpIndex]),
+    boundary_tops: &[Option<OpIndex>], // top for each of vars.
     (vars, var_to_subvar): (&[usize], VS),
     (diagonal_hamiltonian, edges): (H, &EN),
     rng: &mut R,
@@ -303,13 +312,14 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
     H: Fn(usize, bool, bool) -> f64,
 {
     // Find all spots where cluster is empty.
-    let mut jump_to: Vec<usize> = rvb.get_instance();
-    let mut continue_until: Vec<usize> = rvb.get_instance();
+    let mut jump_to: Vec<OpIndex> = rvb.get_instance();
+    let mut continue_until: Vec<OpIndex> = rvb.get_instance();
 
     let mut count = cluster_state.iter().filter(|b| **b).count();
     // If cluster hits t=0 then we need to mutate right away.
     let has_starting_cluster = if count != 0 {
-        jump_to.push(0);
+        // TODO fix zero op case.
+        jump_to.push(rvb.get_first_loc().expect("Graph should contain some ops"));
         // We need to adjust substate since there's a starting cluster.
         substate
             .iter_mut()
@@ -320,14 +330,14 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
     } else {
         false
     };
-    cluster_flips.iter().cloned().for_each(|p| {
+    cluster_flips.iter().cloned().for_each(|loc| {
         // If count is currently 0, this p will change that. We will need to
         // jump here for mutations.
         if count == 0 {
-            jump_to.push(p)
+            jump_to.push(loc)
         }
 
-        let op = rvb.get_node_ref(p).unwrap().get_op_ref();
+        let op = rvb.get_node_ref_loc(loc).get_op_ref();
         count = op
             .get_vars()
             .iter()
@@ -344,13 +354,14 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
 
         // If this op set the count to zero
         if count == 0 {
-            continue_until.push(p)
+            continue_until.push(loc)
         }
     });
     // If we end with a count that means we will start with one too, go all the way to the end.
     if count != 0 {
         debug_assert!(has_starting_cluster);
-        continue_until.push(rvb.get_cutoff());
+        // TODO fix the zero op case.
+        continue_until.push(rvb.get_last_loc().expect("Graph should have some ops"));
     }
     debug_assert_eq!(
         jump_to.len(),
@@ -386,7 +397,7 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
             (substate, cluster_state, rng),
             |(substate, cluster_state, rng), (from, until)| {
                 rvb.get_propagated_substate_with_hint(
-                    from,
+                    rvb.get_p_for_opindex(from),
                     substate,
                     state,
                     vars,
@@ -398,12 +409,17 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                     .for_each(|(b, c)| *b = *b != c);
 
                 let mut args = rvb.get_empty_args(SubvarAccess::Varlist(&vars));
-                rvb.fill_args_at_p_with_hint(from, &mut args, vars, boundary_tops.iter().cloned());
+                rvb.fill_args_at_p_with_hint(
+                    rvb.get_p_for_opindex(from),
+                    &mut args,
+                    vars,
+                    boundary_tops.iter().cloned(),
+                );
 
                 let acc = (next_cluster_index, &mut bonds, substate, cluster_state, rng);
                 let ret = rvb.mutate_subsection_ops(
-                    from,
-                    until,
+                    rvb.get_p_for_opindex(from),
+                    rvb.get_p_for_opindex(until),
                     acc,
                     |_, op, p, acc| {
                         let (mut next_cluster_index, bonds, substate, cluster_state, mut rng) = acc;
@@ -643,12 +659,11 @@ fn set_initial_bonds<F, VS, EN>(
         });
 }
 
-// TODO remove .unwrap() from this function, there are too many and it suggests a better way
 // to handle the var_to_subvar thing. Plus they occupy way too much of the flamegraph.
 fn calculate_flip_prob<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
     rvb: &mut RVB,
     substate: &mut [bool],
-    (cluster_state, cluster_flips): (&mut [bool], &[usize]),
+    (cluster_state, cluster_flips): (&mut [bool], &[OpIndex]),
     (vars, var_to_subvar): (&[usize], VS),
     (diagonal_hamiltonian, ising_ratio, edges): (H, F, &EN),
 ) -> f64
@@ -696,10 +711,12 @@ where
         );
     }
 
-    let mut p_heap: BinaryHeap<Reverse<usize>> = rvb.get_instance();
+    // TODO
+    // let mut loc_heap: BinaryHeap<CmpBy<Reverse<usize>, OpIndex>> = rvb.get_instance();
+    let mut loc_heap: BinaryHeap<CmpBy<Reverse<usize>, OpIndex>> = Default::default();
     vars.iter().for_each(|v| {
-        if let Some(PRel { p, .. }) = rvb.get_first_prel_for_var(*v) {
-            p_heap.push(Reverse(p))
+        if let Some(PRel { loc, .. }) = rvb.get_first_prel_for_var(*v) {
+            loc_heap.push(CmpBy::new(Reverse(rvb.get_p_for_opindex(loc)), loc))
         }
     });
 
@@ -716,7 +733,8 @@ where
         let op = node.get_op_ref();
         is_op_nearby_cluster(op)
     };
-    while let Some(mut p) = p_heap.peek().map(|rp| rp.0) {
+
+    while let Some((mut p, mut loc)) = loc_heap.peek().map(|CmpBy { t: rp, v: loc }| (rp.0, *loc)) {
         // Skip ahead.
         if cluster_size == 0 {
             debug_assert_eq!(bonds_before.len(), 0);
@@ -724,7 +742,7 @@ where
             debug_assert_eq!(n_bonds, 0);
             // Jump to next nonzero spot.
             if next_cluster_index < cluster_flips.len() {
-                p = cluster_flips[next_cluster_index];
+                loc = cluster_flips[next_cluster_index];
             } else {
                 // Done with clusters, jump to the end.
                 break;
@@ -732,38 +750,40 @@ where
         }
 
         let mut last_pushed_from = 0;
-        while p_heap
+        while loc_heap
             .peek()
-            .map(|rp| rp.0)
-            .map(|rp| rp <= p)
+            .map(|CmpBy { t: rp, .. }| rp.0)
+            .map(|next_p| next_p <= p)
             .unwrap_or(false)
         {
-            let popped = p_heap.pop().unwrap().0;
-            debug_assert!(popped <= p);
-            if popped >= last_pushed_from {
-                if let Some(node) = rvb.get_node_ref(popped) {
-                    // Add next ps
-                    let op = node.get_op_ref();
-                    op.get_vars()
-                        .iter()
-                        .cloned()
-                        .zip(op.get_outputs().iter().cloned())
-                        .enumerate()
-                        .filter_map(|(relv, (v, b))| {
-                            var_to_subvar(v).map(|subvar| (relv, subvar, b))
-                        })
-                        .for_each(|(relv, subvar, b)| {
-                            if popped < p {
-                                substate[subvar] = b;
-                            }
-                            if let Some(prel) = rvb.get_next_prel_for_rel_var(relv, node) {
-                                p_heap.push(Reverse(prel.p));
-                            }
-                        });
-                } else {
-                    unreachable!()
-                };
-                last_pushed_from = popped + 1;
+            let (popped_p, popped_loc) = loc_heap
+                .pop()
+                .map(|CmpBy { t: rp, v: loc }| (rp.0, loc))
+                .unwrap();
+
+            debug_assert!(popped_p <= p);
+            if popped_p >= last_pushed_from {
+                let node = rvb.get_node_ref_loc(popped_loc);
+                // Add next ps
+                let op = node.get_op_ref();
+                op.get_vars()
+                    .iter()
+                    .cloned()
+                    .zip(op.get_outputs().iter().cloned())
+                    .enumerate()
+                    .filter_map(|(relv, (v, b))| var_to_subvar(v).map(|subvar| (relv, subvar, b)))
+                    .for_each(|(relv, subvar, b)| {
+                        if popped_p < p {
+                            substate[subvar] = b;
+                        }
+                        if let Some(prel) = rvb.get_next_prel_for_rel_var(relv, node) {
+                            loc_heap.push(CmpBy::new(
+                                Reverse(rvb.get_p_for_opindex(prel.loc)),
+                                prel.loc,
+                            ));
+                        }
+                    });
+                last_pushed_from = popped_p + 1;
             }
         }
 
@@ -792,13 +812,13 @@ where
 
         // Check that all entries in heap are near cluster.
         debug_assert!(
-            p_heap.iter().map(|revp| revp.0).all(is_nearby_cluster),
+            loc_heap.iter().map(|revp| revp.t.0).all(is_nearby_cluster),
             "All entries in heap must by nearby to the cluster"
         );
         debug_assert!(
             {
                 if rvb.get_next_p(node).is_none() {
-                    p_heap.is_empty()
+                    loc_heap.is_empty()
                 } else {
                     true
                 }
@@ -808,7 +828,7 @@ where
         debug_assert!(
             {
                 if let Some(p) = rvb.get_next_p(node) {
-                    let in_heap = p_heap.iter().map(|revp| revp.0).any(|hp| hp == p);
+                    let in_heap = loc_heap.iter().map(|revp| revp.t.0).any(|hp| hp == p);
                     let nearby = is_nearby_cluster(p);
                     if nearby {
                         in_heap
@@ -822,14 +842,14 @@ where
             "Heap has missed a nearby bond: {}:{:?}, {:?}",
             rvb.get_next_p(node).unwrap(),
             {
-                let p = rvb.get_next_p(node).unwrap();
-                rvb.get_node_ref(p).unwrap().get_op_ref().get_vars()
+                let loc = rvb.get_next_loc(node).unwrap();
+                rvb.get_node_ref_loc(loc).get_op_ref().get_vars()
             },
-            p_heap.iter().collect::<Vec<_>>()
+            loc_heap.iter().collect::<Vec<_>>()
         );
 
-        let is_cluster_bound =
-            next_cluster_index < cluster_flips.len() && p == cluster_flips[next_cluster_index];
+        let is_cluster_bound = next_cluster_index < cluster_flips.len()
+            && p == rvb.get_p_for_opindex(cluster_flips[next_cluster_index]);
         let will_flip_spins = !op.is_diagonal();
         let will_change_bonds = will_flip_spins || is_cluster_bound;
         let completely_in_cluster = op.get_vars().iter().cloned().all(|v| {
@@ -937,7 +957,8 @@ where
     // Commit remaining stuff.
     mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
 
-    rvb.return_instance(p_heap);
+    // TODO
+    // rvb.return_instance(loc_heap);
     rvb.return_instance(bonds_before);
     rvb.return_instance(bonds_after);
 
@@ -1183,7 +1204,7 @@ fn find_constants<RVB>(
     rvb: &RVB,
     var_starts: &mut Vec<usize>,
     var_lengths: &mut Vec<usize>,
-    constant_ps: &mut Vec<usize>,
+    constant_locs: &mut Vec<OpIndex>,
     vars_with_zero_ops: &mut Vec<usize>,
 ) where
     RVB: RvbUpdater + ?Sized,
@@ -1191,18 +1212,18 @@ fn find_constants<RVB>(
     // TODO: can parallelize this!
     // O(beta * n)
     (0..rvb.get_nvars()).for_each(|v| {
-        let start = constant_ps.len();
+        let start = constant_locs.len();
         var_starts.push(start);
-        rvb.constant_ops_on_var(v, constant_ps);
+        rvb.constant_ops_on_var(v, constant_locs);
         debug_assert!(
-            constant_ps.iter().cloned().all(|p| {
-                let op = rvb.get_node_ref(p).unwrap().get_op_ref();
+            constant_locs.iter().cloned().all(|loc| {
+                let op = rvb.get_node_ref_loc(loc).get_op_ref();
                 op.get_vars().len() == 1
             }),
             "RVB cluster only supports constant ops with a single variable."
         );
-        var_lengths.push(constant_ps.len() - start);
-        if constant_ps.len() == *var_starts.last().unwrap() {
+        var_lengths.push(constant_locs.len() - start);
+        if constant_locs.len() == *var_starts.last().unwrap() {
             vars_with_zero_ops.push(v);
         }
     });
@@ -1252,6 +1273,65 @@ fn calculate_mult(
             valid
         });
         new_mult
+    }
+}
+
+struct CmpBy<T, V>
+where
+    T: PartialEq + Eq + PartialOrd + Ord,
+{
+    t: T,
+    v: V,
+}
+
+impl<T, V> Debug for CmpBy<T, V>
+where
+    T: PartialEq + Eq + PartialOrd + Ord + Debug,
+    V: Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CmpBy")
+            .field("t", &self.t)
+            .field("v", &self.v)
+            .finish()
+    }
+}
+
+impl<T, V> CmpBy<T, V>
+where
+    T: PartialEq + Eq + PartialOrd + Ord,
+{
+    fn new(t: T, v: V) -> Self {
+        Self { t, v }
+    }
+}
+
+impl<T, V> PartialEq for CmpBy<T, V>
+where
+    T: PartialEq + Eq + PartialOrd + Ord,
+{
+    fn eq(&self, other: &Self) -> bool {
+        T::eq(&self.t, &other.t)
+    }
+}
+
+impl<T, V> PartialOrd for CmpBy<T, V>
+where
+    T: PartialEq + Eq + PartialOrd + Ord,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        T::partial_cmp(&self.t, &other.t)
+    }
+}
+
+impl<T, V> Eq for CmpBy<T, V> where T: PartialEq + Eq + PartialOrd + Ord {}
+
+impl<T, V> Ord for CmpBy<T, V>
+where
+    T: PartialEq + Eq + PartialOrd + Ord,
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        T::cmp(&self.t, &other.t)
     }
 }
 

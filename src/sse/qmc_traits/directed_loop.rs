@@ -6,37 +6,19 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 
-/// Location in imaginary time guarenteed to have an operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct OpIndex {
-    index: usize,
-}
-
-impl Into<usize> for OpIndex {
-    fn into(self) -> usize {
-        self.index
-    }
-}
-impl From<usize> for OpIndex {
-    fn from(i: usize) -> Self {
-        Self { index: i }
-    }
-}
-
 /// The location in imaginary time (p) and the relative index of the variable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
 pub struct PRel {
     /// Lookup location of operator
-    pub p: OpIndex,
+    pub loc: OpIndex,
     /// Reltive index of variable.
     pub relv: usize,
 }
 
 impl From<(OpIndex, usize)> for PRel {
-    fn from((p, relv): (OpIndex, usize)) -> Self {
-        Self { p, relv }
+    fn from((loc, relv): (OpIndex, usize)) -> Self {
+        Self { loc, relv }
     }
 }
 
@@ -47,6 +29,8 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
 
     /// Get the imaginary time value `p` associated with an opindex.
     fn get_p_for_opindex(&self, loc: OpIndex) -> usize;
+    /// Get the opindex for `p` if one exists.
+    fn get_opindex_for_p(&self, p: usize) -> Option<OpIndex>;
 
     /// Get a ref to a node at position p
     fn get_node_ref(&self, p: usize) -> Option<&Self::Node>;
@@ -120,7 +104,7 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     fn get_nth_loc(&self, n: usize) -> Option<OpIndex> {
         let acc = self.get_first_loc().map(|loc| loc);
         let res = (0..n).try_fold(acc, |loc, _| match loc {
-            Some(opindex) => Ok((self.get_next_loc(self.get_node_ref_loc(opindex)))),
+            Some(opindex) => Ok(self.get_next_loc(self.get_node_ref_loc(opindex))),
             None => Err(()),
         });
         match res {
@@ -317,7 +301,7 @@ where
     } else {
         // Get the next opnode and entrance leg, let us know if it changes the initial/final.
         let PRel {
-            p: next_p,
+            loc: next_p,
             relv: next_rel,
         } = match exit_leg {
             (var, OpSide::Outputs) => {

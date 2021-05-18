@@ -28,6 +28,9 @@ impl<K, V> TypedVec<K, V>
 where
     K: From<usize> + Into<usize>,
 {
+    pub(crate) fn next_index(&self) -> K {
+        self.data.len().into()
+    }
     pub(crate) fn push(&mut self, v: V) -> K {
         let index = self.data.len().into();
         self.data.push(v);
