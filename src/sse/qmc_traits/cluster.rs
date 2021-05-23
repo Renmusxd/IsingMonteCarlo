@@ -14,12 +14,13 @@ pub trait ClusterUpdater:
 {
     /// Flip each cluster in the graph using an rng instance, add to state changes in acc. Use this
     /// version if there's ising symmetry in your graph.
+    /// Returns the number of cluster found.
     fn flip_each_cluster_ising_symmetry_rng<R: Rng>(
         &mut self,
         prob: f64,
         rng: &mut R,
         state: &mut [bool],
-    ) {
+    ) -> usize {
         self.flip_each_cluster_rng(prob, rng, state, None::<fn(&Self::Node) -> f64>)
     }
 
@@ -38,11 +39,12 @@ pub trait ClusterUpdater:
         rng: &mut R,
         state: &mut [bool],
         weight_change_on_global_flip: Option<F>,
-    ) where
+    ) -> usize
+    where
         F: Fn(&Self::Node) -> f64,
     {
         if self.get_n() == 0 {
-            return;
+            return 0;
         }
 
         let last_p = self.get_last_p().unwrap();
@@ -56,7 +58,7 @@ pub trait ClusterUpdater:
             frontier.push((constant_op_p, OpSide::Outputs));
             frontier.push((constant_op_p, OpSide::Inputs));
 
-            let mut cluster_num = 1;
+            let mut cluster_num = 0;
             loop {
                 while let Some((p, frontier_side)) = frontier.pop() {
                     match boundaries.get(p) {
@@ -166,6 +168,7 @@ pub trait ClusterUpdater:
         boundaries.dissolve(self);
         self.return_instance(flips);
         self.post_cluster_update_hook();
+        n_clusters
     }
 
     /// Find a site with a constant op.

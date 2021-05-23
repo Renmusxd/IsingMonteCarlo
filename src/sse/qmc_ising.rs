@@ -271,8 +271,8 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
         self.state = Some(state);
     }
 
-    /// Take a single offdiagonal step.
-    pub fn single_cluster_step(&mut self) {
+    /// Take a single cluster step and return the number of cluster found.
+    pub fn single_cluster_step(&mut self) -> usize {
         let mut state = self.state.take().unwrap();
         let nvars = self.get_nvars();
         let mut manager = self.op_manager.take().unwrap();
@@ -280,7 +280,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
         let nedges = self.edges.len();
 
-        if self.longitudinal.abs() > std::f64::EPSILON {
+        let n_clusters = if self.longitudinal.abs() > std::f64::EPSILON {
             let long = self.longitudinal;
             manager.flip_each_cluster_rng(
                 0.5,
@@ -303,10 +303,10 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
                         0.0
                     }
                 }),
-            );
+            )
         } else {
-            manager.flip_each_cluster_ising_symmetry_rng(0.5, rng, &mut state);
-        }
+            manager.flip_each_cluster_ising_symmetry_rng(0.5, rng, &mut state)
+        };
 
         state.iter_mut().enumerate().for_each(|(var, state)| {
             if !manager.does_var_have_ops(var) {
@@ -316,10 +316,11 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
         self.op_manager = Some(manager);
         self.state = Some(state);
+        n_clusters
     }
 
-    /// Perform a single rvb step.
-    pub fn single_rvb_step(&mut self) {
+    /// Perform a single rvb step and return the number of successes and attempts.
+    pub fn single_rvb_sweep(&mut self, updates_in_sweep: Option<usize>) -> (usize, usize) {
         let mut state = self.state.take().unwrap();
         if self.classical_bonds.is_none() {
             self.make_classical_bonds(state.len());
@@ -371,8 +372,8 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
         };
 
         // Average cluster size is always 2.
-        let steps_to_run = (state.len() + 1) / 2;
-        if self.longitudinal.abs() > std::f64::EPSILON {
+        let steps_to_run = updates_in_sweep.unwrap_or((state.len() + 1) / 2);
+        let successes = if self.longitudinal.abs() > std::f64::EPSILON {
             let long = self.longitudinal;
             manager.rvb_update_with_ising_weight(
                 &edges,
@@ -413,6 +414,7 @@ impl<R: Rng, M: IsingManager> QmcIsingGraph<R, M> {
 
         self.op_manager = Some(manager);
         self.state = Some(state);
+        (successes, steps_to_run)
     }
 
     /// Build classical bonds list.
