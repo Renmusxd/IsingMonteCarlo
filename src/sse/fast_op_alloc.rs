@@ -1,7 +1,9 @@
+use crate::sse::fast_ops::FastOpIndex;
 use crate::sse::qmc_types::{Leg, OpSide};
-use crate::sse::{OpIndex, PRel, VarPos};
+use crate::sse::{PRel, VarPos};
 use crate::util::allocator::{Allocator, Factory};
 use crate::util::bondcontainer::BondContainer;
+use crate::util::cmpby::CmpBy;
 #[cfg(feature = "serialize")]
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -18,10 +20,10 @@ pub trait FastOpAllocator:
     + Factory<Vec<f64>>
     + Factory<BondContainer<usize>>
     + Factory<BondContainer<VarPos>>
-    + Factory<BinaryHeap<Reverse<usize>>>
-    + Factory<Vec<OpIndex>>
-    + Factory<Vec<Option<OpIndex>>>
-    + Factory<Vec<Option<PRel>>>
+    + Factory<BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>>>
+    + Factory<Vec<FastOpIndex>>
+    + Factory<Vec<Option<FastOpIndex>>>
+    + Factory<Vec<Option<PRel<FastOpIndex>>>>
     + Clone
 {
 }
@@ -38,10 +40,10 @@ pub struct DefaultFastOpAllocator {
     f64_alloc: Allocator<Vec<f64>>,
     bond_container_alloc: Allocator<BondContainer<usize>>,
     bond_container_varpos_alloc: Allocator<BondContainer<VarPos>>,
-    binary_heap_alloc: Allocator<BinaryHeap<Reverse<usize>>>,
-    opindex_alloc: Allocator<Vec<OpIndex>>,
-    opindex_option_alloc: Allocator<Vec<Option<OpIndex>>>,
-    prel_option_alloc: Allocator<Vec<Option<PRel>>>,
+    binary_heap_alloc: Allocator<BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>>>,
+    opindex_alloc: Allocator<Vec<FastOpIndex>>,
+    opindex_option_alloc: Allocator<Vec<Option<FastOpIndex>>>,
+    prel_option_alloc: Allocator<Vec<Option<PRel<FastOpIndex>>>>,
 }
 
 impl Default for DefaultFastOpAllocator {
@@ -141,40 +143,40 @@ impl Factory<BondContainer<VarPos>> for DefaultFastOpAllocator {
     }
 }
 
-impl Factory<BinaryHeap<Reverse<usize>>> for DefaultFastOpAllocator {
-    fn get_instance(&mut self) -> BinaryHeap<Reverse<usize>> {
+impl Factory<BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>> {
         self.binary_heap_alloc.get_instance()
     }
 
-    fn return_instance(&mut self, t: BinaryHeap<Reverse<usize>>) {
+    fn return_instance(&mut self, t: BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>>) {
         self.binary_heap_alloc.return_instance(t)
     }
 }
-impl Factory<Vec<OpIndex>> for DefaultFastOpAllocator {
-    fn get_instance(&mut self) -> Vec<OpIndex> {
+impl Factory<Vec<FastOpIndex>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> Vec<FastOpIndex> {
         self.opindex_alloc.get_instance()
     }
 
-    fn return_instance(&mut self, t: Vec<OpIndex>) {
+    fn return_instance(&mut self, t: Vec<FastOpIndex>) {
         self.opindex_alloc.return_instance(t)
     }
 }
-impl Factory<Vec<Option<OpIndex>>> for DefaultFastOpAllocator {
-    fn get_instance(&mut self) -> Vec<Option<OpIndex>> {
+impl Factory<Vec<Option<FastOpIndex>>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> Vec<Option<FastOpIndex>> {
         self.opindex_option_alloc.get_instance()
     }
 
-    fn return_instance(&mut self, t: Vec<Option<OpIndex>>) {
+    fn return_instance(&mut self, t: Vec<Option<FastOpIndex>>) {
         self.opindex_option_alloc.return_instance(t)
     }
 }
 
-impl Factory<Vec<Option<PRel>>> for DefaultFastOpAllocator {
-    fn get_instance(&mut self) -> Vec<Option<PRel>> {
+impl Factory<Vec<Option<PRel<FastOpIndex>>>> for DefaultFastOpAllocator {
+    fn get_instance(&mut self) -> Vec<Option<PRel<FastOpIndex>>> {
         self.prel_option_alloc.get_instance()
     }
 
-    fn return_instance(&mut self, t: Vec<Option<PRel>>) {
+    fn return_instance(&mut self, t: Vec<Option<PRel<FastOpIndex>>>) {
         self.prel_option_alloc.return_instance(t)
     }
 }
@@ -312,61 +314,65 @@ impl<ALLOC: FastOpAllocator> Factory<BondContainer<VarPos>> for SwitchableFastOp
     }
 }
 
-impl<ALLOC: FastOpAllocator> Factory<BinaryHeap<Reverse<usize>>>
+impl<ALLOC: FastOpAllocator> Factory<BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>>>
     for SwitchableFastOpAllocator<ALLOC>
 {
-    fn get_instance(&mut self) -> BinaryHeap<Reverse<usize>> {
+    fn get_instance(&mut self) -> BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>> {
         self.alloc
             .as_mut()
             .map(|a| a.get_instance())
             .unwrap_or_else(Default::default)
     }
 
-    fn return_instance(&mut self, t: BinaryHeap<Reverse<usize>>) {
+    fn return_instance(&mut self, t: BinaryHeap<CmpBy<Reverse<usize>, FastOpIndex>>) {
         if let Some(a) = self.alloc.as_mut() {
             a.return_instance(t)
         }
     }
 }
 
-impl<ALLOC: FastOpAllocator> Factory<Vec<OpIndex>> for SwitchableFastOpAllocator<ALLOC> {
-    fn get_instance(&mut self) -> Vec<OpIndex> {
+impl<ALLOC: FastOpAllocator> Factory<Vec<FastOpIndex>> for SwitchableFastOpAllocator<ALLOC> {
+    fn get_instance(&mut self) -> Vec<FastOpIndex> {
         self.alloc
             .as_mut()
             .map(|a| a.get_instance())
             .unwrap_or_else(Default::default)
     }
 
-    fn return_instance(&mut self, t: Vec<OpIndex>) {
+    fn return_instance(&mut self, t: Vec<FastOpIndex>) {
         if let Some(a) = self.alloc.as_mut() {
             a.return_instance(t)
         }
     }
 }
-impl<ALLOC: FastOpAllocator> Factory<Vec<Option<OpIndex>>> for SwitchableFastOpAllocator<ALLOC> {
-    fn get_instance(&mut self) -> Vec<Option<OpIndex>> {
+impl<ALLOC: FastOpAllocator> Factory<Vec<Option<FastOpIndex>>>
+    for SwitchableFastOpAllocator<ALLOC>
+{
+    fn get_instance(&mut self) -> Vec<Option<FastOpIndex>> {
         self.alloc
             .as_mut()
             .map(|a| a.get_instance())
             .unwrap_or_else(Default::default)
     }
 
-    fn return_instance(&mut self, t: Vec<Option<OpIndex>>) {
+    fn return_instance(&mut self, t: Vec<Option<FastOpIndex>>) {
         if let Some(a) = self.alloc.as_mut() {
             a.return_instance(t)
         }
     }
 }
 
-impl<ALLOC: FastOpAllocator> Factory<Vec<Option<PRel>>> for SwitchableFastOpAllocator<ALLOC> {
-    fn get_instance(&mut self) -> Vec<Option<PRel>> {
+impl<ALLOC: FastOpAllocator> Factory<Vec<Option<PRel<FastOpIndex>>>>
+    for SwitchableFastOpAllocator<ALLOC>
+{
+    fn get_instance(&mut self) -> Vec<Option<PRel<FastOpIndex>>> {
         self.alloc
             .as_mut()
             .map(|a| a.get_instance())
             .unwrap_or_else(Default::default)
     }
 
-    fn return_instance(&mut self, t: Vec<Option<PRel>>) {
+    fn return_instance(&mut self, t: Vec<Option<PRel<FastOpIndex>>>) {
         if let Some(a) = self.alloc.as_mut() {
             a.return_instance(t)
         }

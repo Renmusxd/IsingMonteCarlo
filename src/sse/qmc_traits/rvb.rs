@@ -1,11 +1,11 @@
 use crate::sse::*;
 use crate::util::allocator::Factory;
 use crate::util::bondcontainer::BondContainer;
+use crate::util::cmpby::CmpBy;
 use rand::Rng;
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 
 /// A struct which allows navigation around the variables in a model.
 pub trait EdgeNavigator {
@@ -36,21 +36,21 @@ pub trait EdgeNavigator {
 pub trait RvbUpdater:
     DiagonalSubsection
     + Factory<Vec<usize>>
-    + Factory<Vec<OpIndex>>
-    + Factory<Vec<Option<OpIndex>>>
+    + Factory<Vec<Self::OpIndex>>
+    + Factory<Vec<Option<Self::OpIndex>>>
     + Factory<Vec<bool>>
     + Factory<BondContainer<usize>>
     + Factory<BondContainer<VarPos>>
     + Factory<Vec<Option<usize>>>
-    + Factory<BinaryHeap<Reverse<usize>>>
+    + Factory<BinaryHeap<CmpBy<Reverse<usize>, Self::OpIndex>>>
 {
     /// Fill `ps` with the p values of constant (Hij=k) ops for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
-    fn constant_ops_on_var(&self, var: usize, indices: &mut Vec<OpIndex>);
+    fn constant_ops_on_var(&self, var: usize, indices: &mut Vec<Self::OpIndex>);
 
     /// Fill `ps` with the p values of spin flips for a given var.
     /// An implementation by the same name is provided for LoopUpdaters
-    fn spin_flips_on_var(&self, var: usize, indices: &mut Vec<OpIndex>);
+    fn spin_flips_on_var(&self, var: usize, indices: &mut Vec<Self::OpIndex>);
 
     // TODO add some check for offdiagonal 2-site ops on border.
 
@@ -103,7 +103,7 @@ pub trait RvbUpdater:
     {
         let mut var_starts: Vec<usize> = self.get_instance();
         let mut var_lengths: Vec<usize> = self.get_instance();
-        let mut constant_locs: Vec<OpIndex> = self.get_instance();
+        let mut constant_locs: Vec<Self::OpIndex> = self.get_instance();
         // This helps us sample evenly.
         let mut vars_with_zero_ops: Vec<usize> = self.get_instance();
 
@@ -163,7 +163,7 @@ pub trait RvbUpdater:
             cbm.dissolve_into(self, &mut boundary_vars, &mut boundary_flips_pos);
 
             let mut cluster_starting_state: Vec<bool> = self.get_instance();
-            let mut cluster_toggle_locs: Vec<OpIndex> = self.get_instance();
+            let mut cluster_toggle_locs: Vec<Self::OpIndex> = self.get_instance();
             let mut subvars: Vec<usize> = self.get_instance();
             let mut var_to_subvar: Vec<Option<usize>> = self.get_instance();
             var_to_subvar.resize(self.get_nvars(), None);
@@ -209,7 +209,7 @@ pub trait RvbUpdater:
             substate.extend(subvars.iter().cloned().map(|v| state[v]));
 
             // Lets find the tops of each boundary.
-            let mut subvar_boundary_tops: Vec<Option<OpIndex>> = self.get_instance();
+            let mut subvar_boundary_tops: Vec<Option<Self::OpIndex>> = self.get_instance();
             subvar_boundary_tops.resize(subvars.len(), None);
             boundary_vars
                 .iter()
@@ -302,8 +302,8 @@ pub trait RvbUpdater:
 fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng, H>(
     rvb: &mut RVB,
     (state, substate): (&[bool], &mut [bool]),
-    (cluster_state, cluster_flips): (&mut [bool], &[OpIndex]),
-    boundary_tops: &[Option<OpIndex>], // top for each of vars.
+    (cluster_state, cluster_flips): (&mut [bool], &[RVB::OpIndex]),
+    boundary_tops: &[Option<RVB::OpIndex>], // top for each of vars.
     (vars, var_to_subvar): (&[usize], VS),
     (diagonal_hamiltonian, edges): (H, &EN),
     rng: &mut R,
@@ -312,8 +312,8 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
     H: Fn(usize, bool, bool) -> f64,
 {
     // Find all spots where cluster is empty.
-    let mut jump_to: Vec<OpIndex> = rvb.get_instance();
-    let mut continue_until: Vec<OpIndex> = rvb.get_instance();
+    let mut jump_to: Vec<RVB::OpIndex> = rvb.get_instance();
+    let mut continue_until: Vec<RVB::OpIndex> = rvb.get_instance();
 
     let mut count = cluster_state.iter().filter(|b| **b).count();
     // If cluster hits t=0 then we need to mutate right away.
@@ -663,7 +663,7 @@ fn set_initial_bonds<F, VS, EN>(
 fn calculate_flip_prob<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, H, F>(
     rvb: &mut RVB,
     substate: &mut [bool],
-    (cluster_state, cluster_flips): (&mut [bool], &[OpIndex]),
+    (cluster_state, cluster_flips): (&mut [bool], &[RVB::OpIndex]),
     (vars, var_to_subvar): (&[usize], VS),
     (diagonal_hamiltonian, ising_ratio, edges): (H, F, &EN),
 ) -> f64
@@ -711,9 +711,7 @@ where
         );
     }
 
-    // TODO
-    // let mut loc_heap: BinaryHeap<CmpBy<Reverse<usize>, OpIndex>> = rvb.get_instance();
-    let mut loc_heap: BinaryHeap<CmpBy<Reverse<usize>, OpIndex>> = Default::default();
+    let mut loc_heap: BinaryHeap<CmpBy<Reverse<usize>, RVB::OpIndex>> = rvb.get_instance();
     vars.iter().for_each(|v| {
         if let Some(PRel { loc, .. }) = rvb.get_first_prel_for_var(*v) {
             loc_heap.push(CmpBy::new(Reverse(rvb.get_p_for_opindex(loc)), loc))
@@ -845,7 +843,10 @@ where
                 let loc = rvb.get_next_loc(node).unwrap();
                 rvb.get_node_ref_loc(loc).get_op_ref().get_vars()
             },
-            loc_heap.iter().collect::<Vec<_>>()
+            loc_heap
+                .iter()
+                .map(|loc| (loc.t, rvb.opindex_to_usize(loc.v)))
+                .collect::<Vec<_>>()
         );
 
         let is_cluster_bound = next_cluster_index < cluster_flips.len()
@@ -957,8 +958,7 @@ where
     // Commit remaining stuff.
     mult *= calculate_mult(&bonds_before, &bonds_after, n_bonds);
 
-    // TODO
-    // rvb.return_instance(loc_heap);
+    rvb.return_instance(loc_heap);
     rvb.return_instance(bonds_before);
     rvb.return_instance(bonds_after);
 
@@ -1204,7 +1204,7 @@ fn find_constants<RVB>(
     rvb: &RVB,
     var_starts: &mut Vec<usize>,
     var_lengths: &mut Vec<usize>,
-    constant_locs: &mut Vec<OpIndex>,
+    constant_locs: &mut Vec<RVB::OpIndex>,
     vars_with_zero_ops: &mut Vec<usize>,
 ) where
     RVB: RvbUpdater + ?Sized,
@@ -1273,65 +1273,6 @@ fn calculate_mult(
             valid
         });
         new_mult
-    }
-}
-
-struct CmpBy<T, V>
-where
-    T: PartialEq + Eq + PartialOrd + Ord,
-{
-    t: T,
-    v: V,
-}
-
-impl<T, V> Debug for CmpBy<T, V>
-where
-    T: PartialEq + Eq + PartialOrd + Ord + Debug,
-    V: Debug,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CmpBy")
-            .field("t", &self.t)
-            .field("v", &self.v)
-            .finish()
-    }
-}
-
-impl<T, V> CmpBy<T, V>
-where
-    T: PartialEq + Eq + PartialOrd + Ord,
-{
-    fn new(t: T, v: V) -> Self {
-        Self { t, v }
-    }
-}
-
-impl<T, V> PartialEq for CmpBy<T, V>
-where
-    T: PartialEq + Eq + PartialOrd + Ord,
-{
-    fn eq(&self, other: &Self) -> bool {
-        T::eq(&self.t, &other.t)
-    }
-}
-
-impl<T, V> PartialOrd for CmpBy<T, V>
-where
-    T: PartialEq + Eq + PartialOrd + Ord,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        T::partial_cmp(&self.t, &other.t)
-    }
-}
-
-impl<T, V> Eq for CmpBy<T, V> where T: PartialEq + Eq + PartialOrd + Ord {}
-
-impl<T, V> Ord for CmpBy<T, V>
-where
-    T: PartialEq + Eq + PartialOrd + Ord,
-{
-    fn cmp(&self, other: &Self) -> Ordering {
-        T::cmp(&self.t, &other.t)
     }
 }
 

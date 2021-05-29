@@ -9,14 +9,20 @@ use std::cmp::min;
 /// The location in imaginary time (p) and the relative index of the variable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct PRel {
+pub struct PRel<OpIndex>
+where
+    OpIndex: Clone + Copy + Eq,
+{
     /// Lookup location of operator
     pub loc: OpIndex,
     /// Reltive index of variable.
     pub relv: usize,
 }
 
-impl From<(OpIndex, usize)> for PRel {
+impl<OpIndex> From<(OpIndex, usize)> for PRel<OpIndex>
+where
+    OpIndex: Clone + Copy + Eq,
+{
     fn from((loc, relv): (OpIndex, usize)) -> Self {
         Self { loc, relv }
     }
@@ -27,25 +33,20 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     /// The type used to contain the Op and handle movement around the worldlines.
     type Node: OpNode<Self::Op>;
 
-    /// Get the imaginary time value `p` associated with an opindex.
-    fn get_p_for_opindex(&self, loc: OpIndex) -> usize;
-    /// Get the opindex for `p` if one exists.
-    fn get_opindex_for_p(&self, p: usize) -> Option<OpIndex>;
-
     /// Get a ref to a node at position p
     fn get_node_ref(&self, p: usize) -> Option<&Self::Node>;
     /// Get a mutable ref to the node at position p
     fn get_node_mut(&mut self, p: usize) -> Option<&mut Self::Node>;
 
     /// Get a ref to a node at position p
-    fn get_node_ref_loc(&self, loc: OpIndex) -> &Self::Node;
+    fn get_node_ref_loc(&self, loc: Self::OpIndex) -> &Self::Node;
     /// Get a mutable ref to the node at position p
-    fn get_node_mut_loc(&mut self, loc: OpIndex) -> &mut Self::Node;
+    fn get_node_mut_loc(&mut self, loc: Self::OpIndex) -> &mut Self::Node;
 
     /// Get the first occupied p if it exists.
-    fn get_first_loc(&self) -> Option<OpIndex>;
+    fn get_first_loc(&self) -> Option<Self::OpIndex>;
     /// Get the last occupied p if it exists.
-    fn get_last_loc(&self) -> Option<OpIndex>;
+    fn get_last_loc(&self) -> Option<Self::OpIndex>;
     /// Get the first occupied p if it exists.
     fn get_first_p(&self) -> Option<usize> {
         self.get_first_loc().map(|loc| self.get_p_for_opindex(loc))
@@ -55,14 +56,14 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
         self.get_last_loc().map(|loc| self.get_p_for_opindex(loc))
     }
     /// Get the first p occupied which covers variable `var`, also returns the relative index.
-    fn get_first_prel_for_var(&self, var: usize) -> Option<PRel>;
+    fn get_first_prel_for_var(&self, var: usize) -> Option<PRel<Self::OpIndex>>;
     /// Get the last p occupied which covers variable `var`, also returns the relative index.
-    fn get_last_prel_for_var(&self, var: usize) -> Option<PRel>;
+    fn get_last_prel_for_var(&self, var: usize) -> Option<PRel<Self::OpIndex>>;
 
     /// Get the previous occupied index compared to `node`.
-    fn get_previous_loc(&self, node: &Self::Node) -> Option<OpIndex>;
+    fn get_previous_loc(&self, node: &Self::Node) -> Option<Self::OpIndex>;
     /// Get the next occupied index compared to `node`.
-    fn get_next_loc(&self, node: &Self::Node) -> Option<OpIndex>;
+    fn get_next_loc(&self, node: &Self::Node) -> Option<Self::OpIndex>;
     /// Get the previous occupied p compared to `node`.
     fn get_previous_p(&self, node: &Self::Node) -> Option<usize> {
         self.get_previous_loc(node)
@@ -76,13 +77,25 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
 
     /// Get the previous p for a given var, takes the relative var index in node. Also returns the
     /// new relative var index.
-    fn get_previous_prel_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
+    fn get_previous_prel_for_rel_var(
+        &self,
+        relvar: usize,
+        node: &Self::Node,
+    ) -> Option<PRel<Self::OpIndex>>;
     /// Get the next p for a given var, takes the relative var index in node. Also returns the new
     /// relative var index.
-    fn get_next_prel_for_rel_var(&self, relvar: usize, node: &Self::Node) -> Option<PRel>;
+    fn get_next_prel_for_rel_var(
+        &self,
+        relvar: usize,
+        node: &Self::Node,
+    ) -> Option<PRel<Self::OpIndex>>;
 
     /// Get the previous p for a given var.
-    fn get_previous_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, &str> {
+    fn get_previous_p_for_var(
+        &self,
+        var: usize,
+        node: &Self::Node,
+    ) -> Result<Option<PRel<Self::OpIndex>>, &str> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_previous_prel_for_rel_var(relvar, node))
@@ -91,7 +104,11 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
         }
     }
     /// Get the next p for a given var.
-    fn get_next_p_for_var(&self, var: usize, node: &Self::Node) -> Result<Option<PRel>, &str> {
+    fn get_next_p_for_var(
+        &self,
+        var: usize,
+        node: &Self::Node,
+    ) -> Result<Option<PRel<Self::OpIndex>>, &str> {
         let relvar = node.get_op_ref().index_of_var(var);
         if let Some(relvar) = relvar {
             Ok(self.get_next_prel_for_rel_var(relvar, node))
@@ -101,7 +118,7 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
     }
 
     /// Get the nth occupied location.
-    fn get_nth_loc(&self, n: usize) -> Option<OpIndex> {
+    fn get_nth_loc(&self, n: usize) -> Option<Self::OpIndex> {
         let acc = self.get_first_loc().map(|loc| loc);
         let res = (0..n).try_fold(acc, |loc, _| match loc {
             Some(opindex) => Ok(self.get_next_loc(self.get_node_ref_loc(opindex))),
@@ -178,9 +195,9 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
             let initial_n = initial_n
                 .map(|n| min(n, self.get_n()))
                 .unwrap_or_else(|| rng.gen_range(0..self.get_n()));
-            let nth_p = self.get_nth_p(initial_n);
+            let nth_opindex = self.usize_to_opindex(initial_n);
             // Get starting leg for pth op.
-            let op = self.get_node_ref(nth_p).unwrap();
+            let op = self.get_node_ref_loc(nth_opindex);
             let n_vars = op.get_op_ref().get_vars().len();
             let initial_var = rng.gen_range(0..n_vars);
             let initial_direction = if rng.gen() {
@@ -192,8 +209,8 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
 
             apply_loop_update(
                 self,
-                (nth_p, initial_leg),
-                nth_p,
+                (nth_opindex, initial_leg),
+                nth_opindex,
                 initial_leg,
                 h,
                 state,
@@ -208,17 +225,17 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
 }
 
 /// Allow recursive loop updates with a trampoline mechanic
-#[derive(Debug, Clone, Copy)]
-enum LoopResult {
+#[derive(Clone, Copy)]
+enum LoopResult<OpIndex> {
     Return,
-    Iterate(usize, Leg),
+    Iterate(OpIndex, Leg),
 }
 
 /// Apply loop update logic
 fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
     l: &mut L,
-    initial_op_and_leg: (usize, Leg),
-    mut sel_op_pos: usize,
+    initial_op_and_leg: (L::OpIndex, Leg),
+    mut sel_op_pos: L::OpIndex,
     mut entrance_leg: Leg,
     h: H,
     state: &mut [bool],
@@ -249,18 +266,18 @@ fn apply_loop_update<L: LoopUpdater + ?Sized, H, R: Rng>(
 /// Apply loop update logic.
 fn loop_body<L: LoopUpdater + ?Sized, H, R: Rng>(
     l: &mut L,
-    initial_op_and_leg: (usize, Leg),
-    sel_op_pos: usize,
+    initial_op_and_leg: (L::OpIndex, Leg),
+    sel_op_pos: L::OpIndex,
     entrance_leg: Leg,
     h: H,
     state: &mut [bool],
     rng: &mut R,
-) -> LoopResult
+) -> LoopResult<L::OpIndex>
 where
     H: Fn(&L::Op, Leg, Leg) -> f64,
 {
     let mut legs = StackTuplizer::<Leg, f64>::new(l);
-    let sel_opnode = l.get_node_mut(sel_op_pos).unwrap();
+    let sel_opnode = l.get_node_mut_loc(sel_op_pos);
     let sel_op = sel_opnode.get_op();
 
     let inputs_legs = (0..sel_op.get_vars().len()).map(|v| (v, OpSide::Inputs));
@@ -292,7 +309,7 @@ where
     });
 
     // No longer need mutability.
-    let sel_opnode = l.get_node_ref(sel_op_pos).unwrap();
+    let sel_opnode = l.get_node_ref_loc(sel_op_pos);
     let sel_op = sel_opnode.get_op_ref();
 
     // Check if we closed the loop before going to next opnode.

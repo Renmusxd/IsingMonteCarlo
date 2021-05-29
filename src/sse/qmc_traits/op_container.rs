@@ -3,24 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::iter::FromIterator;
 
-/// Location in imaginary time guarenteed to have an operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serialize", derive(Serialize, Deserialize))]
-pub struct OpIndex {
-    index: usize,
-}
-
-impl Into<usize> for OpIndex {
-    fn into(self) -> usize {
-        self.index
-    }
-}
-impl From<usize> for OpIndex {
-    fn from(i: usize) -> Self {
-        Self { index: i }
-    }
-}
-
 /// Ops for holding SSE graph state.
 pub trait Op: Clone + Debug {
     /// The list of op variables.
@@ -132,30 +114,52 @@ pub trait OpContainerConstructor {
 pub trait OpContainer {
     /// The op object to manage.
     type Op: Op;
+    type OpIndex: Copy + Eq;
 
     /// Get the cutoff for this container.
     fn get_cutoff(&self) -> usize;
     /// Set the cutoff for this container.
     fn set_cutoff(&mut self, cutoff: usize);
+    /// Convert opindex to usize between 0 and cutoff.
+    fn opindex_to_usize(&self, index: Self::OpIndex) -> usize;
+    /// Convert opindex to usize between 0 and cutoff.
+    fn usize_to_opindex(&self, index: usize) -> Self::OpIndex;
     /// Get the number of non-identity ops.
     fn get_n(&self) -> usize;
     /// Get the number of managed variables.
     fn get_nvars(&self) -> usize;
-    /// Get the pth op, None is identity.
-    fn get_pth(&self, p: usize) -> Option<&Self::Op>;
+    /// Get the op at an index.
+    fn get_op(&self, index: Self::OpIndex) -> &Self::Op;
+    /// Get a mutable op at an index.
+    fn get_op_mut(&mut self, index: Self::OpIndex) -> &mut Self::Op;
+    /// If there exists an op index for this point in time, return it.
+    fn get_opindex_for_p(&self, p: usize) -> Option<Self::OpIndex>;
+    /// Get the imaginary time value `p` associated with an opindex.
+    fn get_p_for_opindex(&self, loc: Self::OpIndex) -> usize;
     /// Gets the count of `bond` ops in the graph.
     fn get_count(&self, bond: usize) -> usize;
-
     /// Iterate through the imaginary time states of the opcontainer.
     fn itime_fold<F, T>(&self, state: &mut [bool], fold_fn: F, init: T) -> T
     where
         F: Fn(T, &[bool]) -> T;
 
+    /// Get the pth op, None is identity.
+    fn get_pth_op(&self, p: usize) -> Option<&Self::Op> {
+        self.get_opindex_for_p(p)
+            .map(|opindex| self.get_op(opindex))
+    }
+
+    /// Get the pth op, None is identity.
+    fn get_pth_op_mut(&mut self, p: usize) -> Option<&mut Self::Op> {
+        self.get_opindex_for_p(p)
+            .map(|opindex| self.get_op_mut(opindex))
+    }
+
     /// Verify the integrity of the OpContainer.
     fn verify(&self, state: &[bool]) -> bool {
         let mut rolling_state = state.to_vec();
         for p in 0..self.get_cutoff() {
-            let op = self.get_pth(p);
+            let op = self.get_pth_op(p);
             if let Some(op) = op {
                 for (v, inp) in op.get_vars().iter().zip(op.get_inputs().iter()) {
                     if rolling_state[*v] != *inp {

@@ -1,4 +1,4 @@
-use crate::sse::{DiagonalUpdater, LoopUpdater, OpContainer, OpIndex};
+use crate::sse::{DiagonalUpdater, LoopUpdater, OpContainer};
 
 /// Args required to mutate, allows flexibility of implementations.
 pub trait MutateArgs {
@@ -57,7 +57,7 @@ pub trait DiagonalSubsection: OpContainer + LoopUpdater + DiagonalUpdater {
         args: Option<Self::Args>,
     ) -> T
     where
-        F: Fn(&Self, &Self::Op, OpIndex, T) -> (Option<Option<Self::Op>>, T),
+        F: Fn(&Self, &Self::Op, Self::OpIndex, T) -> (Option<Option<Self::Op>>, T),
     {
         let (t, _) = self.mutate_subsection(
             pstart,
@@ -92,7 +92,7 @@ pub trait DiagonalSubsection: OpContainer + LoopUpdater + DiagonalUpdater {
         vars: &[usize],
         hint: It,
     ) where
-        It: IntoIterator<Item = Option<OpIndex>>;
+        It: IntoIterator<Item = Option<Self::OpIndex>>;
 
     /// Returns arg made for the mutation
     fn return_args(&mut self, args: Self::Args);
@@ -108,7 +108,7 @@ pub trait DiagonalSubsection: OpContainer + LoopUpdater + DiagonalUpdater {
         vars: &[usize],
         hint: It,
     ) where
-        It: IntoIterator<Item = Option<OpIndex>>;
+        It: IntoIterator<Item = Option<Self::OpIndex>>;
 
     /// Iterate over ops at indices less than or equal to p. Applies function `f_at_p` only to the
     /// op at p. Applies `f` to all other ops above p.

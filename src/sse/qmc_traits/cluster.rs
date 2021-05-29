@@ -9,7 +9,7 @@ pub trait ClusterUpdater:
     LoopUpdater
     + Factory<Vec<bool>>
     + Factory<Vec<usize>>
-    + Factory<Vec<OpIndex>>
+    + Factory<Vec<Self::OpIndex>>
     + Factory<Vec<Option<usize>>>
     + Factory<Vec<OpSide>>
 {
@@ -53,14 +53,14 @@ pub trait ClusterUpdater:
         let constant_op_loc = self.find_constant_op();
         let n_clusters = if let Some(constant_op_loc) = constant_op_loc {
             // Expand to edges of cluster
-            let mut frontier = StackTuplizer::<OpIndex, OpSide>::new(self);
+            let mut frontier = StackTuplizer::<Self::OpIndex, OpSide>::new(self);
             frontier.push((constant_op_loc, OpSide::Outputs));
             frontier.push((constant_op_loc, OpSide::Inputs));
 
             let mut cluster_num = 1;
             loop {
                 while let Some((loc, frontier_side)) = frontier.pop() {
-                    match boundaries.get(loc.into()) {
+                    match boundaries.get(self.opindex_to_usize(loc)) {
                         Some((Some(_), Some(_))) => { /* This was hit by another cluster expansion. */
                         }
                         Some(_) => {
@@ -81,7 +81,7 @@ pub trait ClusterUpdater:
                 let unmapped_loc = boundaries
                     .iter()
                     .enumerate()
-                    .map(|(loc, x)| -> (OpIndex, _) { (loc.into(), x) })
+                    .map(|(loc, x)| -> (Self::OpIndex, _) { (self.usize_to_opindex(loc), x) })
                     .find_map(|(loc, (a, b))| match (a, b) {
                         (None, None) => Some(loc),
                         (Some(_), None) | (None, Some(_)) => unreachable!(),
@@ -172,7 +172,7 @@ pub trait ClusterUpdater:
     }
 
     /// Find a site with a constant op.
-    fn find_constant_op(&self) -> Option<OpIndex> {
+    fn find_constant_op(&self) -> Option<Self::OpIndex> {
         let mut loc = self.get_first_loc();
         while let Some(node_loc) = loc {
             let node = self.get_node_ref_loc(node_loc);
@@ -192,19 +192,19 @@ pub trait ClusterUpdater:
 /// Expand a cluster at a given p and leg.
 fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
     c: &mut C,
-    loc: OpIndex,
+    loc: C::OpIndex,
     leg: Leg,
     cluster_num: usize,
     boundaries: &mut StackTuplizer<Option<usize>, Option<usize>>,
-    frontier: &mut StackTuplizer<OpIndex, OpSide>,
+    frontier: &mut StackTuplizer<C::OpIndex, OpSide>,
 ) {
-    let mut interior_frontier = StackTuplizer::<OpIndex, Leg>::new(c);
+    let mut interior_frontier = StackTuplizer::<C::OpIndex, Leg>::new(c);
 
     let node = c.get_node_ref_loc(loc);
     let op = node.get_op_ref();
     if !is_valid_cluster_edge_op(op) {
         // Add all legs
-        debug_assert_eq!(boundaries.at(loc.into()), (&None, &None));
+        debug_assert_eq!(boundaries.at(c.opindex_to_usize(loc)), (&None, &None));
         let inputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Inputs));
         let outputs_legs = (0..op.get_vars().len()).map(|v| (v, OpSide::Outputs));
         let all_legs = inputs_legs.chain(outputs_legs);
@@ -215,7 +215,7 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
     };
 
     while let Some((loc, leg)) = interior_frontier.pop() {
-        set_boundary(loc, leg.1, cluster_num, boundaries);
+        set_boundary(c.opindex_to_usize(loc), leg.1, cluster_num, boundaries);
         let node = c.get_node_ref_loc(loc);
         let op = node.get_op_ref();
         let relvar = leg.0;
@@ -243,18 +243,23 @@ fn expand_whole_cluster<C: ClusterUpdater + ?Sized>(
 
         // If we hit a cluster edge, add to frontier and mark in boundary.
         if is_valid_cluster_edge_op(next_node.get_op_ref()) {
-            if !set_boundary(next_loc, next_leg.1, cluster_num, boundaries) {
+            if !set_boundary(
+                c.opindex_to_usize(next_loc),
+                next_leg.1,
+                cluster_num,
+                boundaries,
+            ) {
                 frontier.push((next_loc, next_leg.1.reverse()))
             }
         } else {
             // Allow (None, None), (Some(c), None) or (None, Some(c))
             // For (None, None) just set c==cluster_num as a hack.
-            let (a, b) = boundaries.at(next_loc.into());
+            let (a, b) = boundaries.at(c.opindex_to_usize(next_loc));
             match ((*a, *b), cluster_num) {
-                ((None, None), c) | ((Some(c), None), _) | ((None, Some(c)), _)
-                    if c == cluster_num =>
+                ((None, None), cl) | ((Some(cl), None), _) | ((None, Some(cl)), _)
+                    if cl == cluster_num =>
                 {
-                    set_boundaries(next_loc, cluster_num, boundaries);
+                    set_boundaries(c.opindex_to_usize(next_loc), cluster_num, boundaries);
 
                     let next_op = next_node.get_op_ref();
                     let inputs_legs = (0..next_op.get_vars().len()).map(|v| (v, OpSide::Inputs));
@@ -287,12 +292,12 @@ pub fn is_valid_cluster_edge(is_constant: bool, nvars: usize) -> bool {
 
 // Returns true if both sides have clusters attached.
 fn set_boundary(
-    loc: OpIndex,
+    loc: usize,
     sel: OpSide,
     cluster_num: usize,
     boundaries: &mut StackTuplizer<Option<usize>, Option<usize>>,
 ) -> bool {
-    let t = boundaries.at(loc.into());
+    let t = boundaries.at(loc);
     let res = match (sel, t) {
         (OpSide::Inputs, (None, t1)) => (Some(cluster_num), *t1),
         (OpSide::Outputs, (t0, None)) => (*t0, Some(cluster_num)),
@@ -301,12 +306,12 @@ fn set_boundary(
         (OpSide::Outputs, (t0, Some(c))) if *c == cluster_num => (*t0, Some(cluster_num)),
         _ => unreachable!(),
     };
-    boundaries.set(loc.into(), res);
-    matches!(boundaries.at(loc.into()), (Some(_), Some(_)))
+    boundaries.set(loc, res);
+    matches!(boundaries.at(loc), (Some(_), Some(_)))
 }
 
 fn set_boundaries(
-    loc: OpIndex,
+    loc: usize,
     cluster_num: usize,
     boundaries: &mut StackTuplizer<Option<usize>, Option<usize>>,
 ) {

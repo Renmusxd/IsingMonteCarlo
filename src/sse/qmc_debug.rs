@@ -12,7 +12,7 @@ pub trait DebugOps: OpContainer {
         let mut diag = 0;
         let mut offdiag = 0;
         for p in 0..cutoff {
-            let op = self.get_pth(p);
+            let op = self.get_pth_op(p);
             if let Some(op) = op {
                 if op.is_diagonal() {
                     diag += 1;
@@ -30,7 +30,7 @@ pub trait DebugOps: OpContainer {
         let cutoff = self.get_cutoff();
         let mut constant = 0;
         for p in 0..cutoff {
-            let op = self.get_pth(p);
+            let op = self.get_pth_op(p);
             if let Some(op) = op {
                 if op.is_constant() {
                     constant += 1;
