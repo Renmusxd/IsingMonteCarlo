@@ -343,309 +343,310 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
     where
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
     {
-        let op_ref = self.get_pth_op(p);
-        let (new_op, t) = f(&self, op_ref, t);
-
-        // If we are making a change.
-        if let Some(new_op) = new_op {
-            // Lets check that all vars are included in the subvars of `args`.
-            debug_assert!(
-                {
-                    op_ref
-                        .map(|op| {
-                            op.get_vars()
-                                .iter()
-                                .all(|v| args.var_to_subvar(*v).is_some())
-                        })
-                        .unwrap_or(true)
-                        && new_op
-                        .as_ref()
-                        .map(|op| {
-                            op.get_vars()
-                                .iter()
-                                .all(|v| args.var_to_subvar(*v).is_some())
-                        })
-                        .unwrap_or(true)
-
-                },
-                "Trying to mutate from or into an op which spans variables not prepared in the args."
-            );
-
-            let old_op_index = self.op_indices[p].take();
-            let old_op_node = old_op_index.map(|loc| self.ops[loc].1);
-
-            // Check if the nodes share all the same variables, in which case we can do a
-            // quick install since all linked list components are the same.
-            let same_vars = new_op
-                .as_ref()
-                .and_then(|new_op| {
-                    old_op_node
-                        .as_ref()
-                        .map(|node| node.op.get_vars() == new_op.get_vars())
-                })
-                .unwrap_or(false);
-            if same_vars {
-                // Can do a quick install
-                let new_op = new_op.unwrap();
-                let old_op_node = old_op_node.unwrap();
-                let mut node_ref = FastOpNodeTemplate::new(
-                    new_op,
-                    old_op_node.previous_for_vars,
-                    old_op_node.next_for_vars,
-                );
-                node_ref.previous_loc = old_op_node.previous_loc;
-                node_ref.next_loc = old_op_node.next_loc;
-                if let Some(bond_counters) = self.bond_counters.as_mut() {
-                    let bond = old_op_node.op.get_bond();
-                    bond_counters[bond] -= 1;
-                    let bond = node_ref.op.get_bond();
-                    bond_counters[bond] += 1;
-                }
-                self.op_indices[p] = Some(node_ref);
-            } else {
-                if let Some(node_ref) = old_op_node {
-                    debug_assert_eq!(args.last_p, node_ref.previous_p);
-
-                    // Uninstall the old op.
-                    // If there's a previous p, point it towards the next one
-                    if let Some(last_p) = args.last_p {
-                        let node = self.op_indices[last_p].as_mut().unwrap();
-                        node.next_p = node_ref.next_p;
-                    } else {
-                        // No previous p, so we are removing the head. Make necessary adjustments.
-                        self.loc_ends = if let Some((head, tail)) = self.loc_ends {
-                            debug_assert_eq!(head, p);
-                            node_ref.next_p.map(|new_head| {
-                                debug_assert_ne!(p, tail);
-                                (new_head, tail)
-                            })
-                        } else {
-                            unreachable!()
-                        }
-                    }
-                    // If there's a next p, point it towards the previous one
-                    let next_p_node = node_ref.next_p.and_then(|p| self.op_indices[p].as_mut());
-                    if let Some(next_p_node) = next_p_node {
-                        next_p_node.previous_p = args.last_p
-                    } else {
-                        // No next p, so we are removing the tail. Adjust.
-                        self.loc_ends = if let Some((head, tail)) = self.loc_ends {
-                            debug_assert_eq!(tail, p);
-                            node_ref.previous_p.map(|new_tail| {
-                                debug_assert_ne!(head, p);
-                                (head, new_tail)
-                            })
-                        } else {
-                            // Normally not allowed, but could have been set to None up above.
-                            None
-                        }
-                    }
-
-                    // Now do the same for variables.
-                    let vars = node_ref.op.get_vars();
-                    vars.iter().cloned().enumerate().for_each(|(relv, v)| {
-                        // Check the previous node using this variable.
-                        let subvar = args.var_to_subvar(v).unwrap();
-                        debug_assert_eq!(
-                            args.last_vars[subvar],
-                            node_ref.previous_for_vars[relv].map(|prel| prel.p),
-                            "P position in args must match op being removed"
-                        );
-                        debug_assert_eq!(
-                            args.last_rels[subvar],
-                            node_ref.previous_for_vars[relv].map(|prel| prel.relv),
-                            "Relative var in args must match op being removed"
-                        );
-
-                        if let Some((prev_p_for_v, prev_rel_indx)) =
-                            args.last_vars[subvar].zip(args.last_rels[subvar])
-                        {
-                            let prev_p_for_v_ref = self.op_indices[prev_p_for_v].as_mut().unwrap();
-                            prev_p_for_v_ref.next_for_vars[prev_rel_indx] =
-                                node_ref.next_for_vars[relv];
-                        } else {
-                            // This was the first one, need to edit vars list.
-                            self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
-                                debug_assert_eq!(head, PRel { loc: p, relv });
-                                // If None then we are removing the head and the tail.
-                                node_ref.next_for_vars[relv].map(|new_head| {
-                                    debug_assert_ne!(tail, PRel { loc: p, relv });
-                                    (new_head, tail)
-                                })
-                            } else {
-                                unreachable!()
-                            }
-                        }
-
-                        // Check the next nodes using this variable.
-                        if let Some(PRel {
-                            loc: next_p_for_v,
-                            relv: next_rel_index,
-                        }) = node_ref.next_for_vars[relv]
-                        {
-                            let next_p_for_v_ref = self.op_indices[next_p_for_v].as_mut().unwrap();
-                            next_p_for_v_ref.previous_for_vars[next_rel_index] = args.last_vars
-                                [subvar]
-                                .zip(args.last_rels[subvar])
-                                .map(PRel::from);
-                        } else {
-                            self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
-                                debug_assert_eq!(tail, PRel { loc: p, relv });
-                                // If None then we are removing the head and the tail.
-                                node_ref.previous_for_vars[relv].map(|new_tail| {
-                                    debug_assert_ne!(head, PRel { loc: p, relv });
-                                    (head, new_tail)
-                                })
-                            } else {
-                                // Could have been set to none previously.
-                                None
-                            }
-                        }
-                    });
-                    self.n -= 1;
-                    if let Some(bond_counters) = self.bond_counters.as_mut() {
-                        let bond = node_ref.op.get_bond();
-                        bond_counters[bond] -= 1;
-                    }
-                }
-
-                if let Some(new_op) = new_op {
-                    // Install the new one
-                    let (prevs, nexts): (LinkVars, LinkVars) = new_op
-                        .get_vars()
-                        .iter()
-                        .cloned()
-                        .map(|v| -> (Option<PRel>, Option<PRel>) {
-                            let subvar = args.var_to_subvar(v).unwrap();
-                            let prev_p_and_rel = args.last_vars[subvar]
-                                .zip(args.last_rels[subvar])
-                                .map(PRel::from);
-
-                            let next_p_and_rel = if let Some(prev_p_for_v) = args.last_vars[subvar]
-                            {
-                                // If there's a previous node for the var, check its next entry.
-                                let prev_node_for_v =
-                                    self.op_indices[prev_p_for_v].as_ref().unwrap();
-                                let indx = prev_node_for_v.op.index_of_var(v).unwrap();
-                                prev_node_for_v.next_for_vars[indx]
-                            } else if let Some((head, _)) = self.var_ends[v] {
-                                // Otherwise just look at the head (this is the new head).
-                                debug_assert_eq!(prev_p_and_rel, None);
-                                Some(head)
-                            } else {
-                                // This is the new tail.
-                                None
-                            };
-
-                            (prev_p_and_rel, next_p_and_rel)
-                        })
-                        .unzip();
-
-                    // Now adjust other nodes and ends
-                    prevs
-                        .iter()
-                        .zip(new_op.get_vars().iter())
-                        .enumerate()
-                        .for_each(|(relv, (prev, v))| {
-                            if let Some(prel) = prev {
-                                let prev_p = prel.loc;
-                                let prev_rel = prel.relv;
-                                let prev_node = self.op_indices[prev_p].as_mut().unwrap();
-                                debug_assert_eq!(prev_node.get_op_ref().get_vars()[prev_rel], *v);
-                                prev_node.next_for_vars[prev_rel] = Some(PRel::from((p, relv)));
-                            } else {
-                                self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
-                                    debug_assert!(head.p >= p);
-                                    Some((PRel { loc: p, relv }, tail))
-                                } else {
-                                    Some((PRel { loc: p, relv }, PRel { loc: p, relv }))
-                                }
-                            }
-                        });
-
-                    nexts
-                        .iter()
-                        .zip(new_op.get_vars().iter())
-                        .enumerate()
-                        .for_each(|(relv, (next, v))| {
-                            if let Some(PRel {
-                                loc: next_p,
-                                relv: next_rel,
-                            }) = next
-                            {
-                                let next_node = self.op_indices[*next_p].as_mut().unwrap();
-                                debug_assert_eq!(next_node.get_op_ref().get_vars()[*next_rel], *v);
-                                next_node.previous_for_vars[*next_rel] =
-                                    Some(PRel { loc: p, relv });
-                            } else {
-                                self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
-                                    debug_assert!(tail.p <= p);
-                                    Some((head, PRel { loc: p, relv }))
-                                } else {
-                                    Some((PRel { loc: p, relv }, PRel { loc: p, relv }))
-                                }
-                            }
-                        });
-
-                    let mut node_ref = FastOpNodeTemplate::new(new_op, prevs, nexts);
-                    node_ref.previous_loc = args.last_p;
-                    node_ref.next_loc = if let Some(last_p) = args.last_p {
-                        let last_p_node = self.op_indices[last_p].as_ref().unwrap();
-                        last_p_node.next_p
-                    } else if let Some((head, _)) = self.loc_ends {
-                        Some(head)
-                    } else {
-                        None
-                    };
-
-                    // Based on what these were set to, adjust the p_ends and neighboring nodes.
-                    if let Some(prev) = node_ref.previous_loc {
-                        let prev_node = self.op_indices[prev].as_mut().unwrap();
-                        prev_node.next_p = Some(p);
-                    } else {
-                        self.loc_ends = if let Some((head, tail)) = self.loc_ends {
-                            debug_assert!(head >= p);
-                            Some((p, tail))
-                        } else {
-                            Some((p, p))
-                        }
-                    };
-
-                    if let Some(next) = node_ref.next_loc {
-                        let next_node = self.op_indices[next].as_mut().unwrap();
-                        next_node.previous_p = Some(p);
-                    } else {
-                        self.loc_ends = if let Some((head, tail)) = self.loc_ends {
-                            debug_assert!(tail <= p);
-                            Some((head, p))
-                        } else {
-                            Some((p, p))
-                        }
-                    };
-                    if let Some(bond_counters) = self.bond_counters.as_mut() {
-                        let bond = node_ref.op.get_bond();
-                        bond_counters[bond] += 1;
-                    }
-                    self.op_indices[p] = Some(node_ref);
-                    self.n += 1;
-                }
-            }
-        }
-
-        if let Some(op) = self.op_indices[p].as_ref().map(|r| &r.op) {
-            op.get_vars()
-                .iter()
-                .cloned()
-                .enumerate()
-                .for_each(|(relv, v)| {
-                    if let Some(subvar) = args.var_to_subvar(v) {
-                        args.last_vars[subvar] = Some(p);
-                        args.last_rels[subvar] = Some(relv);
-                    }
-                });
-            args.last_p = Some(p)
-        }
-        (t, args)
+        todo!()
+        // let op_ref = self.get_pth_op(p);
+        // let (new_op, t) = f(&self, op_ref, t);
+        //
+        // // If we are making a change.
+        // if let Some(new_op) = new_op {
+        //     // Lets check that all vars are included in the subvars of `args`.
+        //     debug_assert!(
+        //         {
+        //             op_ref
+        //                 .map(|op| {
+        //                     op.get_vars()
+        //                         .iter()
+        //                         .all(|v| args.var_to_subvar(*v).is_some())
+        //                 })
+        //                 .unwrap_or(true)
+        //                 && new_op
+        //                 .as_ref()
+        //                 .map(|op| {
+        //                     op.get_vars()
+        //                         .iter()
+        //                         .all(|v| args.var_to_subvar(*v).is_some())
+        //                 })
+        //                 .unwrap_or(true)
+        //
+        //         },
+        //         "Trying to mutate from or into an op which spans variables not prepared in the args."
+        //     );
+        //
+        //     let old_op_index = self.op_indices[p].take();
+        //     let old_op_node = old_op_index.map(|loc| self.ops[loc].1);
+        //
+        //     // Check if the nodes share all the same variables, in which case we can do a
+        //     // quick install since all linked list components are the same.
+        //     let same_vars = new_op
+        //         .as_ref()
+        //         .and_then(|new_op| {
+        //             old_op_node
+        //                 .as_ref()
+        //                 .map(|node| node.op.get_vars() == new_op.get_vars())
+        //         })
+        //         .unwrap_or(false);
+        //     if same_vars {
+        //         // Can do a quick install
+        //         let new_op = new_op.unwrap();
+        //         let old_op_node = old_op_node.unwrap();
+        //         let mut node_ref = FastOpNodeTemplate::new(
+        //             new_op,
+        //             old_op_node.previous_for_vars,
+        //             old_op_node.next_for_vars,
+        //         );
+        //         node_ref.previous_loc = old_op_node.previous_loc;
+        //         node_ref.next_loc = old_op_node.next_loc;
+        //         if let Some(bond_counters) = self.bond_counters.as_mut() {
+        //             let bond = old_op_node.op.get_bond();
+        //             bond_counters[bond] -= 1;
+        //             let bond = node_ref.op.get_bond();
+        //             bond_counters[bond] += 1;
+        //         }
+        //         self.op_indices[p] = Some(node_ref);
+        //     } else {
+        //         if let Some(node_ref) = old_op_node {
+        //             debug_assert_eq!(args.last_p, node_ref.previous_p);
+        //
+        //             // Uninstall the old op.
+        //             // If there's a previous p, point it towards the next one
+        //             if let Some(last_p) = args.last_p {
+        //                 let node = self.op_indices[last_p].as_mut().unwrap();
+        //                 node.next_p = node_ref.next_p;
+        //             } else {
+        //                 // No previous p, so we are removing the head. Make necessary adjustments.
+        //                 self.loc_ends = if let Some((head, tail)) = self.loc_ends {
+        //                     debug_assert_eq!(head, p);
+        //                     node_ref.next_p.map(|new_head| {
+        //                         debug_assert_ne!(p, tail);
+        //                         (new_head, tail)
+        //                     })
+        //                 } else {
+        //                     unreachable!()
+        //                 }
+        //             }
+        //             // If there's a next p, point it towards the previous one
+        //             let next_p_node = node_ref.next_p.and_then(|p| self.op_indices[p].as_mut());
+        //             if let Some(next_p_node) = next_p_node {
+        //                 next_p_node.previous_p = args.last_p
+        //             } else {
+        //                 // No next p, so we are removing the tail. Adjust.
+        //                 self.loc_ends = if let Some((head, tail)) = self.loc_ends {
+        //                     debug_assert_eq!(tail, p);
+        //                     node_ref.previous_p.map(|new_tail| {
+        //                         debug_assert_ne!(head, p);
+        //                         (head, new_tail)
+        //                     })
+        //                 } else {
+        //                     // Normally not allowed, but could have been set to None up above.
+        //                     None
+        //                 }
+        //             }
+        //
+        //             // Now do the same for variables.
+        //             let vars = node_ref.op.get_vars();
+        //             vars.iter().cloned().enumerate().for_each(|(relv, v)| {
+        //                 // Check the previous node using this variable.
+        //                 let subvar = args.var_to_subvar(v).unwrap();
+        //                 debug_assert_eq!(
+        //                     args.last_vars[subvar],
+        //                     node_ref.previous_for_vars[relv].map(|prel| prel.p),
+        //                     "P position in args must match op being removed"
+        //                 );
+        //                 debug_assert_eq!(
+        //                     args.last_rels[subvar],
+        //                     node_ref.previous_for_vars[relv].map(|prel| prel.relv),
+        //                     "Relative var in args must match op being removed"
+        //                 );
+        //
+        //                 if let Some((prev_p_for_v, prev_rel_indx)) =
+        //                     args.last_vars[subvar].zip(args.last_rels[subvar])
+        //                 {
+        //                     let prev_p_for_v_ref = self.op_indices[prev_p_for_v].as_mut().unwrap();
+        //                     prev_p_for_v_ref.next_for_vars[prev_rel_indx] =
+        //                         node_ref.next_for_vars[relv];
+        //                 } else {
+        //                     // This was the first one, need to edit vars list.
+        //                     self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
+        //                         debug_assert_eq!(head, PRel { loc: p, relv });
+        //                         // If None then we are removing the head and the tail.
+        //                         node_ref.next_for_vars[relv].map(|new_head| {
+        //                             debug_assert_ne!(tail, PRel { loc: p, relv });
+        //                             (new_head, tail)
+        //                         })
+        //                     } else {
+        //                         unreachable!()
+        //                     }
+        //                 }
+        //
+        //                 // Check the next nodes using this variable.
+        //                 if let Some(PRel {
+        //                     loc: next_p_for_v,
+        //                     relv: next_rel_index,
+        //                 }) = node_ref.next_for_vars[relv]
+        //                 {
+        //                     let next_p_for_v_ref = self.op_indices[next_p_for_v].as_mut().unwrap();
+        //                     next_p_for_v_ref.previous_for_vars[next_rel_index] = args.last_vars
+        //                         [subvar]
+        //                         .zip(args.last_rels[subvar])
+        //                         .map(PRel::from);
+        //                 } else {
+        //                     self.var_ends[v] = if let Some((head, tail)) = self.var_ends[v] {
+        //                         debug_assert_eq!(tail, PRel { loc: p, relv });
+        //                         // If None then we are removing the head and the tail.
+        //                         node_ref.previous_for_vars[relv].map(|new_tail| {
+        //                             debug_assert_ne!(head, PRel { loc: p, relv });
+        //                             (head, new_tail)
+        //                         })
+        //                     } else {
+        //                         // Could have been set to none previously.
+        //                         None
+        //                     }
+        //                 }
+        //             });
+        //             self.n -= 1;
+        //             if let Some(bond_counters) = self.bond_counters.as_mut() {
+        //                 let bond = node_ref.op.get_bond();
+        //                 bond_counters[bond] -= 1;
+        //             }
+        //         }
+        //
+        //         if let Some(new_op) = new_op {
+        //             // Install the new one
+        //             let (prevs, nexts): (LinkVars, LinkVars) = new_op
+        //                 .get_vars()
+        //                 .iter()
+        //                 .cloned()
+        //                 .map(|v| -> (Option<PRel>, Option<PRel>) {
+        //                     let subvar = args.var_to_subvar(v).unwrap();
+        //                     let prev_p_and_rel = args.last_vars[subvar]
+        //                         .zip(args.last_rels[subvar])
+        //                         .map(PRel::from);
+        //
+        //                     let next_p_and_rel = if let Some(prev_p_for_v) = args.last_vars[subvar]
+        //                     {
+        //                         // If there's a previous node for the var, check its next entry.
+        //                         let prev_node_for_v =
+        //                             self.op_indices[prev_p_for_v].as_ref().unwrap();
+        //                         let indx = prev_node_for_v.op.index_of_var(v).unwrap();
+        //                         prev_node_for_v.next_for_vars[indx]
+        //                     } else if let Some((head, _)) = self.var_ends[v] {
+        //                         // Otherwise just look at the head (this is the new head).
+        //                         debug_assert_eq!(prev_p_and_rel, None);
+        //                         Some(head)
+        //                     } else {
+        //                         // This is the new tail.
+        //                         None
+        //                     };
+        //
+        //                     (prev_p_and_rel, next_p_and_rel)
+        //                 })
+        //                 .unzip();
+        //
+        //             // Now adjust other nodes and ends
+        //             prevs
+        //                 .iter()
+        //                 .zip(new_op.get_vars().iter())
+        //                 .enumerate()
+        //                 .for_each(|(relv, (prev, v))| {
+        //                     if let Some(prel) = prev {
+        //                         let prev_p = prel.loc;
+        //                         let prev_rel = prel.relv;
+        //                         let prev_node = self.op_indices[prev_p].as_mut().unwrap();
+        //                         debug_assert_eq!(prev_node.get_op_ref().get_vars()[prev_rel], *v);
+        //                         prev_node.next_for_vars[prev_rel] = Some(PRel::from((p, relv)));
+        //                     } else {
+        //                         self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
+        //                             debug_assert!(head.p >= p);
+        //                             Some((PRel { loc: p, relv }, tail))
+        //                         } else {
+        //                             Some((PRel { loc: p, relv }, PRel { loc: p, relv }))
+        //                         }
+        //                     }
+        //                 });
+        //
+        //             nexts
+        //                 .iter()
+        //                 .zip(new_op.get_vars().iter())
+        //                 .enumerate()
+        //                 .for_each(|(relv, (next, v))| {
+        //                     if let Some(PRel {
+        //                         loc: next_p,
+        //                         relv: next_rel,
+        //                     }) = next
+        //                     {
+        //                         let next_node = self.op_indices[*next_p].as_mut().unwrap();
+        //                         debug_assert_eq!(next_node.get_op_ref().get_vars()[*next_rel], *v);
+        //                         next_node.previous_for_vars[*next_rel] =
+        //                             Some(PRel { loc: p, relv });
+        //                     } else {
+        //                         self.var_ends[*v] = if let Some((head, tail)) = self.var_ends[*v] {
+        //                             debug_assert!(tail.p <= p);
+        //                             Some((head, PRel { loc: p, relv }))
+        //                         } else {
+        //                             Some((PRel { loc: p, relv }, PRel { loc: p, relv }))
+        //                         }
+        //                     }
+        //                 });
+        //
+        //             let mut node_ref = FastOpNodeTemplate::new(new_op, prevs, nexts);
+        //             node_ref.previous_loc = args.last_p;
+        //             node_ref.next_loc = if let Some(last_p) = args.last_p {
+        //                 let last_p_node = self.op_indices[last_p].as_ref().unwrap();
+        //                 last_p_node.next_p
+        //             } else if let Some((head, _)) = self.loc_ends {
+        //                 Some(head)
+        //             } else {
+        //                 None
+        //             };
+        //
+        //             // Based on what these were set to, adjust the p_ends and neighboring nodes.
+        //             if let Some(prev) = node_ref.previous_loc {
+        //                 let prev_node = self.op_indices[prev].as_mut().unwrap();
+        //                 prev_node.next_p = Some(p);
+        //             } else {
+        //                 self.loc_ends = if let Some((head, tail)) = self.loc_ends {
+        //                     debug_assert!(head >= p);
+        //                     Some((p, tail))
+        //                 } else {
+        //                     Some((p, p))
+        //                 }
+        //             };
+        //
+        //             if let Some(next) = node_ref.next_loc {
+        //                 let next_node = self.op_indices[next].as_mut().unwrap();
+        //                 next_node.previous_p = Some(p);
+        //             } else {
+        //                 self.loc_ends = if let Some((head, tail)) = self.loc_ends {
+        //                     debug_assert!(tail <= p);
+        //                     Some((head, p))
+        //                 } else {
+        //                     Some((p, p))
+        //                 }
+        //             };
+        //             if let Some(bond_counters) = self.bond_counters.as_mut() {
+        //                 let bond = node_ref.op.get_bond();
+        //                 bond_counters[bond] += 1;
+        //             }
+        //             self.op_indices[p] = Some(node_ref);
+        //             self.n += 1;
+        //         }
+        //     }
+        // }
+        //
+        // if let Some(op) = self.op_indices[p].as_ref().map(|r| &r.op) {
+        //     op.get_vars()
+        //         .iter()
+        //         .cloned()
+        //         .enumerate()
+        //         .for_each(|(relv, v)| {
+        //             if let Some(subvar) = args.var_to_subvar(v) {
+        //                 args.last_vars[subvar] = Some(p);
+        //                 args.last_rels[subvar] = Some(relv);
+        //             }
+        //         });
+        //     args.last_p = Some(p)
+        // }
+        // (t, args)
     }
 
     fn mutate_subsection<T, F>(
@@ -739,23 +740,23 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
             // changes to those. TODO add this to description.
 
             // Pop from heap, move, repeat.
-            while let Some(p) = p_heap.pop().map(|rp| rp.0) {
+            while let Some((loc, p)) = p_heap.pop().map(|rp| (*rp.value(), rp.key().0)) {
                 if p > pend {
                     break;
                 }
                 // Pop duplicates.
                 while p_heap
                     .peek()
-                    .map(|rp| rp.0)
+                    .map(|rp| rp.key().0)
                     .map(|rp| rp <= p)
                     .unwrap_or(false)
                 {
                     let popped = p_heap.pop();
-                    debug_assert_eq!(Some(Reverse(p)), popped);
+                    debug_assert_eq!(Some(CmpBy::new(Reverse(p), loc)), popped);
                 }
-                debug_assert!(p_heap.iter().all(|rp| rp.0 > p));
+                debug_assert!(p_heap.iter().all(|rp| rp.key().0 > p));
 
-                let node = self.get_node_ref(p).unwrap();
+                let node = self.get_node_ref_loc(loc);
                 // Add next ps
                 let op = node.get_op_ref();
                 // Current op must have at least 1 var which appears in subvars.
@@ -772,13 +773,14 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
                     .filter_map(|(relv, v)| args.var_to_subvar(v).map(|_| relv))
                     .for_each(|relv| {
                         if let Some(prel) = self.get_next_prel_for_rel_var(relv, node) {
-                            p_heap.push(Reverse(prel.loc));
+                            let prelp = self.get_p_for_opindex(prel.loc);
+                            p_heap.push(CmpBy::new(Reverse(prelp), prel.loc));
                         }
                     });
                 // While the last_vars and last_rels should be correct (since all within subvars)
                 // it's possible that the last_p is incorrect since it was out of the subvars. To
                 // work around this we restrict f to not be able to remove ops.
-                let last_p = self.get_previous_p(node);
+                let last_p = self.get_previous_loc(node);
                 // If there's a disagreement is must be because the previous op had none of the
                 // focused subvars.
                 debug_assert!(

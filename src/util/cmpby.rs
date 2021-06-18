@@ -29,6 +29,12 @@ where
     pub fn new(t: T, v: V) -> Self {
         Self { t, v }
     }
+    pub fn key(&self) -> &T {
+        &self.t
+    }
+    pub fn value(&self) -> &V {
+        &self.v
+    }
 }
 
 impl<T, V> PartialEq for CmpBy<T, V>

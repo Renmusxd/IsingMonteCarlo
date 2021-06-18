@@ -1232,20 +1232,7 @@ fn find_constants<RVB>(
 /// Get returns n with chance 1/2^(n+1)
 /// Chance of failure is 1/2^(2^64) and should therefore be acceptable.
 pub fn contiguous_bits<R: Rng>(r: &mut R) -> usize {
-    let mut acc = 0;
-    let mut v = r.next_u64();
-    loop {
-        if v == std::u64::MAX {
-            acc += 64;
-            v = r.next_u64();
-        } else {
-            while v & 1 == 1 {
-                acc += 1;
-                v >>= 1;
-            }
-            break acc;
-        }
-    }
+    r.next_u64().trailing_ones() as usize
 }
 
 fn calculate_mult(
