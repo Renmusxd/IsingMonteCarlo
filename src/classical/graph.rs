@@ -1,7 +1,7 @@
 use crate::util::vec_help::remove_doubles;
 use rand::prelude::*;
 use smallvec::{smallvec, SmallVec};
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::fmt::{Debug, Error, Formatter};
 
 /// A graph definition for use in classical monte carlo.
@@ -361,8 +361,8 @@ impl<R: Rng> GraphState<R> {
         // Energy cost of this flip
         if let Some(mut spin_state) = self.state.take() {
             let only_basic_moves = only_basic_moves.unwrap_or(false);
-            let nspinupdates = nspinupdates.unwrap_or_else(|| min(1, spin_state.len() / 2));
-            let nedgeupdates = nedgeupdates.unwrap_or_else(|| min(1, self.edges.len() / 2));
+            let nspinupdates = nspinupdates.unwrap_or_else(|| max(1, spin_state.len() / 2));
+            let nedgeupdates = nedgeupdates.unwrap_or_else(|| max(1, self.edges.len() / 2));
             let nwormupdates = nwormupdates.unwrap_or(1);
             let t = if only_basic_moves { 2 } else { 3 };
             let choice: u8 = self.rng.gen_range(0..t);
