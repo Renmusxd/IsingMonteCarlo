@@ -1090,13 +1090,37 @@ pub mod serialization {
     mod serialize_test {
         use super::*;
         use rand::prelude::SmallRng;
-        use rand::SeedableRng;
-        use rand_isaac::IsaacRng;
+        use rand::{Error, RngCore, SeedableRng};
+
+        #[derive(Serialize, Deserialize)]
+        struct FakeSerializbleRng {}
+        impl FakeSerializbleRng {
+            fn new() -> Self {
+                Self {}
+            }
+        }
+        impl RngCore for FakeSerializbleRng {
+            fn next_u32(&mut self) -> u32 {
+                0
+            }
+
+            fn next_u64(&mut self) -> u64 {
+                0
+            }
+
+            fn fill_bytes(&mut self, dest: &mut [u8]) {
+                dest.iter_mut().for_each(|b| *b = 0)
+            }
+
+            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+                Ok(dest.iter_mut().for_each(|b| *b = 0))
+            }
+        }
 
         #[test]
         fn test_serialize() {
-            let rng = IsaacRng::seed_from_u64(1234);
-            let mut g = DefaultQmcIsingGraph::<IsaacRng>::new_with_rng(
+            let rng = FakeSerializbleRng::new();
+            let mut g = DefaultQmcIsingGraph::<FakeSerializbleRng>::new_with_rng(
                 vec![((0, 1), 1.0)],
                 1.0,
                 0.,
@@ -1104,15 +1128,15 @@ pub mod serialization {
                 rng,
                 None,
             );
-            g.timesteps(100, 1.0);
+            g.timesteps(1, 1.0);
             let mut v: Vec<u8> = Vec::default();
             serde_json::to_writer_pretty(&mut v, &g).unwrap();
-            let _: DefaultQmcIsingGraph<IsaacRng> = serde_json::from_slice(&v).unwrap();
+            let _: DefaultQmcIsingGraph<FakeSerializbleRng> = serde_json::from_slice(&v).unwrap();
         }
 
         #[test]
         fn test_serialize_no_rng() {
-            let rng = SmallRng::seed_from_u64(1234);
+            let rng = FakeSerializbleRng::new();
             let mut g = DefaultQmcIsingGraph::<SmallRng>::new_with_rng(
                 vec![((0, 1), 1.0)],
                 1.0,
@@ -1121,7 +1145,7 @@ pub mod serialization {
                 rng,
                 None,
             );
-            g.timesteps(100, 1.0);
+            g.timesteps(1, 1.0);
             let mut v: Vec<u8> = Vec::default();
             let sg: DefaultSerializeQmcGraph = g.into();
             serde_json::to_writer_pretty(&mut v, &sg).unwrap();
