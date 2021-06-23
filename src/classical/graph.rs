@@ -1,7 +1,7 @@
 use crate::util::vec_help::remove_doubles;
 use rand::prelude::*;
 use smallvec::{smallvec, SmallVec};
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::fmt::{Debug, Error, Formatter};
 
 /// A graph definition for use in classical monte carlo.
