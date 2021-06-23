@@ -1,6 +1,7 @@
 use crate::sse::*;
 use crate::util::allocator::Factory;
 use crate::util::bondcontainer::BondContainer;
+use crate::util::vec_help::remove_doubles;
 use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -944,29 +945,6 @@ where
     mult
 }
 
-fn remove_doubles<T: Eq + Copy>(v: &mut Vec<T>) {
-    let mut ii = 0;
-    let mut jj = 0;
-    while jj + 1 < v.len() {
-        if v[jj] == v[jj + 1] {
-            jj += 2;
-        } else {
-            v[ii] = v[jj];
-            ii += 1;
-            jj += 1;
-        }
-    }
-    if jj < v.len() {
-        v[ii] = v[jj];
-        ii += 1;
-        jj += 1;
-    }
-    while jj > ii {
-        v.pop();
-        jj -= 1;
-    }
-}
-
 trait ClusterBoundaryManager {
     fn pop_index<R: Rng>(&mut self, rng: &mut R) -> (usize, Option<usize>, f64);
     fn push_adjacent(&mut self, var: usize, pos: Option<usize>, weight: Option<f64>);
@@ -1279,20 +1257,6 @@ mod sc_tests {
         let overlaps = find_overlapping_starts(p_start, p_end, cutoff, &flips).collect::<Vec<_>>();
         println!("{:?}", overlaps);
         assert_eq!(overlaps, vec![3, 4, 0]);
-    }
-
-    #[test]
-    fn test_remove_dups() {
-        let mut v = vec![0, 0, 1, 2, 3, 3];
-        remove_doubles(&mut v);
-        assert_eq!(v, vec![1, 2])
-    }
-
-    #[test]
-    fn test_remove_dups_again() {
-        let mut v = vec![0, 0, 1, 2, 2, 3];
-        remove_doubles(&mut v);
-        assert_eq!(v, vec![1, 3])
     }
 
     struct EN {
