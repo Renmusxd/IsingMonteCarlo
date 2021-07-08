@@ -624,7 +624,7 @@ pub mod rayon_tempering {
                     |sample, q| {
                         let nbonds = q.n_bonds();
                         (0..nbonds)
-                            .map(|bond| q.value_for_bond(bond, &sample))
+                            .map(|bond| q.value_for_bond(bond, sample))
                             .collect()
                     },
                 )

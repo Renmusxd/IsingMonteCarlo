@@ -134,7 +134,7 @@ pub trait LoopUpdater: OpContainer + Factory<Vec<Leg>> + Factory<Vec<f64>> {
             });
             // Call the supplied hamiltonian.
             hamiltonian(
-                &op.get_vars(),
+                op.get_vars(),
                 op.get_bond(),
                 inputs.as_ref(),
                 outputs.as_ref(),

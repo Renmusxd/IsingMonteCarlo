@@ -307,7 +307,7 @@ impl<O: Op + Clone, ALLOC: FastOpAllocator> DiagonalSubsection for FastOpsTempla
         F: Fn(&Self, Option<&Self::Op>, T) -> (Option<Option<Self::Op>>, T),
     {
         let op_ref = self.get_pth(p);
-        let (new_op, t) = f(&self, op_ref, t);
+        let (new_op, t) = f(self, op_ref, t);
 
         // If we are making a change.
         if let Some(new_op) = new_op {

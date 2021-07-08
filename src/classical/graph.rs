@@ -244,7 +244,7 @@ impl<R: Rng> GraphState<R> {
                 smallstack.retain(|(_, de)| (de + starting_e).abs() < f64::EPSILON);
             }
             // Smallstack now has symmetric operations as well as ending conditions.
-            let (ov, de) = if smallstack.len() > 0 {
+            let (ov, de) = if !smallstack.is_empty() {
                 let choice = rng.gen_range(0..smallstack.len());
                 let (ov, de) = smallstack[choice];
                 visit_path.push(ov);
@@ -302,10 +302,7 @@ impl<R: Rng> GraphState<R> {
             let total_he = visit_path
                 .iter()
                 .cloned()
-                .map(|v| {
-                    let de = 2.0 * biases[v] * if state[v] { 1.0 } else { -1.0 };
-                    de
-                })
+                .map(|v| 2.0 * biases[v] * if state[v] { 1.0 } else { -1.0 })
                 .sum();
             if !Self::should_flip(rng, beta, total_he) {
                 visit_path.iter().cloned().for_each(|v| {

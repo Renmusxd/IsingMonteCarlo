@@ -398,7 +398,7 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                     .zip(cluster_state.iter().cloned())
                     .for_each(|(b, c)| *b = *b != c);
 
-                let mut args = rvb.get_empty_args(SubvarAccess::Varlist(&vars));
+                let mut args = rvb.get_empty_args(SubvarAccess::Varlist(vars));
                 rvb.fill_args_at_p_with_hint(from, &mut args, vars, boundary_tops.iter().cloned());
 
                 let acc = (next_cluster_index, &mut bonds, substate, cluster_state, rng);

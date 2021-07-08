@@ -171,16 +171,16 @@ impl OpWeights for FastOps {
         while let Some(p) = op_p {
             let op = self.get_node_ref(p).unwrap();
             let w1 = h1(
-                &op.op.get_vars(),
+                op.op.get_vars(),
                 op.op.get_bond(),
-                &op.op.get_inputs(),
-                &op.op.get_outputs(),
+                op.op.get_inputs(),
+                op.op.get_outputs(),
             );
             let w2 = h2(
-                &op.op.get_vars(),
+                op.op.get_vars(),
                 op.op.get_bond(),
-                &op.op.get_inputs(),
-                &op.op.get_outputs(),
+                op.op.get_inputs(),
+                op.op.get_outputs(),
             );
             if w1 == 0.0 {
                 return 0.0;
