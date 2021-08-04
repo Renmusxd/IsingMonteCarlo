@@ -20,9 +20,8 @@ fn run_single_bond() {
         manager.make_loop_update_with_rng(
             None,
             |_, _, inputs, outputs| {
-                if inputs == outputs {
-                    1.0
-                } else if inputs.iter().zip(outputs.iter().rev()).all(|(a, b)| a == b) {
+                if inputs == outputs || inputs.iter().zip(outputs.iter().rev()).all(|(a, b)| a == b)
+                {
                     1.0
                 } else {
                     0.0
@@ -59,9 +58,8 @@ fn run_double_bond() {
         manager.make_loop_update_with_rng(
             None,
             |_, _, inputs, outputs| {
-                if inputs == outputs {
-                    1.0
-                } else if inputs.iter().zip(outputs.iter().rev()).all(|(a, b)| a == b) {
+                if inputs == outputs || inputs.iter().zip(outputs.iter().rev()).all(|(a, b)| a == b)
+                {
                     1.0
                 } else {
                     0.0
