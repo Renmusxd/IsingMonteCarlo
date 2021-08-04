@@ -40,7 +40,6 @@ mod tests {
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
     use rand_chacha::ChaChaRng;
-    use rand_isaac::Isaac64Rng;
     use test::Bencher;
 
     #[bench]
@@ -82,23 +81,6 @@ mod tests {
         let l = 16;
         let rng = ChaChaRng::seed_from_u64(1234);
         let mut g = QmcIsingGraph::<ChaChaRng, FastOps>::new_with_rng(
-            one_d_periodic(l),
-            1.,
-            0.,
-            l,
-            rng,
-            None,
-        );
-        let beta = 1.0;
-        g.timesteps(1000, beta);
-        b.iter(|| g.timesteps(1, beta));
-    }
-
-    #[bench]
-    fn one_d_isaac(b: &mut Bencher) {
-        let l = 16;
-        let rng = Isaac64Rng::seed_from_u64(1234);
-        let mut g = QmcIsingGraph::<Isaac64Rng, FastOps>::new_with_rng(
             one_d_periodic(l),
             1.,
             0.,

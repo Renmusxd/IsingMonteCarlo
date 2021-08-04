@@ -1113,7 +1113,8 @@ pub mod serialization {
             }
 
             fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
-                Ok(dest.iter_mut().for_each(|b| *b = 0))
+                dest.iter_mut().for_each(|b| *b = 0);
+                Ok(())
             }
         }
 

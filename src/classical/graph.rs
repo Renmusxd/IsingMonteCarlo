@@ -615,7 +615,7 @@ mod classic_tests {
                 let vb = y * l * 4 + ((x + 1) % l) * 4 + 3;
                 edges.push(((min(va, vb), max(va, vb)), -1.0));
 
-                let va = y * l * 4 + x * 4 + 0;
+                let va = y * l * 4 + x * 4;
                 let vb = ((y + 1) % l) * l * 4 + x * 4 + 2;
                 edges.push(((min(va, vb), max(va, vb)), -1.0));
             }

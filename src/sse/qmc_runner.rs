@@ -754,6 +754,10 @@ where
 mod qmc_tests {
     use super::*;
 
+    fn almost_eq(a: f64, b: f64) -> bool {
+        (a - b).abs() < f64::EPSILON
+    }
+
     #[test]
     fn mat_var_test_single() -> Result<(), ()> {
         // A 2x2 matrix has 4 entries and covers a single variable.
@@ -788,10 +792,10 @@ mod qmc_tests {
             constant_along_diagonal: false,
         };
 
-        assert_eq!(interaction.at(&[false], &[false])?, 1.0);
-        assert_eq!(interaction.at(&[true], &[false])?, 2.0);
-        assert_eq!(interaction.at(&[false], &[true])?, 3.0);
-        assert_eq!(interaction.at(&[true], &[true])?, 4.0);
+        assert!(almost_eq(interaction.at(&[false], &[false])?, 1.0));
+        assert!(almost_eq(interaction.at(&[true], &[false])?, 2.0));
+        assert!(almost_eq(interaction.at(&[false], &[true])?, 3.0));
+        assert!(almost_eq(interaction.at(&[true], &[true])?, 4.0));
         Ok(())
     }
 
@@ -807,25 +811,73 @@ mod qmc_tests {
             constant_along_diagonal: false,
         };
 
-        assert_eq!(interaction.at(&[false, false], &[false, false])?, 1.0);
-        assert_eq!(interaction.at(&[false, true], &[false, false])?, 2.0);
-        assert_eq!(interaction.at(&[true, false], &[false, false])?, 3.0);
-        assert_eq!(interaction.at(&[true, true], &[false, false])?, 4.0);
+        assert!(almost_eq(
+            interaction.at(&[false, false], &[false, false])?,
+            1.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[false, true], &[false, false])?,
+            2.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, false], &[false, false])?,
+            3.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, true], &[false, false])?,
+            4.0
+        ));
 
-        assert_eq!(interaction.at(&[false, false], &[false, true])?, 5.0);
-        assert_eq!(interaction.at(&[false, true], &[false, true])?, 6.0);
-        assert_eq!(interaction.at(&[true, false], &[false, true])?, 7.0);
-        assert_eq!(interaction.at(&[true, true], &[false, true])?, 8.0);
+        assert!(almost_eq(
+            interaction.at(&[false, false], &[false, true])?,
+            5.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[false, true], &[false, true])?,
+            6.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, false], &[false, true])?,
+            7.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, true], &[false, true])?,
+            8.0
+        ));
 
-        assert_eq!(interaction.at(&[false, false], &[true, false])?, 9.0);
-        assert_eq!(interaction.at(&[false, true], &[true, false])?, 10.);
-        assert_eq!(interaction.at(&[true, false], &[true, false])?, 11.);
-        assert_eq!(interaction.at(&[true, true], &[true, false])?, 12.);
+        assert!(almost_eq(
+            interaction.at(&[false, false], &[true, false])?,
+            9.0
+        ));
+        assert!(almost_eq(
+            interaction.at(&[false, true], &[true, false])?,
+            10.
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, false], &[true, false])?,
+            11.
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, true], &[true, false])?,
+            12.
+        ));
 
-        assert_eq!(interaction.at(&[false, false], &[true, true])?, 13.);
-        assert_eq!(interaction.at(&[false, true], &[true, true])?, 14.);
-        assert_eq!(interaction.at(&[true, false], &[true, true])?, 15.);
-        assert_eq!(interaction.at(&[true, true], &[true, true])?, 16.);
+        assert!(almost_eq(
+            interaction.at(&[false, false], &[true, true])?,
+            13.
+        ));
+        assert!(almost_eq(
+            interaction.at(&[false, true], &[true, true])?,
+            14.
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, false], &[true, true])?,
+            15.
+        ));
+        assert!(almost_eq(
+            interaction.at(&[true, true], &[true, true])?,
+            16.
+        ));
         Ok(())
     }
 
