@@ -333,7 +333,7 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
             .get_vars()
             .iter()
             .cloned()
-            .filter_map(|v| var_to_subvar(v))
+            .filter_map(&var_to_subvar)
             .fold(count, |count, subvar| {
                 cluster_state[subvar] = !cluster_state[subvar];
                 if cluster_state[subvar] {
@@ -544,7 +544,7 @@ fn mutate_graph<RVB: RvbUpdater + ?Sized, VS, EN: EdgeNavigator + ?Sized, R: Rng
                                             op.get_vars()
                                                 .iter()
                                                 .cloned()
-                                                .filter_map(|v| var_to_subvar(v))
+                                                .filter_map(&var_to_subvar)
                                                 .zip(op.get_outputs().iter().cloned())
                                                 .for_each(|(subvar, bout)| {
                                                     substate[subvar] = bout;
@@ -1394,7 +1394,7 @@ mod sc_tests {
             &mut manager,
             &mut [false, false],
             (&mut [false, false], &[3, 6]),
-            (&[0, 1], |v| Some(v)),
+            (&[0, 1], Some),
             (
                 |b, sa, sb| {
                     let pref = edges.bond_prefers_aligned(b);
